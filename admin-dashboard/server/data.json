@@ -1,0 +1,27 @@
+{
+  "books": [
+    {
+      "id": "JD51zdm2c",
+      "title": "aaa",
+      "author": "aaa",
+      "description": "aaa",
+      "chapters": []
+    },
+    {
+      "id": "L2SbUU11e",
+      "title": "AAA",
+      "author": "aaaa",
+      "description": "aaaa",
+      "chapters": [],
+      "cover_url": "/covers/1764676896283-8tmerw-4317580269719663479144863345577802885537208n.jpg"
+    },
+    {
+      "id": "f37eEpJqV",
+      "title": "AAA",
+      "author": "aaaa",
+      "description": "aaaa",
+      "chapters": [],
+      "cover_url": "/covers/1764676896283-8tmerw-4317580269719663479144863345577802885537208n.jpg"
+    }
+  ]
+}

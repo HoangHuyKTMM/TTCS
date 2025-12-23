@@ -1,0 +1,120 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Register</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Merriweather:wght@300;400;700&display=swap" rel="stylesheet">
+    <style>
+      :root{--bg:#fbf7ef;--card:#fff;--accent:#8b5e34;--muted:#7a6f66}
+      *{box-sizing:border-box}
+      body{font-family:Inter,system-ui,Arial,Helvetica;background:linear-gradient(180deg,#fbf7ef,#f3efe6);display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}
+      .wrap{max-width:980px;width:100%;display:flex;gap:32px;align-items:center}
+      .art{flex:1;display:flex;align-items:center;justify-content:center}
+      .art .panel{background:linear-gradient(180deg,#fff,#fff7f0);padding:28px;border-radius:14px;box-shadow:0 12px 30px rgba(43,34,20,0.06);text-align:center}
+      .art h1{font-family:'Merriweather',serif;color:#2e2a21;margin:0 0 8px;font-size:26px}
+      .art p{color:var(--muted);margin:0}
+      /* Animations */
+      @keyframes fadeInUp { from {opacity:0; transform:translateY(12px)} to {opacity:1; transform:translateY(0)} }
+      @keyframes floaty { 0%{transform:translateY(0)}50%{transform:translateY(-6px)}100%{transform:translateY(0)} }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .card{background:var(--card);padding:28px;border-radius:14px;box-shadow:0 12px 40px rgba(17,17,17,0.06);width:380px;animation:fadeInUp 420ms ease both}
+      .brand{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+      .logo{width:48px;height:48px;border-radius:8px;background:linear-gradient(180deg,#efe1c9,#f7efe6);display:flex;align-items:center;justify-content:center;font-family:'Merriweather',serif;color:var(--accent);font-weight:700;animation:floaty 5s ease-in-out infinite}
+      h2{margin:0;font-size:20px}
+      .desc{color:var(--muted);font-size:13px;margin-top:6px}
+      .field{margin-top:14px}
+      input{width:100%;padding:12px 14px;border:1px solid #efe6da;border-radius:10px;background:#fffefc;font-size:14px;transition:box-shadow .18s ease,transform .12s ease}
+      input:focus{outline:none;box-shadow:0 6px 18px rgba(139,94,52,0.08);transform:translateY(-2px)}
+      .actions{display:flex;gap:12px;align-items:center;margin-top:16px}
+      button{flex:1;padding:12px 14px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-weight:700;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease}
+      button:hover{transform:translateY(-2px);box-shadow:0 10px 22px rgba(139,94,52,0.1)}
+      button:active{transform:translateY(0)}
+      .spinner{display:inline-block;width:16px;height:16px;border-radius:50%;border:3px solid rgba(255,255,255,0.25);border-top-color:rgba(255,255,255,0.95);vertical-align:middle;margin-right:8px;animation:spin .8s linear infinite}
+      .link{color:var(--accent);text-decoration:none;font-weight:600}
+      .muted{color:var(--muted);font-size:13px;margin-top:12px}
+      .small{font-size:12px;color:#9a8f85;margin-top:8px;text-align:center}
+      @media (max-width:820px){.wrap{flex-direction:column;padding:12px}.art{order:2}.card{width:100%}}
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="art">
+        <div class="panel">
+          <h1>Reader Admin</h1>
+          <p>Tạo tài khoản admin để quản lý nội dung ứng dụng đọc truyện.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="brand">
+          <div class="logo">R</div>
+          <div>
+            <h2>Đăng ký Admin</h2>
+            <div class="desc">Chỉ dùng cho quản trị viên. Cần có Admin Secret.</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <input id="email" placeholder="Email" autocomplete="email" />
+        </div>
+        <div class="field">
+          <input id="name" placeholder="Họ và tên" />
+        </div>
+        <div class="field">
+          <input id="password" placeholder="Mật khẩu" type="password" autocomplete="new-password" />
+        </div>
+        <div class="field">
+          <input id="secret" placeholder="Admin Secret" />
+        </div>
+
+        <div class="actions">
+          <button id="btn">Đăng ký</button>
+        </div>
+        <div id="msg" class="muted"></div>
+        <div class="small">Đã có tài khoản? <a class="link" href="/login.html">Đăng nhập</a></div>
+      </div>
+    </div>
+    <script>
+      const API_BASE = (new URLSearchParams(location.search)).get('api') || '/';
+      function setLoading(btn, loading){
+        if (!btn) return
+        if (loading){
+          btn.disabled = true
+          btn.dataset.orig = btn.textContent
+          btn.innerHTML = '<span class="spinner"></span>' + btn.dataset.orig
+        } else {
+          btn.disabled = false
+          if (btn.dataset.orig) btn.textContent = btn.dataset.orig
+        }
+      }
+
+      async function register() {
+        const btn = document.getElementById('btn')
+        const email = document.getElementById('email').value.trim()
+        const name = document.getElementById('name').value.trim()
+        const password = document.getElementById('password').value
+        const secret = document.getElementById('secret').value
+        const target = (API_BASE.endsWith('/')?API_BASE.slice(0,-1):API_BASE) + '/auth/register-admin'
+        setLoading(btn, true)
+        try {
+          const res = await fetch(target, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email,name,password,secret}) })
+          const data = await res.json()
+          if (data && data.id) {
+            if (data.token) localStorage.setItem('admin_token', data.token)
+            setTimeout(()=> location.href = '/', 220)
+            return
+          }
+          document.getElementById('msg').innerText = data.error || 'Đăng ký thất bại'
+        } catch (err) {
+          document.getElementById('msg').innerText = 'Không thể kết nối tới server'
+        } finally {
+          setLoading(btn, false)
+        }
+      }
+      document.getElementById('btn').addEventListener('click', register)
+    </script>
+  </body>
+</html>
