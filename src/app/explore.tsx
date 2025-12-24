@@ -90,7 +90,7 @@ export default function ExplorePage() {
   const rankColumns: RankItem[][] = useMemo(() => {
     const cols: RankItem[][] = [];
     const rankData = books.slice(0, 9).map((b, idx) => ({
-      id: String(b.id || b.story_id || idx+1),
+      id: String(b.id || b.story_id || idx + 1),
       title: b.title || b.name || 'Không rõ',
       subtitle: (b.author || b.pen_name || '') + (b.genre ? ` / ${b.genre}` : ''),
       stats: `${(b.chapters && b.chapters.length) || b.chapters_count || 0}`,
@@ -119,8 +119,8 @@ export default function ExplorePage() {
         if (!mounted) return
         if (Array.isArray(json)) setBanners(
           json
-            .filter((b:any) => b.enabled !== false)
-            .map((b:any)=>({
+            .filter((b: any) => b.enabled !== false)
+            .map((b: any) => ({
               ...b,
               image_url: b.image_url && String(b.image_url).startsWith('http') ? b.image_url : (b.image_url ? `${API_BASE}${b.image_url}` : null)
             }))
@@ -130,7 +130,7 @@ export default function ExplorePage() {
       }
     }
     loadB()
-    return ()=>{ mounted = false }
+    return () => { mounted = false }
   }, [])
 
   const handleBannerPress = async (url?: string) => {
@@ -188,16 +188,16 @@ export default function ExplorePage() {
         {error ? (
           <View style={{ padding: 12, backgroundColor: '#fee2e2', borderRadius: 8, marginTop: 8 }}>
             <Text style={{ color: '#b91c1c' }}>Không thể kết nối tới server: {error}</Text>
-            <TouchableOpacity onPress={() => { setError(null); (async()=>{ const res:any = await apiFetchBooks(); if (Array.isArray(res)) setBooks(res); else setError(res.message||'Network request failed') })() }} style={{ marginTop: 8 }}>
+            <TouchableOpacity onPress={() => { setError(null); (async () => { const res: any = await apiFetchBooks(); if (Array.isArray(res)) setBooks(res); else setError(res.message || 'Network request failed') })() }} style={{ marginTop: 8 }}>
               <Text style={{ color: '#2563eb' }}>Thử lại</Text>
             </TouchableOpacity>
           </View>
         ) : null}
 
-        {banners.length>0 && (
+        {banners.length > 0 && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 12 }}>
-            {banners.map(b=> (
-              <TouchableOpacity key={b.id} activeOpacity={0.8} onPress={()=>handleBannerPress(b.link)} disabled={!b.link}>
+            {banners.map(b => (
+              <TouchableOpacity key={b.id} activeOpacity={0.8} onPress={() => handleBannerPress(b.link)} disabled={!b.link}>
                 <Image source={{ uri: b.image_url }} style={{ width: 320, height: 120, borderRadius: 8, marginRight: 12, opacity: b.link ? 1 : 0.9 }} />
               </TouchableOpacity>
             ))}
@@ -214,29 +214,29 @@ export default function ExplorePage() {
                 const globalIndex = colIdx * 3 + rowIdx;
                 return (
                   <Pressable key={item.id} style={styles.rankItem} onPress={() => handleOpenBook(item.id)}>
-                      <View style={styles.coverWrap}>
-                        {item.cover ? (
-                          <Image source={{ uri: item.cover }} style={styles.cover} />
-                        ) : (
-                          <View style={styles.cover} />
-                        )}
-                        <View
-                          style={[
-                            styles.rankBadge,
-                            globalIndex === 0 && styles.rankGold,
-                            globalIndex === 1 && styles.rankSilver,
-                            globalIndex === 2 && styles.rankBronze,
-                          ]}
-                        >
-                          <Text style={styles.rankBadgeText}>{globalIndex + 1}</Text>
-                        </View>
+                    <View style={styles.coverWrap}>
+                      {item.cover ? (
+                        <Image source={{ uri: item.cover }} style={styles.cover} />
+                      ) : (
+                        <View style={styles.cover} />
+                      )}
+                      <View
+                        style={[
+                          styles.rankBadge,
+                          globalIndex === 0 && styles.rankGold,
+                          globalIndex === 1 && styles.rankSilver,
+                          globalIndex === 2 && styles.rankBronze,
+                        ]}
+                      >
+                        <Text style={styles.rankBadgeText}>{globalIndex + 1}</Text>
                       </View>
-                      <View style={styles.rankTextWrap}>
-                        <Text style={styles.rankTitle} numberOfLines={1}>{item.title}</Text>
-                        <Text style={styles.rankSubtitle} numberOfLines={1}>{item.subtitle}</Text>
-                        <Text style={styles.rankStats}>{item.stats}</Text>
-                      </View>
-                    </Pressable>
+                    </View>
+                    <View style={styles.rankTextWrap}>
+                      <Text style={styles.rankTitle} numberOfLines={1}>{item.title}</Text>
+                      <Text style={styles.rankSubtitle} numberOfLines={1}>{item.subtitle}</Text>
+                      <Text style={styles.rankStats}>{item.stats}</Text>
+                    </View>
+                  </Pressable>
                 );
               })}
             </View>
@@ -249,17 +249,17 @@ export default function ExplorePage() {
         </View>
         {recData.map((it) => (
           <Pressable key={it.id} style={styles.recItem} onPress={() => handleOpenBook(it.id)}>
-              {it.cover ? (
-                <Image source={{ uri: it.cover }} style={styles.recCover} />
-              ) : (
-                <View style={styles.recCover} />
-              )}
-              <View style={styles.recTextWrap}>
-                <Text style={styles.recTitle} numberOfLines={2}>{it.title}</Text>
-                <Text style={styles.recDesc} numberOfLines={2}>{it.desc}</Text>
-                <Text style={styles.recStats}>{it.stats}</Text>
-              </View>
-            </Pressable>
+            {it.cover ? (
+              <Image source={{ uri: it.cover }} style={styles.recCover} />
+            ) : (
+              <View style={styles.recCover} />
+            )}
+            <View style={styles.recTextWrap}>
+              <Text style={styles.recTitle} numberOfLines={2}>{it.title}</Text>
+              <Text style={styles.recDesc} numberOfLines={2}>{it.desc}</Text>
+              <Text style={styles.recStats}>{it.stats}</Text>
+            </View>
+          </Pressable>
         ))}
         <AdInterstitial visible={interstitialVisible} onFinish={() => { setInterstitialVisible(false); if (targetBookId) openBookNow(targetBookId); setTargetBookId(null) }} />
       </ScrollView>

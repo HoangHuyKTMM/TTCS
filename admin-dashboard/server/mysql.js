@@ -10,7 +10,7 @@ async function initPool() {
   const password = process.env.MYSQL_PASSWORD || '123456'
   const database = process.env.MYSQL_DATABASE || 'app_doc_truyen'
 
-  pool = mysql.createPool({ host, port, user, password, database, waitForConnections: true, connectionLimit: 10 })
+  pool = mysql.createPool({ host, port, user, password, database, waitForConnections: true, connectionLimit: 10, charset: 'utf8mb4' })
   return pool
 }
 
@@ -49,9 +49,9 @@ async function getBooks(opts = {}) {
     console.log('[getBooks] Query succeeded, rows:', rows.length)
     return rows.map(r => {
       const genreValue = r.genre_names || r.genre || null
-      return { 
+      return {
         story_id: r.story_id,
-        id: String(r.story_id), 
+        id: String(r.story_id),
         title: r.title,
         author_id: r.author_id,
         author_user_id: r.author_user_id,
@@ -75,9 +75,9 @@ async function getBooks(opts = {}) {
       ORDER BY s.created_at DESC
     `)
     return rows.map(r => {
-      return { 
+      return {
         story_id: r.story_id,
-        id: String(r.story_id), 
+        id: String(r.story_id),
         title: r.title,
         author_id: r.author_id,
         author_user_id: null,
@@ -170,7 +170,7 @@ async function getOrCreateAuthorIdByUserId(userId) {
       bio TEXT,
       created_at DATETIME
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
-  } catch (e) {}
+  } catch (e) { }
   try {
     const [existing] = await p.execute('SELECT author_id FROM authors WHERE user_id = ? LIMIT 1', [userId])
     if (existing && existing[0]) return existing[0].author_id
@@ -181,14 +181,14 @@ async function getOrCreateAuthorIdByUserId(userId) {
       if (uRows && uRows[0]) {
         pen = uRows[0].fullname || uRows[0].email || pen
       }
-    } catch (e) {}
+    } catch (e) { }
     const [ins] = await p.execute('INSERT INTO authors (user_id, pen_name, bio, created_at) VALUES (?, ?, ?, NOW())', [userId, pen || `Author ${userId}`, null])
     return ins.insertId
   } catch (e) {
     try {
       const [existing] = await p.execute('SELECT author_id FROM authors WHERE user_id = ? LIMIT 1', [userId])
       if (existing && existing[0]) return existing[0].author_id
-    } catch (ee) {}
+    } catch (ee) { }
     return null
   }
 }
@@ -598,7 +598,7 @@ async function updateBook(id, { title, author, description, genre }) {
         try {
           const [exists] = await p.execute('SELECT author_id FROM authors WHERE user_id = ? LIMIT 1', [uid])
           if (exists && exists[0]) author_id = exists[0].author_id
-        } catch (ee) {}
+        } catch (ee) { }
       }
     }
   }
@@ -727,11 +727,11 @@ async function ensureCommentsTable(p) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
   } catch (e) { /* ignore */ }
   // best-effort schema upgrades for legacy tables
-  try { await p.execute('ALTER TABLE comments ADD COLUMN status VARCHAR(32) DEFAULT "pending"') } catch (e) {}
-  try { await p.execute('ALTER TABLE comments ADD COLUMN reviewed_by VARCHAR(191) NULL') } catch (e) {}
-  try { await p.execute('ALTER TABLE comments ADD COLUMN reviewed_at DATETIME NULL') } catch (e) {}
-  try { await p.execute('ALTER TABLE comments ADD COLUMN enabled TINYINT DEFAULT 1') } catch (e) {}
-  try { await p.execute('UPDATE comments SET status = "approved" WHERE status IS NULL') } catch (e) {}
+  try { await p.execute('ALTER TABLE comments ADD COLUMN status VARCHAR(32) DEFAULT "pending"') } catch (e) { }
+  try { await p.execute('ALTER TABLE comments ADD COLUMN reviewed_by VARCHAR(191) NULL') } catch (e) { }
+  try { await p.execute('ALTER TABLE comments ADD COLUMN reviewed_at DATETIME NULL') } catch (e) { }
+  try { await p.execute('ALTER TABLE comments ADD COLUMN enabled TINYINT DEFAULT 1') } catch (e) { }
+  try { await p.execute('UPDATE comments SET status = "approved" WHERE status IS NULL') } catch (e) { }
 }
 
 async function getComments(bookId, opts = {}) {
@@ -744,13 +744,32 @@ async function getComments(bookId, opts = {}) {
   try {
     const params = []
     const where = []
-    if (bookId) { where.push('story_id = ?'); params.push(bookId) }
-    if (!includeAll && statusFilter) { where.push('status = ?'); params.push(statusFilter) }
-    else if (!includeAll) { where.push('status = "approved"') }
+    if (bookId) { where.push('c.story_id = ?'); params.push(bookId) }
+    if (!includeAll && statusFilter) { where.push('c.status = ?'); params.push(statusFilter) }
+    else if (!includeAll) { where.push('c.status = "approved"') }
     const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : ''
     const limitSql = limit ? ' LIMIT ' + limit + (offset ? ' OFFSET ' + offset : '') : ''
-    const [rows] = await p.execute(`SELECT comment_id as id, story_id, user_id, parent_id, content, enabled, status, reviewed_by, reviewed_at, created_at FROM comments ${whereSql} ORDER BY created_at DESC${limitSql}` , params)
-    return rows.map(r => ({ id: String(r.id), story_id: String(r.story_id), user_id: String(r.user_id), parent_id: r.parent_id ? String(r.parent_id) : null, content: r.content, enabled: !!r.enabled, status: r.status || 'approved', reviewed_by: r.reviewed_by || null, reviewed_at: r.reviewed_at || null, created_at: r.created_at }))
+    const [rows] = await p.execute(`
+      SELECT c.comment_id as id, c.story_id, c.user_id, c.parent_id, c.content, c.enabled, c.status, c.is_negative, c.reviewed_by, c.reviewed_at, c.created_at,
+             u.fullname as user_name, u.avatar_url as user_avatar
+      FROM comments c
+      LEFT JOIN users u ON c.user_id = u.user_id
+      ${whereSql} ORDER BY c.created_at DESC${limitSql}`, params)
+    return rows.map(r => ({
+      id: String(r.id),
+      story_id: String(r.story_id),
+      user_id: String(r.user_id),
+      user_name: r.user_name || null,
+      user_avatar: r.user_avatar || null,
+      parent_id: r.parent_id ? String(r.parent_id) : null,
+      content: r.content,
+      enabled: !!r.enabled,
+      status: r.status || 'approved',
+      is_negative: !!r.is_negative,
+      reviewed_by: r.reviewed_by || null,
+      reviewed_at: r.reviewed_at || null,
+      created_at: r.created_at
+    }))
   } catch (e) {
     if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.code === '42S02')) {
       await ensureCommentsTable(p)
@@ -760,13 +779,13 @@ async function getComments(bookId, opts = {}) {
   }
 }
 
-async function createComment(bookId, { user_id, content, parent_id }) {
+async function createComment(bookId, { user_id, content, parent_id, is_negative, negative_probability }) {
   const p = await initPool()
   await ensureCommentsTable(p)
-  const [res] = await p.execute('INSERT INTO comments (story_id, user_id, parent_id, content, enabled, status, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())', [bookId, user_id, parent_id || null, content, 1, 'pending'])
+  const [res] = await p.execute('INSERT INTO comments (story_id, user_id, parent_id, content, enabled, status, is_negative, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())', [bookId, user_id, parent_id || null, content, 1, 'approved', is_negative || 0])
   const id = res.insertId
-  const [rows] = await p.execute('SELECT comment_id as id, story_id, user_id, parent_id, content, enabled, status, reviewed_by, reviewed_at, created_at FROM comments WHERE comment_id = ?', [id])
-  return rows && rows[0] ? { id: String(rows[0].id), story_id: String(rows[0].story_id), user_id: String(rows[0].user_id), parent_id: rows[0].parent_id ? String(rows[0].parent_id) : null, content: rows[0].content, enabled: !!rows[0].enabled, status: rows[0].status || 'pending', reviewed_by: rows[0].reviewed_by || null, reviewed_at: rows[0].reviewed_at || null, created_at: rows[0].created_at } : null
+  const [rows] = await p.execute('SELECT comment_id as id, story_id, user_id, parent_id, content, enabled, status, is_negative, reviewed_by, reviewed_at, created_at FROM comments WHERE comment_id = ?', [id])
+  return rows && rows[0] ? { id: String(rows[0].id), story_id: String(rows[0].story_id), user_id: String(rows[0].user_id), parent_id: rows[0].parent_id ? String(rows[0].parent_id) : null, content: rows[0].content, enabled: !!rows[0].enabled, status: rows[0].status || 'pending', is_negative: !!rows[0].is_negative, reviewed_by: rows[0].reviewed_by || null, reviewed_at: rows[0].reviewed_at || null, created_at: rows[0].created_at } : null
 }
 
 async function updateComment(id, { content, enabled, status, reviewed_by }) {
@@ -776,9 +795,9 @@ async function updateComment(id, { content, enabled, status, reviewed_by }) {
   const params = []
   if (content !== undefined) { parts.push('content = ?'); params.push(content) }
   if (enabled !== undefined) { parts.push('enabled = ?'); params.push(enabled ? 1 : 0) }
-   if (status !== undefined) { parts.push('status = ?'); params.push(status) }
-   if (reviewed_by !== undefined) { parts.push('reviewed_by = ?'); params.push(reviewed_by) }
-   if (status !== undefined) { parts.push('reviewed_at = NOW()') }
+  if (status !== undefined) { parts.push('status = ?'); params.push(status) }
+  if (reviewed_by !== undefined) { parts.push('reviewed_by = ?'); params.push(reviewed_by) }
+  if (status !== undefined) { parts.push('reviewed_at = NOW()') }
   if (parts.length === 0) return null
   params.push(id)
   const sql = `UPDATE comments SET ${parts.join(', ')} WHERE comment_id = ?`
@@ -824,7 +843,7 @@ async function createFollow(followerId, followeeId) {
   try {
     const [existing] = await p.execute('SELECT follow_id FROM follows WHERE follower_id = ? AND followee_id = ? LIMIT 1', [followerId, followeeId])
     if (existing && existing[0]) return { id: String(existing[0].follow_id) }
-  } catch (e) {}
+  } catch (e) { }
   const [res] = await p.execute('INSERT INTO follows (follower_id, followee_id, created_at) VALUES (?, ?, NOW())', [followerId, followeeId])
   const id = res.insertId
   const [rows] = await p.execute('SELECT follow_id as id, follower_id, followee_id, created_at FROM follows WHERE follow_id = ?', [id])
@@ -857,8 +876,14 @@ async function countFollowers(followeeId) {
 async function findFollow(followerId, followeeId) {
   const p = await initPool()
   await ensureFollowsTable(p)
-  const [rows] = await p.execute('SELECT follow_id as id, follower_id, followee_id, created_at FROM follows WHERE follower_id = ? AND followee_id = ? LIMIT 1', [followerId, followeeId])
-  return rows && rows[0] ? { id: String(rows[0].id), follower_id: String(rows[0].follower_id), followee_id: String(rows[0].followee_id), created_at: rows[0].created_at } : null
+  try {
+    const [rows] = await p.execute('SELECT follow_id as id, follower_id, followee_id, created_at FROM follows WHERE follower_id = ? AND followee_id = ? LIMIT 1', [followerId, followeeId])
+    return rows && rows[0] ? { id: String(rows[0].id), follower_id: String(rows[0].follower_id), followee_id: String(rows[0].followee_id), created_at: rows[0].created_at } : null
+  } catch (e) {
+    // Handle case when table structure is different
+    console.error('findFollow error (table structure mismatch?):', e.message)
+    return null
+  }
 }
 
 module.exports.getComments = getComments
@@ -1013,7 +1038,7 @@ async function getWallet(userId) {
       balance BIGINT DEFAULT 0,
       updated_at DATETIME
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
-  } catch (e) {}
+  } catch (e) { }
   const [rows] = await p.execute('SELECT wallet_id as id, user_id, balance FROM wallets WHERE user_id = ? LIMIT 1', [userId])
   if (rows && rows[0]) return { id: String(rows[0].id), user_id: String(rows[0].user_id), balance: Number(rows[0].balance) }
   // create wallet
@@ -1062,7 +1087,7 @@ async function ensureTopupTable() {
       created_at DATETIME,
       processed_at DATETIME NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
-  } catch (e) {}
+  } catch (e) { }
   return p
 }
 
@@ -1188,12 +1213,12 @@ async function createLike(userId, bookId) {
       story_id VARCHAR(191),
       created_at DATETIME
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
-  } catch (e) {}
+  } catch (e) { }
   // prevent duplicate
   try {
     const [exists] = await p.execute('SELECT like_id FROM likes WHERE user_id = ? AND story_id = ? LIMIT 1', [userId, bookId])
     if (exists && exists[0]) return { id: String(exists[0].like_id) }
-  } catch (e) {}
+  } catch (e) { }
   const [res] = await p.execute('INSERT INTO likes (user_id, story_id, created_at) VALUES (?, ?, NOW())', [userId, bookId])
   return { id: String(res.insertId) }
 }
@@ -1243,7 +1268,7 @@ async function createDonation({ donor_id, story_id, author_id, coins, message })
       message TEXT,
       created_at DATETIME
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
-  } catch (e) {}
+  } catch (e) { }
   const [res] = await p.execute('INSERT INTO donations (donor_id, story_id, author_id, coins, message, created_at) VALUES (?, ?, ?, ?, ?, NOW())', [donor_id, story_id, author_id, Number(coins || 0), message || null])
   const id = res.insertId
   const [rows] = await p.execute('SELECT * FROM donations WHERE donation_id = ?', [id])
@@ -1270,7 +1295,7 @@ async function createWithdrawal({ user_id, coins, method, details }) {
       created_at DATETIME,
       processed_at DATETIME NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
-  } catch (e) {}
+  } catch (e) { }
   const [res] = await p.execute('INSERT INTO withdrawals (user_id, coins, method, details, status, created_at) VALUES (?, ?, ?, ?, ?, NOW())', [user_id, Number(coins || 0), method || null, details || null, 'pending'])
   const id = res.insertId
   const [rows] = await p.execute('SELECT * FROM withdrawals WHERE withdrawal_id = ?', [id])
@@ -1289,7 +1314,7 @@ async function getWithdrawals(userId) {
 
 async function updateWithdrawalStatus(id, { status }) {
   const p = await initPool()
-  const allowed = ['pending','approved','declined','processed']
+  const allowed = ['pending', 'approved', 'declined', 'processed']
   if (!allowed.includes(status)) throw new Error('invalid status')
   const q = `UPDATE withdrawals SET status = ?, processed_at = CASE WHEN ? IN ('approved','processed') THEN NOW() ELSE processed_at END WHERE withdrawal_id = ?`
   await p.execute(q, [status, status, id])
@@ -1318,7 +1343,7 @@ async function createAuthorApplication({ user_id, pen_name, bio, samples }) {
       created_at DATETIME,
       updated_at DATETIME
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
-  } catch (e) {}
+  } catch (e) { }
   const [res] = await p.execute('INSERT INTO author_applications (user_id, pen_name, bio, samples, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW())', [user_id, pen_name || null, bio || null, samples || null, 'pending'])
   const id = res.insertId
   const [rows] = await p.execute('SELECT * FROM author_applications WHERE application_id = ?', [id])
@@ -1337,7 +1362,7 @@ async function getAuthorApplications(userId) {
 
 async function updateAuthorApplicationStatus(id, { status, admin_note }) {
   const p = await initPool()
-  const allowed = ['pending','approved','declined']
+  const allowed = ['pending', 'approved', 'declined']
   if (!allowed.includes(status)) throw new Error('invalid status')
   await p.execute('UPDATE author_applications SET status = ?, admin_note = ?, updated_at = NOW() WHERE application_id = ?', [status, admin_note || null, id])
   const [rows] = await p.execute('SELECT * FROM author_applications WHERE application_id = ?', [id])
@@ -1349,7 +1374,7 @@ async function promoteUserToAuthor(userId, { pen_name, bio }) {
   // update user role
   try {
     await p.execute('UPDATE users SET role = ? WHERE user_id = ?', ['author', userId])
-  } catch (e) {}
+  } catch (e) { }
   // ensure authors table exists and create author row
   try {
     await p.execute(`CREATE TABLE IF NOT EXISTS authors (
@@ -1359,7 +1384,7 @@ async function promoteUserToAuthor(userId, { pen_name, bio }) {
       bio TEXT,
       created_at DATETIME
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
-  } catch (e) {}
+  } catch (e) { }
   // try to insert or ignore if exists
   try {
     const [existing] = await p.execute('SELECT author_id FROM authors WHERE user_id = ? LIMIT 1', [userId])
@@ -1370,7 +1395,7 @@ async function promoteUserToAuthor(userId, { pen_name, bio }) {
       try {
         const [uRows] = await p.execute('SELECT fullname, email FROM users WHERE user_id = ? LIMIT 1', [userId])
         if (uRows && uRows[0]) pen = uRows[0].fullname || uRows[0].email || pen
-      } catch (e) {}
+      } catch (e) { }
     }
     if (!pen) pen = `Author ${userId}`
     const [ins] = await p.execute('INSERT INTO authors (user_id, pen_name, bio, created_at) VALUES (?, ?, ?, NOW())', [userId, pen, bio || null])
@@ -1380,7 +1405,7 @@ async function promoteUserToAuthor(userId, { pen_name, bio }) {
     try {
       const [rows] = await p.execute('SELECT author_id FROM authors WHERE user_id = ? LIMIT 1', [userId])
       if (rows && rows[0]) return rows[0].author_id
-    } catch (ee) {}
+    } catch (ee) { }
     throw e
   }
 }

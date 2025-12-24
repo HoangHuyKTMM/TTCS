@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Stack, Link, useRouter } from "expo-router";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform } from "react-native";
-import { AntDesign, FontAwesome } from "@expo/vector-icons";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView, ScrollView } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import * as WebBrowser from "expo-web-browser";
 import * as Google from "expo-auth-session/providers/google";
@@ -17,6 +17,8 @@ export default function RegisterScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [alertVisible, setAlertVisible] = useState(false);
   const [alertConfig, setAlertConfig] = useState<any>({ type: 'info', title: '', message: '' });
   const extra = (Constants.expoConfig?.extra || {}) as any;
@@ -31,13 +33,8 @@ export default function RegisterScreen() {
     clientId: extra.facebookAppId,
   });
 
-  const onRegister = () => {
-    router.replace("/");
-  };
-
   async function handleRegister() {
     try {
-      // Validate passwords match
       if (password !== confirmPassword) {
         setAlertConfig({ type: 'error', title: 'Lỗi', message: 'Mật khẩu nhập lại không khớp' });
         setAlertVisible(true);
@@ -49,12 +46,10 @@ export default function RegisterScreen() {
         return
       }
       const res: any = await Auth.register(name, email, password)
-      // server returns user object on success, or { error: '...' } on failure
       if (res && res.error) {
         setAlertConfig({ type: 'error', title: 'Lỗi', message: res.error });
         setAlertVisible(true);
       } else if (res && res.id) {
-        // register success (server returned user object with id)
         setAlertConfig({
           type: 'success',
           title: 'Thành công',
@@ -85,69 +80,136 @@ export default function RegisterScreen() {
   }, [fbResponse]);
 
   return (
-    <View style={styles.container}>
-      <Stack.Screen options={{ title: "Đăng ký" }} />
-      <Text style={styles.title}>Đăng ký</Text>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+    >
+      <Stack.Screen options={{ headerShown: false }} />
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.back()}
+          >
+            <Ionicons name="arrow-back" size={24} color="#111827" />
+          </TouchableOpacity>
+        </View>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Họ và tên"
-        value={name}
-        onChangeText={setName}
-      />
+        {/* Title */}
+        <View style={styles.titleContainer}>
+          <Text style={styles.title}>Tạo tài khoản</Text>
+          <Text style={styles.subtitle}>Đăng ký để bắt đầu hành trình đọc sách</Text>
+        </View>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        keyboardType="email-address"
-        autoCapitalize="none"
-        value={email}
-        onChangeText={setEmail}
-      />
+        {/* Form */}
+        <View style={styles.formContainer}>
+          {/* Name Input */}
+          <View style={styles.inputWrapper}>
+            <Ionicons name="person-outline" size={20} color="#6b7280" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Họ và tên"
+              placeholderTextColor="#9ca3af"
+              value={name}
+              onChangeText={setName}
+            />
+          </View>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Mật khẩu"
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
+          {/* Email Input */}
+          <View style={styles.inputWrapper}>
+            <Ionicons name="mail-outline" size={20} color="#6b7280" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              placeholderTextColor="#9ca3af"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              value={email}
+              onChangeText={setEmail}
+            />
+          </View>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Nhập lại mật khẩu"
-        secureTextEntry
-        value={confirmPassword}
-        onChangeText={setConfirmPassword}
-      />
+          {/* Password Input */}
+          <View style={styles.inputWrapper}>
+            <Ionicons name="lock-closed-outline" size={20} color="#6b7280" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Mật khẩu"
+              placeholderTextColor="#9ca3af"
+              secureTextEntry={!showPassword}
+              value={password}
+              onChangeText={setPassword}
+            />
+            <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}>
+              <Ionicons name={showPassword ? "eye-outline" : "eye-off-outline"} size={20} color="#6b7280" />
+            </TouchableOpacity>
+          </View>
 
-      <TouchableOpacity style={styles.button} onPress={handleRegister}>
-        <Text style={styles.buttonText}>Tạo tài khoản</Text>
-      </TouchableOpacity>
+          {/* Confirm Password Input */}
+          <View style={styles.inputWrapper}>
+            <Ionicons name="lock-closed-outline" size={20} color="#6b7280" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Nhập lại mật khẩu"
+              placeholderTextColor="#9ca3af"
+              secureTextEntry={!showConfirmPassword}
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+            />
+            <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={styles.eyeButton}>
+              <Ionicons name={showConfirmPassword ? "eye-outline" : "eye-off-outline"} size={20} color="#6b7280" />
+            </TouchableOpacity>
+          </View>
 
-      <View style={styles.socialRow}>
-        <TouchableOpacity
-          style={[styles.socialBtn, styles.google]}
-          disabled={!googleRequest}
-          onPress={() => googlePromptAsync()}
-        >
-          <AntDesign name="google" size={18} color="#ea4335" style={styles.iconLeft} />
-          <Text style={styles.socialText}>Tiếp tục với Google</Text>
-        </TouchableOpacity>
+          {/* Register Button */}
+          <TouchableOpacity style={styles.primaryButton} onPress={handleRegister}>
+            <Text style={styles.primaryButtonText}>Đăng ký</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.socialBtn, styles.facebook]}
-          disabled={!fbRequest}
-          onPress={() => fbPromptAsync()}
-        >
-          <FontAwesome name="facebook" size={18} color="#fff" style={styles.iconLeft} />
-          <Text style={[styles.socialText, { color: "#fff" }]}>Tiếp tục với Facebook</Text>
-        </TouchableOpacity>
-      </View>
+          {/* Divider */}
+          <View style={styles.dividerContainer}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>hoặc</Text>
+            <View style={styles.dividerLine} />
+          </View>
 
-      <Link href={"/(auth)/login" as any} style={styles.link} replace>
-        Đã có tài khoản? Đăng nhập
-      </Link>
+          {/* Social Buttons */}
+          <View style={styles.socialContainer}>
+            <TouchableOpacity
+              style={styles.socialButton}
+              disabled={!googleRequest}
+              onPress={() => googlePromptAsync()}
+            >
+              <Ionicons name="logo-google" size={22} color="#111827" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.socialButton}
+              disabled={!fbRequest}
+              onPress={() => fbPromptAsync()}
+            >
+              <Ionicons name="logo-facebook" size={22} color="#1877F2" />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.socialButton}>
+              <Ionicons name="logo-apple" size={22} color="#111827" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Footer */}
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>Đã có tài khoản? </Text>
+          <Link href={"/(auth)/login" as any} replace>
+            <Text style={styles.footerLink}>Đăng nhập</Text>
+          </Link>
+        </View>
+      </ScrollView>
 
       <CustomAlert
         visible={alertVisible}
@@ -157,74 +219,122 @@ export default function RegisterScreen() {
         buttons={alertConfig.buttons}
         onDismiss={() => setAlertVisible(false)}
       />
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 24,
+    backgroundColor: "#fff",
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingBottom: 40,
+  },
+  header: {
+    paddingTop: 56,
+    paddingBottom: 16,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    backgroundColor: "#f2f4f7",
+    borderRadius: 12,
     justifyContent: "center",
+    alignItems: "center",
+  },
+  titleContainer: {
+    marginBottom: 32,
   },
   title: {
     fontSize: 28,
-    fontWeight: "600",
-    marginBottom: 16,
-    textAlign: "center",
+    fontWeight: "700",
+    color: "#111827",
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 15,
+    color: "#6b7280",
+    lineHeight: 22,
+  },
+  formContainer: {
+    gap: 14,
+  },
+  inputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f2f4f7",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    height: 52,
+  },
+  inputIcon: {
+    marginRight: 12,
   },
   input: {
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    height: 48,
-    marginBottom: 12,
+    flex: 1,
+    fontSize: 15,
+    color: "#111827",
   },
-  button: {
-    height: 48,
+  eyeButton: {
+    padding: 4,
+  },
+  primaryButton: {
+    height: 52,
     backgroundColor: "#111827",
-    borderRadius: 8,
-    alignItems: "center",
+    borderRadius: 12,
     justifyContent: "center",
-    marginTop: 4,
+    alignItems: "center",
+    marginTop: 8,
   },
-  buttonText: {
-    color: "white",
+  primaryButtonText: {
+    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },
-  socialRow: {
-    marginTop: 16,
-    gap: 10,
-  },
-  socialBtn: {
-    height: 48,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
+  dividerContainer: {
     flexDirection: "row",
-    columnGap: 8,
-    paddingHorizontal: 12,
+    alignItems: "center",
+    marginVertical: 20,
   },
-  google: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "#e5e7eb",
   },
-  facebook: {
-    backgroundColor: "#1877F2",
+  dividerText: {
+    marginHorizontal: 14,
+    color: "#9ca3af",
+    fontSize: 13,
   },
-  socialText: {
-    color: "#111827",
-    fontSize: 15,
-    fontWeight: "600",
+  socialContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 14,
   },
-  iconLeft: { marginRight: 8 },
-  link: {
-    marginTop: 16,
-    textAlign: "center",
-    color: "#2563eb",
+  socialButton: {
+    width: 52,
+    height: 52,
+    backgroundColor: "#f2f4f7",
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  footer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 32,
+  },
+  footerText: {
+    color: "#6b7280",
     fontSize: 14,
+  },
+  footerLink: {
+    color: "#1088ff",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });

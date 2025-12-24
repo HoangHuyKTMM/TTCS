@@ -8,7 +8,12 @@ const shortid = require('shortid');
 const useMysql = (process.env.USE_MYSQL || 'false').toLowerCase() === 'true'
 
 const app = express();
+console.log('GROK_API_KEY loaded:', process.env.GROK_API_KEY ? 'YES (starts with ' + process.env.GROK_API_KEY.substring(0, 10) + '...)' : 'NO');
 app.use(cors());
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
 // increase JSON body size to allow JSON-based base64 uploads for covers
 app.use(express.json({ limit: '20mb' }));
 
@@ -50,15 +55,15 @@ app.use((req, res, next) => {
 
 // serve uploaded covers
 const coversDir = path.join(__dirname, 'public', 'covers')
-try { require('fs').mkdirSync(coversDir, { recursive: true }) } catch (e) {}
+try { require('fs').mkdirSync(coversDir, { recursive: true }) } catch (e) { }
 app.use('/covers', express.static(coversDir))
 // serve uploaded banners
 const bannersDir = path.join(__dirname, 'public', 'banners')
-try { require('fs').mkdirSync(bannersDir, { recursive: true }) } catch (e) {}
+try { require('fs').mkdirSync(bannersDir, { recursive: true }) } catch (e) { }
 app.use('/banners', express.static(bannersDir))
 // serve uploaded avatars
 const avatarsDir = path.join(__dirname, 'public', 'avatars')
-try { require('fs').mkdirSync(avatarsDir, { recursive: true }) } catch (e) {}
+try { require('fs').mkdirSync(avatarsDir, { recursive: true }) } catch (e) { }
 app.use('/avatars', express.static(avatarsDir))
 
 // file upload for covers
@@ -67,7 +72,7 @@ const storage = multer.diskStorage({
   destination: function (req, file, cb) { cb(null, coversDir) },
   filename: function (req, file, cb) {
     const ext = file.originalname.split('.').pop()
-    const name = `${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`
+    const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
     cb(null, name)
   }
 })
@@ -77,7 +82,7 @@ const bannerStorage = multer.diskStorage({
   destination: function (req, file, cb) { cb(null, bannersDir) },
   filename: function (req, file, cb) {
     const ext = file.originalname.split('.').pop()
-    const name = `${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`
+    const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
     cb(null, name)
   }
 })
@@ -99,7 +104,7 @@ function saveDataUrlToAvatar(dataUrl) {
     if (mime === 'image/png') ext = 'png'
     else if (mime === 'image/webp') ext = 'webp'
     else if (mime === 'image/jpeg' || mime === 'image/jpg') ext = 'jpg'
-    const name = `${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`
+    const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
     const full = path.join(avatarsDir, name)
     fs.writeFileSync(full, buf)
     return `/avatars/${name}`
@@ -147,7 +152,7 @@ function saveDataUrlToCover(dataUrl) {
     if (mime === 'image/png') ext = 'png'
     else if (mime === 'image/webp') ext = 'webp'
     else if (mime === 'image/jpeg' || mime === 'image/jpg') ext = 'jpg'
-    const name = `${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`
+    const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
     const full = path.join(coversDir, name)
     fs.writeFileSync(full, buf)
     return `/covers/${name}`
@@ -178,15 +183,15 @@ app.get('/books', async (req, res) => {
         }
       }
 
-  const mineOnly = req.query && String(req.query.mine || '').toLowerCase() === 'true'
-  const rows = await db.getBooks({ userId: currentUserId, mineOnly })
+      const mineOnly = req.query && String(req.query.mine || '').toLowerCase() === 'true'
+      const rows = await db.getBooks({ userId: currentUserId, mineOnly })
       console.log('[GET /books] Got', rows.length, 'rows')
-      
+
       if (!rows) {
         console.log('[GET /books] No rows returned')
         return res.json([])
       }
-      
+
       // map chapters_count to chapters array length for compatibility, include genre
       const books = []
       for (const r of rows) {
@@ -207,7 +212,7 @@ app.get('/books', async (req, res) => {
           console.error('[GET /books] Error mapping book:', mapErr, 'row:', r)
         }
       }
-      
+
       console.log('[GET /books] Sending', books.length, 'books')
       return res.json(books)
     }
@@ -345,25 +350,25 @@ app.delete('/users/:id', authMiddleware, async (req, res) => {
 // Accept JSON payload for easier clients. If you need to upload a file, use /books/upload
 app.post('/books', async (req, res) => {
   try {
-      const { title, author, description, genre } = req.body || {}
-      let cover_url = req.body ? (req.body.cover_url || req.body.coverUrl || req.body.coverUrl) : undefined
-      // If cover is base64 data URL, save to /covers and use short path to satisfy DB length constraints
-      if (cover_url && typeof cover_url === 'string' && cover_url.startsWith('data:')) {
-        const saved = saveDataUrlToCover(cover_url)
-        if (saved) {
-          cover_url = saved
-        } else {
-          console.warn('cover data URL invalid or too large, dropping')
-          cover_url = null
-        }
-      }
-    if (!title) return res.status(400).json({ error: 'title required' })
-
-      // cover_image column is typically VARCHAR(255); guard against huge data URLs
-      if (cover_url && cover_url.length > 500) {
-        console.warn('cover_url too long, dropping value')
+    const { title, author, description, genre } = req.body || {}
+    let cover_url = req.body ? (req.body.cover_url || req.body.coverUrl || req.body.coverUrl) : undefined
+    // If cover is base64 data URL, save to /covers and use short path to satisfy DB length constraints
+    if (cover_url && typeof cover_url === 'string' && cover_url.startsWith('data:')) {
+      const saved = saveDataUrlToCover(cover_url)
+      if (saved) {
+        cover_url = saved
+      } else {
+        console.warn('cover data URL invalid or too large, dropping')
         cover_url = null
       }
+    }
+    if (!title) return res.status(400).json({ error: 'title required' })
+
+    // cover_image column is typically VARCHAR(255); guard against huge data URLs
+    if (cover_url && cover_url.length > 500) {
+      console.warn('cover_url too long, dropping value')
+      cover_url = null
+    }
 
     if (useMysql) {
       // require admin or author auth (or allow dev bypass)
@@ -530,7 +535,7 @@ app.post('/banners', authMiddleware, bannerUpload.single('banner'), async (req, 
       // fallback: persist to file
       const bf = path.join(__dirname, 'data', 'banners.json')
       let arr = []
-      try { arr = JSON.parse(fs.readFileSync(bf, 'utf-8')) } catch (e) {}
+      try { arr = JSON.parse(fs.readFileSync(bf, 'utf-8')) } catch (e) { }
       const id = String((arr.length ? Number(arr[0].id || 0) + arr.length + 1 : 1))
       const obj = { id, title, image_url: imageUrl ? `${req.protocol}://${req.get('host')}${imageUrl}` : null, link, enabled: enabled === 'true' || enabled === '1', created_at: new Date().toISOString() }
       arr.unshift(obj)
@@ -1231,7 +1236,7 @@ app.post('/uploads/cover-json', async (req, res) => {
     const { filename, data } = req.body || {}
     if (!filename || !data) return res.status(400).json({ error: 'filename and data (base64) required' })
     // sanitize filename a bit
-    const safeName = `${Date.now()}-${Math.random().toString(36).slice(2,8)}-${filename.replace(/[^a-zA-Z0-9.\-]/g, '')}`
+    const safeName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${filename.replace(/[^a-zA-Z0-9.\-]/g, '')}`
     const outPath = path.join(coversDir, safeName)
     const buffer = Buffer.from(data, 'base64')
     fs.writeFileSync(outPath, buffer)
@@ -1765,7 +1770,7 @@ app.get('/books/:bookId/chapters/:chapterId', async (req, res) => {
     }
     // debug log to help troubleshoot missing content
     try {
-      console.log(`[GET chapter] book=${req.params.bookId} param=${req.params.chapterId} foundBy=${foundBy} chapterId=${chapter && chapter.id ? chapter.id : 'null'} chapterNo=${chapter && chapter.chapter_no ? chapter.chapter_no : 'null'} title=${chapter && chapter.title ? chapter.title : 'null'} contentLen=${chapter && chapter.content ? String((chapter.content||'').length) : '0'}`)
+      console.log(`[GET chapter] book=${req.params.bookId} param=${req.params.chapterId} foundBy=${foundBy} chapterId=${chapter && chapter.id ? chapter.id : 'null'} chapterNo=${chapter && chapter.chapter_no ? chapter.chapter_no : 'null'} title=${chapter && chapter.title ? chapter.title : 'null'} contentLen=${chapter && chapter.content ? String((chapter.content || '').length) : '0'}`)
     } catch (e) { /* ignore logging errors */ }
     if (!chapter) return res.status(404).json({ error: 'not found' })
     const chapterNo = chapter.chapter_no || chapter.chapterNo || 0
@@ -1888,7 +1893,7 @@ app.get('/users/:userId/progress', authMiddleware, async (req, res) => {
 const PORT = process.env.PORT || 4000;
 // show a quick debug summary on start
 console.log(`Server starting on port ${PORT} (USE_MYSQL=${useMysql})`)
-if (process.env.JWT_SECRET) console.log(`JWT_SECRET set (${String(process.env.JWT_SECRET).length} chars)`) 
+if (process.env.JWT_SECRET) console.log(`JWT_SECRET set (${String(process.env.JWT_SECRET).length} chars)`)
 
 // Debug helper: allow generating a signed admin token when ALLOW_DEV_TOKENS=true
 if (process.env.ALLOW_DEV_TOKENS === 'true') {
@@ -1904,33 +1909,33 @@ if (process.env.ALLOW_DEV_TOKENS === 'true') {
     }
   })
 
-// Update current user's avatar (user/vip/author/admin)
-app.post('/me/avatar', authMiddleware, async (req, res) => {
-  try {
-    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-    const userId = req.user && req.user.id
-    if (!userId) return res.status(401).json({ error: 'missing authorization' })
-    const { avatar_url } = req.body || {}
-    if (!avatar_url || typeof avatar_url !== 'string') return res.status(400).json({ error: 'avatar_url required' })
-    let stored = avatar_url
-    if (avatar_url.startsWith('data:')) {
-      const saved = saveDataUrlToAvatar(avatar_url)
-      if (!saved) return res.status(400).json({ error: 'invalid_image' })
-      stored = saved
+  // Update current user's avatar (user/vip/author/admin)
+  app.post('/me/avatar', authMiddleware, async (req, res) => {
+    try {
+      if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+      const userId = req.user && req.user.id
+      if (!userId) return res.status(401).json({ error: 'missing authorization' })
+      const { avatar_url } = req.body || {}
+      if (!avatar_url || typeof avatar_url !== 'string') return res.status(400).json({ error: 'avatar_url required' })
+      let stored = avatar_url
+      if (avatar_url.startsWith('data:')) {
+        const saved = saveDataUrlToAvatar(avatar_url)
+        if (!saved) return res.status(400).json({ error: 'invalid_image' })
+        stored = saved
+      }
+      if (stored.length > 500) return res.status(400).json({ error: 'avatar_url too long' })
+      const ok = await db.updateUserAvatar(userId, stored)
+      if (!ok) return res.status(500).json({ error: 'update_failed' })
+      const updated = await db.getUserById(userId)
+      if (updated && updated.avatar_url && updated.avatar_url.startsWith('/')) {
+        updated.avatar_url = `${req.protocol}://${req.get('host')}${updated.avatar_url}`
+      }
+      return res.json(updated)
+    } catch (err) {
+      console.error('POST /me/avatar err', err)
+      res.status(500).json({ error: 'internal' })
     }
-    if (stored.length > 500) return res.status(400).json({ error: 'avatar_url too long' })
-    const ok = await db.updateUserAvatar(userId, stored)
-    if (!ok) return res.status(500).json({ error: 'update_failed' })
-    const updated = await db.getUserById(userId)
-    if (updated && updated.avatar_url && updated.avatar_url.startsWith('/')) {
-      updated.avatar_url = `${req.protocol}://${req.get('host')}${updated.avatar_url}`
-    }
-    return res.json(updated)
-  } catch (err) {
-    console.error('POST /me/avatar err', err)
-    res.status(500).json({ error: 'internal' })
-  }
-})
+  })
   console.log('Debug token endpoint enabled at POST /debug/token (ALLOW_DEV_TOKENS=true)')
 }
 // Debug: dump chapters for a book (dev only)
@@ -1947,5 +1952,160 @@ if (process.env.ALLOW_DEV_TOKENS === 'true') {
   })
   console.log('Debug chapters endpoint enabled at GET /debug/books/:id/chapters (ALLOW_DEV_TOKENS=true)')
 }
+
+// ==================== COMMENTS API ====================
+// GET /books/:id/comments - public list of comments for a book
+app.get('/books/:id/comments', async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const bookId = req.params.id
+    const comments = await db.getComments(bookId, { status: 'approved' })
+    res.json(comments || [])
+  } catch (err) {
+    console.error('GET /books/:id/comments err', err)
+    res.status(500).json({ error: 'internal', message: err.message })
+  }
+})
+
+// POST /books/:id/comments - create a new comment (requires auth)
+app.post('/books/:id/comments', async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+
+    // Parse auth token
+    let userId = null
+    const auth = req.headers.authorization
+    if (auth) {
+      const parts = auth.split(' ')
+      if (parts.length === 2 && parts[0] === 'Bearer') {
+        try {
+          const payload = jwt.verify(parts[1], JWT_SECRET)
+          userId = payload && payload.id ? payload.id : null
+        } catch (e) {
+          return res.status(401).json({ error: 'invalid token' })
+        }
+      }
+    }
+
+    if (!userId) {
+      return res.status(401).json({ error: 'missing authorization' })
+    }
+
+    const bookId = req.params.id
+    const { content, parent_id } = req.body || {}
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'content required' })
+    }
+
+    // Check content for negativity using Grok API (xAI)
+    let isNegative = false
+    let negativeProbability = 0
+    const GROK_KEY = process.env.GROK_API_KEY
+    if (GROK_KEY) {
+      console.log(`[Grok] Checking: "${content.trim()}"`);
+      try {
+        const grokRes = await fetch('https://api.x.ai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${GROK_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: "grok-4-1-fast-non-reasoning",
+            messages: [
+              { role: "system", content: "Bạn là robot kiểm duyệt bình luận thô tục cực kỳ khắt khe. Nếu bình luận chứa từ bậy, tiếng lóng thô lỗ (lol, cút, xàm, ngu, đm, vcl, ...) hoặc xúc phạm người khác, hãy trả về 'tieu cuc'. Ngược lại trả về 'binh thuong'. Chỉ trả về 1 từ duy nhất." },
+              { role: "user", content: content.trim() }
+            ],
+            temperature: 0
+          })
+        })
+        const grokData = await grokRes.json()
+        if (grokData && grokData.choices && grokData.choices[0]) {
+          const answer = (grokData.choices[0].message.content || '').toLowerCase().trim()
+          console.log(`[Grok] Raw Answer: "${answer}"`);
+          if (answer.includes('tieu cuc') || answer.includes('tiêu cực') || answer.includes('toxic')) {
+            isNegative = true
+            negativeProbability = 99
+          } else if (answer.includes('binh thuong') || answer.includes('bình thường')) {
+            isNegative = false
+          } else {
+            // Nếu Grok trả về lạ, mặc định coi là tiêu cực nếu không phải 'binh thuong'
+            isNegative = !answer.includes('binh thuong');
+          }
+        } else {
+          console.log('[Grok] Error response:', JSON.stringify(grokData));
+        }
+      } catch (e) {
+        console.error('[Grok] Fetch failed:', e.message)
+      }
+    } else {
+      console.warn('[Grok] Missing GROK_API_KEY');
+    }
+
+
+    const comment = await db.createComment(bookId, {
+      user_id: userId,
+      content: content.trim(),
+      parent_id: parent_id || null,
+      is_negative: isNegative ? 1 : 0,
+      negative_probability: negativeProbability
+    })
+
+    res.status(201).json(comment)
+  } catch (err) {
+    console.error('POST /books/:id/comments err', err)
+    res.status(500).json({ error: 'internal', message: err.message })
+  }
+})
+
+// GET /comments - admin: list all comments with optional filters
+app.get('/comments', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    const { status, limit } = req.query || {}
+    const comments = await db.getComments(null, { status, limit: limit ? parseInt(limit) : 100 })
+    res.json(comments || [])
+  } catch (err) {
+    console.error('GET /comments err', err)
+    res.status(500).json({ error: 'internal', message: err.message })
+  }
+})
+
+// PUT /comments/:id - admin: update comment (approve/reject)
+app.put('/comments/:id', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    const id = req.params.id
+    const { content, enabled, status } = req.body || {}
+    const updated = await db.updateComment(id, {
+      content,
+      enabled,
+      status,
+      reviewed_by: req.user.email || req.user.id
+    })
+    if (!updated) return res.status(404).json({ error: 'not found' })
+    res.json(updated)
+  } catch (err) {
+    console.error('PUT /comments/:id err', err)
+    res.status(500).json({ error: 'internal', message: err.message })
+  }
+})
+
+// DELETE /comments/:id - admin: delete comment
+app.delete('/comments/:id', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    const id = req.params.id
+    const result = await db.deleteComment(id)
+    res.json(result)
+  } catch (err) {
+    console.error('DELETE /comments/:id err', err)
+    res.status(500).json({ error: 'internal', message: err.message })
+  }
+})
 
 app.listen(PORT, () => console.log(`Server listening on ${PORT}`));

@@ -21,6 +21,7 @@ export default function BookDetailScreen() {
   const [following, setFollowing] = useState<boolean>(false)
   const [comments, setComments] = useState<any[]>([])
   const [commentText, setCommentText] = useState<string>('')
+  const [revealedNegative, setRevealedNegative] = useState<Set<string>>(new Set())
 
   useFocusEffect(useCallback(() => {
     let active = true
@@ -46,7 +47,7 @@ export default function BookDetailScreen() {
             stats: `${(res.followers_count || 0)} theo dõi · ${((res.chapters && res.chapters.length) || res.chapters_count || 0)} chương`,
             desc: res.description || res.desc || res.content || '',
             cover: res.cover_url ? (String(res.cover_url).startsWith('http') ? res.cover_url : `${API_BASE}${res.cover_url}`) : null,
-            chapters: Array.isArray(res.chapters) ? res.chapters.map((c: any, idx: number) => ({ id: String(c.id || c.chapter_id || `${id}-c${idx+1}`), title: c.title || `Chương ${idx+1}`, content: c.content || c.body || c.text || '' })) : []
+            chapters: Array.isArray(res.chapters) ? res.chapters.map((c: any, idx: number) => ({ id: String(c.id || c.chapter_id || `${id}-c${idx + 1}`), title: c.title || `Chương ${idx + 1}`, content: c.content || c.body || c.text || '' })) : []
           }
           setBook(b)
           setLikesCount(Number(res.likes_count || 0))
@@ -187,8 +188,8 @@ export default function BookDetailScreen() {
           )}
           <View style={{ flex: 1 }}>
             <Text style={styles.title} numberOfLines={2}>{book ? book.title : '...'}</Text>
-              <Text style={styles.meta} numberOfLines={1}>{book ? book.tags.join(" / ") : ''}</Text>
-              <Text style={styles.meta2}>{`${followersCount} theo dõi · ${(book?.chapters || []).length} chương · ${likesCount} yêu thích`}</Text>
+            <Text style={styles.meta} numberOfLines={1}>{book ? book.tags.join(" / ") : ''}</Text>
+            <Text style={styles.meta2}>{`${followersCount} theo dõi · ${(book?.chapters || []).length} chương · ${likesCount} yêu thích`}</Text>
             <View style={styles.actionRow}>
               <Pressable onPress={handleToggleFollow} style={[styles.btnSecondary, following && styles.btnSecondaryActive]}>
                 <Text style={[styles.btnSecondaryText, following && styles.btnSecondaryTextActive]}>{following ? 'Đang theo dõi' : 'Theo dõi'}</Text>
@@ -202,7 +203,7 @@ export default function BookDetailScreen() {
             </View>
           </View>
         </View>
-        
+
         {shouldShowAds(user) ? <AdBanner size="small" /> : null}
 
         <View style={styles.card}>
@@ -248,15 +249,30 @@ export default function BookDetailScreen() {
           {comments.length === 0 ? (
             <View style={styles.emptyBox}><Text style={styles.meta}>Chưa có bình luận</Text></View>
           ) : (
-            comments.map((c, idx) => (
-              <View key={c.id || idx} style={[styles.commentRow, idx !== 0 && styles.rowDivider]}>
-                <View style={styles.avatarStub} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.commentAuthor}>Người dùng {c.user_id}</Text>
-                  <Text style={styles.commentText}>{c.content}</Text>
+            comments.map((c, idx) => {
+              const isHidden = c.is_negative && !revealedNegative.has(c.id)
+              return (
+                <View key={c.id || idx} style={[styles.commentRow, idx !== 0 && styles.rowDivider]}>
+                  {c.user_avatar ? (
+                    <Image source={{ uri: c.user_avatar.startsWith('http') ? c.user_avatar : `${API_BASE}${c.user_avatar}` }} style={styles.avatarStub} />
+                  ) : (
+                    <View style={styles.avatarStub} />
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.commentAuthor}>{c.user_name || `Người dùng ${c.user_id}`}</Text>
+                    {isHidden ? (
+                      <Pressable onPress={() => setRevealedNegative(prev => new Set(prev).add(c.id))}>
+                        <View style={styles.hiddenComment}>
+                          <Text style={styles.hiddenCommentText}>⚠️ Bình luận tiêu cực - Nhấn để xem</Text>
+                        </View>
+                      </Pressable>
+                    ) : (
+                      <Text style={[styles.commentText, c.is_negative && styles.negativeComment]}>{c.content}</Text>
+                    )}
+                  </View>
                 </View>
-              </View>
-            ))
+              )
+            })
           )}
         </View>
       </ScrollView>
@@ -351,4 +367,7 @@ const styles = StyleSheet.create({
   avatarStub: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#e5e7eb' },
   commentAuthor: { fontWeight: '700', color: '#0f172a' },
   commentText: { color: '#111827', marginTop: 2 },
+  hiddenComment: { backgroundColor: '#fef2f2', borderRadius: 8, padding: 10, marginTop: 4 },
+  hiddenCommentText: { color: '#dc2626', fontSize: 13 },
+  negativeComment: { color: '#6b7280', fontStyle: 'italic' },
 });

@@ -1,7 +1,9 @@
-import { StyleSheet, Text, View, TouchableOpacity } from "react-native";
+import { StyleSheet, Text, View, TouchableOpacity, Image } from "react-native";
 import { Link, useRouter } from "expo-router";
 import { useEffect, useState } from 'react'
+import { Ionicons } from "@expo/vector-icons";
 import * as Auth from '../lib/auth'
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function HomePage() {
   const router = useRouter()
@@ -23,115 +25,124 @@ export default function HomePage() {
     return () => { mounted = false }
   }, [])
 
-  async function loadBooks(t: string) {
-    // Not needed anymore - we redirect to explore if logged in
-  }
-
-  async function handleLogout() {
-    await Auth.removeToken()
-    await Auth.removeUser()
-    setToken(null)
-    setUser(null)
-    router.replace('/(auth)/login')
-  }
-  
-  // If logged in, this component won't render (redirected to explore)
-  // So we only need to show login/register buttons
-
   return (
-    <View style={styles.container}>
-      <View style={styles.main}>
-        <Text style={styles.title}>Reader App</Text>
-        <Text style={styles.subtitle}>Chào mừng bạn đến với ứng dụng đọc truyện</Text>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.content}>
+        {/* Logo/Icon */}
+        <View style={styles.logoContainer}>
+          <View style={styles.logoCircle}>
+            <Ionicons name="book" size={48} color="#1088ff" />
+          </View>
+        </View>
 
+        {/* Title */}
+        <View style={styles.titleContainer}>
+          <Text style={styles.title}>Reader App</Text>
+          <Text style={styles.subtitle}>Khám phá thế giới truyện{'\n'}ngay trong tầm tay bạn</Text>
+        </View>
+
+        {/* Buttons */}
         <View style={styles.actions}>
           <Link href={'/(auth)/login' as any} asChild>
             <TouchableOpacity style={styles.buttonPrimary}>
-              <Text style={styles.buttonText}>Đăng nhập</Text>
+              <Text style={styles.buttonPrimaryText}>Đăng nhập</Text>
             </TouchableOpacity>
           </Link>
 
           <Link href={'/(auth)/register' as any} asChild>
             <TouchableOpacity style={styles.buttonSecondary}>
-              <Text style={styles.buttonSecondaryText}>Đăng ký</Text>
-            </TouchableOpacity>
-          </Link>
-
-          <Link href={'/(tabs)/explore' as any} asChild>
-            <TouchableOpacity style={styles.skipButton}>
-              <Text style={styles.linkSkip}>Bỏ qua</Text>
+              <Text style={styles.buttonSecondaryText}>Tạo tài khoản mới</Text>
             </TouchableOpacity>
           </Link>
         </View>
+
+        {/* Skip */}
+        <Link href={'/(tabs)/explore' as any} asChild>
+          <TouchableOpacity style={styles.skipButton}>
+            <Text style={styles.skipText}>Khám phá không cần đăng nhập</Text>
+            <Ionicons name="arrow-forward" size={16} color="#1088ff" />
+          </TouchableOpacity>
+        </Link>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    alignItems: "center",
-    padding: 24,
+    backgroundColor: "#fff",
   },
-  main: {
+  content: {
     flex: 1,
+    paddingHorizontal: 24,
     justifyContent: "center",
-    maxWidth: 960,
-    marginHorizontal: "auto",
+  },
+  logoContainer: {
+    alignItems: "center",
+    marginBottom: 32,
+  },
+  logoCircle: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: "#f0f7ff",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  titleContainer: {
+    alignItems: "center",
+    marginBottom: 48,
   },
   title: {
-    fontSize: 40,
-    fontWeight: "bold",
+    fontSize: 32,
+    fontWeight: "700",
+    color: "#111827",
+    marginBottom: 12,
   },
   subtitle: {
-    fontSize: 18,
-    color: "#38434D",
-    marginTop: 8,
+    fontSize: 16,
+    color: "#6b7280",
+    textAlign: "center",
+    lineHeight: 24,
   },
   actions: {
-    marginTop: 24,
     gap: 12,
   },
   buttonPrimary: {
-    height: 48,
+    height: 52,
     backgroundColor: "#111827",
-    borderRadius: 8,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 16,
   },
-  buttonText: {
+  buttonPrimaryText: {
     color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },
   buttonSecondary: {
-    height: 48,
-    borderColor: "#111827",
-    borderWidth: 1,
-    borderRadius: 8,
+    height: 52,
+    backgroundColor: "#f2f4f7",
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 16,
   },
   buttonSecondaryText: {
     color: "#111827",
     fontSize: 16,
     fontWeight: "600",
   },
-  linkSkip: {
-    color: "#1088ff",
-    fontSize: 14,
-    textAlign: "center",
-  },
   skipButton: {
-    borderWidth: 1,
-    borderColor: "#1088ff",
-    borderRadius: 8,
-    paddingVertical: 10,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 8,
+    marginTop: 24,
+    gap: 6,
+  },
+  skipText: {
+    color: "#1088ff",
+    fontSize: 14,
+    fontWeight: "500",
   },
 });

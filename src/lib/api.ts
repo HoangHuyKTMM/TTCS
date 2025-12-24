@@ -1,7 +1,7 @@
 import Constants from 'expo-constants'
 
 const extra = (Constants.expoConfig?.extra || {}) as any
-export const API_BASE = extra.apiBase || 'http://10.0.2.2:4000' // adjust to your dev machine IP or ngrok
+export const API_BASE = extra.apiBase || 'http://192.168.2.9:4000' // adjust to your dev machine IP or ngrok
 
 async function request(path: string, opts: RequestInit = {}) {
   const url = `${API_BASE}${path}`
