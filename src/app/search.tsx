@@ -16,13 +16,22 @@ export default function SearchScreen() {
   const [loading, setLoading] = useState(true);
   const [selectedGenre, setSelectedGenre] = useState("Tất cả");
   const [user, setUser] = useState<any | null>(null)
+  const [userLoaded, setUserLoaded] = useState(false)
   const [interstitialVisible, setInterstitialVisible] = useState(false)
   const [targetBookId, setTargetBookId] = useState<string | null>(null)
+  const [pendingOpen, setPendingOpen] = useState<string | null>(null)
   const router = useRouter()
+
+  const fmtNum = useCallback((n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0), [])
 
   useFocusEffect(useCallback(() => {
     let active = true
-    Auth.getUser().then(u => { if (active) setUser(u) })
+    setUserLoaded(false)
+    Auth.getUser().then(u => {
+      if (!active) return
+      setUser(u)
+      setUserLoaded(true)
+    })
     return () => { active = false }
   }, []))
 
@@ -36,11 +45,13 @@ export default function SearchScreen() {
         if (Array.isArray(res)) {
           setBooks(res.map((b: any) => ({
             id: String(b.id || b.story_id),
-            title: b.title || b.name,
-            author: b.author || b.pen_name || '',
+            title: b.title || b.name || '',
+            author: typeof b.author === 'string' ? b.author : (typeof b.pen_name === 'string' ? b.pen_name : ''),
             genre: b.genre || '',
             cover: b.cover_url ? (String(b.cover_url).startsWith('http') ? b.cover_url : `${API_BASE}${b.cover_url}`) : null,
-            chapters_count: b.chapters_count || 0,
+            chapters_count: b.chapters_count || (Array.isArray(b.chapters) ? b.chapters.length : 0) || 0,
+            views: Number(b.views || b.view_count || b.reads || b.view || b.total_views || 0),
+            likes: Number(b.likes_count || b.likes || b.favorites || b.followers_count || 0),
           })));
         }
       } catch (e) {
@@ -51,20 +62,31 @@ export default function SearchScreen() {
     }
     load();
     return () => { mounted = false; };
-  }, []);
+  }, [fmtNum]);
 
   function openBookNow(id: string) {
     router.push({ pathname: '/book/[id]', params: { id } } as any)
   }
 
   function handleOpenBook(id: string) {
-    if (shouldShowAds(user)) {
-      setTargetBookId(id)
-      setInterstitialVisible(true)
-    } else {
-      openBookNow(id)
+    if (!userLoaded) {
+      setPendingOpen(id)
+      return
     }
+    if (!shouldShowAds(user)) return openBookNow(id)
+    setTargetBookId(id)
+    setInterstitialVisible(true)
   }
+
+  useEffect(() => {
+    if (!userLoaded) return
+    if (!pendingOpen) return
+    const id = pendingOpen
+    setPendingOpen(null)
+    if (!shouldShowAds(user)) return openBookNow(id)
+    setTargetBookId(id)
+    setInterstitialVisible(true)
+  }, [userLoaded, pendingOpen, user])
 
   const filtered = React.useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -84,10 +106,11 @@ export default function SearchScreen() {
     
     // Filter by search query
     if (query) {
-      result = result.filter((b) => 
-        b.title.toLowerCase().includes(query) || 
-        (b.author && b.author.toLowerCase().includes(query))
-      );
+      result = result.filter((b) => {
+        const titleLc = (b.title || '').toLowerCase();
+        const authorLc = typeof b.author === 'string' ? b.author.toLowerCase() : '';
+        return titleLc.includes(query) || authorLc.includes(query);
+      });
     }
     
     return result;
@@ -118,7 +141,6 @@ export default function SearchScreen() {
               <Text style={[styles.genreText, active && styles.genreTextActive]}>
                 {genre}
               </Text>
-      <AdInterstitial visible={interstitialVisible} onFinish={() => { setInterstitialVisible(false); if (targetBookId) openBookNow(targetBookId); setTargetBookId(null) }} />
             </Pressable>
           );
         })}
@@ -151,6 +173,9 @@ export default function SearchScreen() {
                     {item.author ? (
                       <Text style={styles.author} numberOfLines={1}>{item.author}</Text>
                     ) : null}
+                    <Text style={styles.meta}>
+                      {fmtNum(Number(item.views || 0))} lượt xem · {fmtNum(Number(item.likes || 0))} lượt thích
+                    </Text>
                     <Text style={styles.meta}>{item.chapters_count} chương</Text>
                   </View>
                 </Pressable>
@@ -164,6 +189,15 @@ export default function SearchScreen() {
           />
         </>
       )}
+
+      <AdInterstitial
+        visible={interstitialVisible}
+        onFinish={() => {
+          setInterstitialVisible(false)
+          if (targetBookId) openBookNow(targetBookId)
+          setTargetBookId(null)
+        }}
+      />
     </SafeAreaView>
   );
 }

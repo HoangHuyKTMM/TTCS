@@ -1,7 +1,8 @@
-require('dotenv').config();
+// Always load env from this folder so running the server from workspace root still works.
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const fs = require('fs');
-const path = require('path');
 const cors = require('cors');
 const shortid = require('shortid');
 
@@ -66,6 +67,12 @@ const avatarsDir = path.join(__dirname, 'public', 'avatars')
 try { require('fs').mkdirSync(avatarsDir, { recursive: true }) } catch (e) { }
 app.use('/avatars', express.static(avatarsDir))
 
+// serve uploaded ad media (videos)
+const adMediaDir = path.join(__dirname, 'public', 'ad-media')
+const adVideosDir = path.join(adMediaDir, 'videos')
+try { require('fs').mkdirSync(adVideosDir, { recursive: true }) } catch (e) { }
+app.use('/ad-media', express.static(adMediaDir))
+
 // file upload for covers
 const multer = require('multer')
 const storage = multer.diskStorage({
@@ -87,6 +94,21 @@ const bannerStorage = multer.diskStorage({
   }
 })
 const bannerUpload = multer({ storage: bannerStorage })
+
+// separate storage for ad videos
+const adVideoStorage = multer.diskStorage({
+  destination: function (req, file, cb) { cb(null, adVideosDir) },
+  filename: function (req, file, cb) {
+    const ext = (file.originalname || '').split('.').pop() || 'mp4'
+    const safeExt = ext.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'mp4'
+    const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`
+    cb(null, name)
+  }
+})
+const adVideoUpload = multer({
+  storage: adVideoStorage,
+  limits: { fileSize: 120 * 1024 * 1024 } // up to 120MB for short videos
+})
 
 const DATA_PATH = path.join(__dirname, 'data.json');
 
@@ -187,6 +209,17 @@ app.get('/books', async (req, res) => {
       const rows = await db.getBooks({ userId: currentUserId, mineOnly })
       console.log('[GET /books] Got', rows.length, 'rows')
 
+      // prefetch liked ids for current user (if any) to tag list items
+      let likedSet = null
+      if (currentUserId) {
+        try {
+          const likedIds = await db.getUserLikedBookIds(currentUserId)
+          likedSet = new Set(likedIds.map(id => String(id)))
+        } catch (e) {
+          likedSet = null
+        }
+      }
+
       if (!rows) {
         console.log('[GET /books] No rows returned')
         return res.json([])
@@ -196,6 +229,7 @@ app.get('/books', async (req, res) => {
       const books = []
       for (const r of rows) {
         try {
+          const chapterCount = (Number.parseInt(r.chapters_count, 10) || 0) || (Array.isArray(r.chapters) ? r.chapters.length : 0)
           const book = {
             id: String(r.id || r.story_id),
             title: r.title,
@@ -204,8 +238,12 @@ app.get('/books', async (req, res) => {
             author_user_id: r.author_user_id ? String(r.author_user_id) : null,
             description: r.description,
             genre: r.genre,
-            chapters: new Array(parseInt(r.chapters_count) || 0),
-            cover_url: r.cover_url ? `${req.protocol}://${req.get('host')}${r.cover_url}` : null
+            chapters_count: chapterCount,
+            chapters: new Array(chapterCount),
+            likes_count: typeof r.likes_count === 'number' ? r.likes_count : Number(r.likes_count || 0),
+            views: typeof r.views === 'number' ? r.views : Number(r.views_count || r.views || 0),
+            cover_url: r.cover_url ? `${req.protocol}://${req.get('host')}${r.cover_url}` : null,
+            liked: likedSet ? likedSet.has(String(r.id || r.story_id)) : false
           }
           books.push(book)
         } catch (mapErr) {
@@ -217,7 +255,14 @@ app.get('/books', async (req, res) => {
       return res.json(books)
     }
     const data = readData();
-    res.json(data.books);
+    // file-mode: ensure likes/views fields exist so mobile can display stats
+    const books = (data.books || []).map(b => {
+      const likes_count = Number(b.likes_count || b.likes || b.favorites || 0)
+      const views = Number(b.views || b.view_count || b.reads || b.total_views || 0)
+      const chapters_count = Array.isArray(b.chapters) ? b.chapters.length : (Number(b.chapters_count || 0) || 0)
+      return Object.assign({}, b, { likes_count, views, chapters_count })
+    })
+    res.json(books);
   } catch (err) {
     console.error('[GET /books] Error:', err)
     res.status(500).json({ error: 'internal', message: err.message })
@@ -520,6 +565,129 @@ app.get('/banners', async (req, res) => {
   }
 })
 
+// Video Ads endpoints
+// GET /ads?placement=interstitial - public list of enabled video ads
+app.get('/ads', async (req, res) => {
+  try {
+    const placement = req.query.placement ? String(req.query.placement) : null
+    if (useMysql) {
+      const rows = await db.getAds({ placement, admin: false })
+      const list = (rows || []).map(r => ({
+        ...r,
+        video_url: r.video_url && r.video_url.startsWith('/') ? `${req.protocol}://${req.get('host')}${r.video_url}` : r.video_url
+      }))
+      return res.json(list)
+    }
+    const af = path.join(__dirname, 'data', 'ads.json')
+    let arr = []
+    try { arr = JSON.parse(fs.readFileSync(af, 'utf-8')) } catch (e) { arr = [] }
+    arr = (arr || []).filter(a => a && a.enabled)
+    if (placement) arr = arr.filter(a => String(a.placement || 'interstitial') === placement)
+    // make urls absolute
+    arr = arr.map(a => ({
+      ...a,
+      video_url: a.video_url && a.video_url.startsWith('/') ? `${req.protocol}://${req.get('host')}${a.video_url}` : a.video_url
+    }))
+    return res.json(arr)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// GET /ads/admin - admin list (includes disabled)
+app.get('/ads/admin', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    const placement = req.query.placement ? String(req.query.placement) : null
+    const rows = await db.getAds({ placement, admin: true })
+    const list = (rows || []).map(r => ({
+      ...r,
+      video_url: r.video_url && r.video_url.startsWith('/') ? `${req.protocol}://${req.get('host')}${r.video_url}` : r.video_url
+    }))
+    return res.json(list)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// POST /ads (admin) - supports multipart/form-data with field 'video'
+app.post('/ads', authMiddleware, adVideoUpload.single('video'), async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    const { title, link, enabled, placement } = req.body || {}
+    const videoUrl = req.file ? `/ad-media/videos/${req.file.filename}` : null
+    try {
+      const ad = await db.createAd({ title, video_url: videoUrl, link, placement, enabled: enabled === 'true' || enabled === '1' })
+      if (ad && ad.video_url && ad.video_url.startsWith('/')) ad.video_url = `${req.protocol}://${req.get('host')}${ad.video_url}`
+      return res.status(201).json(ad)
+    } catch (e) {
+      // fallback: persist to file
+      const af = path.join(__dirname, 'data', 'ads.json')
+      let arr = []
+      try { arr = JSON.parse(fs.readFileSync(af, 'utf-8')) } catch (e) { }
+      const id = String(Date.now())
+      const obj = {
+        id,
+        title: title || null,
+        video_url: videoUrl ? `${req.protocol}://${req.get('host')}${videoUrl}` : null,
+        link: link || null,
+        placement: placement || 'interstitial',
+        enabled: enabled === 'true' || enabled === '1',
+        created_at: new Date().toISOString()
+      }
+      arr.unshift(obj)
+      fs.mkdirSync(path.dirname(af), { recursive: true })
+      fs.writeFileSync(af, JSON.stringify(arr, null, 2))
+      return res.status(201).json(obj)
+    }
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// PUT /ads/:id (admin)
+app.put('/ads/:id', authMiddleware, adVideoUpload.single('video'), async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    const id = req.params.id
+    const { title, link, enabled, placement } = req.body || {}
+    const videoUrl = req.file ? `/ad-media/videos/${req.file.filename}` : undefined
+    const updated = await db.updateAd(id, {
+      title,
+      link,
+      placement,
+      enabled: enabled === undefined ? undefined : (enabled === 'true' || enabled === '1'),
+      video_url: videoUrl
+    })
+    if (!updated) return res.status(404).json({ error: 'not found' })
+    if (updated.video_url && updated.video_url.startsWith('/')) updated.video_url = `${req.protocol}://${req.get('host')}${updated.video_url}`
+    res.json(updated)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// DELETE /ads/:id (admin)
+app.delete('/ads/:id', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    const id = req.params.id
+    const result = await db.deleteAd(id)
+    res.json(result)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
 // POST /banners (admin) - supports multipart/form-data with field 'banner'
 app.post('/banners', authMiddleware, bannerUpload.single('banner'), async (req, res) => {
   try {
@@ -710,6 +878,10 @@ app.get('/books/:id', async (req, res) => {
     const data = readData();
     const book = data.books.find(b => b.id === req.params.id);
     if (!book) return res.status(404).json({ error: 'not found' });
+    // file-mode: normalize stats fields
+    book.likes_count = Number(book.likes_count || book.likes || book.favorites || 0)
+    book.views = Number(book.views || book.view_count || book.reads || book.total_views || 0)
+    book.chapters_count = Array.isArray(book.chapters) ? book.chapters.length : (Number(book.chapters_count || 0) || 0)
     res.json(book);
   } catch (err) {
     console.error(err)
@@ -994,10 +1166,22 @@ app.post('/comments/:id/reject', authMiddleware, async (req, res) => {
 app.delete('/comments/:id', authMiddleware, async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
     const id = req.params.id
-    const result = await db.deleteComment(id)
-    res.json(result)
+    if (!req.user) return res.status(401).json({ error: 'missing authorization' })
+
+    // Admin can delete any comment
+    if (req.user.role === 'admin') {
+      const result = await db.deleteComment(id)
+      return res.json(result)
+    }
+
+    // Normal user: can only delete their own comments
+    const c = await db.getCommentById(id)
+    if (!c) return res.status(404).json({ error: 'not found' })
+    if (String(c.user_id) !== String(req.user.id)) return res.status(403).json({ error: 'forbidden' })
+
+    const result = await db.deleteCommentByUser(id, req.user.id)
+    return res.json(result)
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'internal' })
@@ -1008,11 +1192,19 @@ app.delete('/comments/:id', authMiddleware, async (req, res) => {
 // POST /books/:id/like - like a story
 app.post('/books/:id/like', authMiddleware, async (req, res) => {
   try {
-    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-    const userId = req.user.id
-    const bookId = req.params.id
-    const row = await db.createLike(userId, bookId)
-    res.status(201).json(row)
+    if (useMysql) {
+      const userId = req.user.id
+      const bookId = req.params.id
+      const row = await db.createLike(userId, bookId)
+      return res.status(201).json(row)
+    }
+    // file-mode fallback: bump likes_count (no per-user uniqueness)
+    const data = readData()
+    const book = (data.books || []).find(b => String(b.id) === String(req.params.id))
+    if (!book) return res.status(404).json({ error: 'not found' })
+    book.likes_count = Number(book.likes_count || 0) + 1
+    writeData(data)
+    return res.status(201).json({ id: shortid.generate(), likes_count: book.likes_count })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'internal' })
@@ -1022,11 +1214,19 @@ app.post('/books/:id/like', authMiddleware, async (req, res) => {
 // DELETE /books/:id/like - remove like
 app.delete('/books/:id/like', authMiddleware, async (req, res) => {
   try {
-    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-    const userId = req.user.id
-    const bookId = req.params.id
-    const row = await db.deleteLike(userId, bookId)
-    res.json(row)
+    if (useMysql) {
+      const userId = req.user.id
+      const bookId = req.params.id
+      const row = await db.deleteLike(userId, bookId)
+      return res.json(row)
+    }
+    // file-mode fallback
+    const data = readData()
+    const book = (data.books || []).find(b => String(b.id) === String(req.params.id))
+    if (!book) return res.status(404).json({ error: 'not found' })
+    book.likes_count = Math.max(0, Number(book.likes_count || 0) - 1)
+    writeData(data)
+    return res.json({ affectedRows: 1, likes_count: book.likes_count })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'internal' })
@@ -1036,14 +1236,20 @@ app.delete('/books/:id/like', authMiddleware, async (req, res) => {
 // GET /books/:id/likes - public count
 app.get('/books/:id/likes', async (req, res) => {
   try {
-    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-    const bookId = req.params.id
-    const user = getUserFromAuthHeader(req)
-    const [cnt, liked] = await Promise.all([
-      db.getLikesCount(bookId),
-      user ? db.hasUserLiked(user.id, bookId) : false
-    ])
-    res.json({ count: cnt, liked: !!liked })
+    if (useMysql) {
+      const bookId = req.params.id
+      const user = getUserFromAuthHeader(req)
+      const [cnt, liked] = await Promise.all([
+        db.getLikesCount(bookId),
+        user ? db.hasUserLiked(user.id, bookId) : false
+      ])
+      return res.json({ count: cnt, liked: !!liked })
+    }
+    // file-mode fallback
+    const data = readData()
+    const book = (data.books || []).find(b => String(b.id) === String(req.params.id))
+    if (!book) return res.status(404).json({ error: 'not found' })
+    return res.json({ count: Number(book.likes_count || 0), liked: false })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'internal' })
@@ -1078,14 +1284,208 @@ app.delete('/books/:id/follow', authMiddleware, async (req, res) => {
   }
 })
 
+// Authors (public listing, follow authors)
+// GET /authors - list authors with follower/books counts; optional auth to include is_following
+app.get('/authors', async (req, res) => {
+  try {
+    if (useMysql) {
+      const user = getUserFromAuthHeader(req)
+      const rows = await db.getAuthors({ userId: user ? user.id : null })
+      const authors = (rows || []).map(r => ({
+        id: String(r.author_id),
+        author_id: String(r.author_id),
+        user_id: r.user_id ? String(r.user_id) : null,
+        pen_name: r.pen_name || null,
+        avatar_url: r.avatar_url ? (String(r.avatar_url).startsWith('/') ? `${req.protocol}://${req.get('host')}${r.avatar_url}` : String(r.avatar_url)) : null,
+        followers_count: Number(r.followers_count || 0),
+        books_count: Number(r.books_count || 0),
+        is_following: !!r.is_following
+      }))
+      return res.json(authors)
+    }
+
+    // file-mode fallback: unique authors from data.json
+    const data = readData()
+    const map = new Map()
+    for (const b of (data.books || [])) {
+      const a = (b && (b.author || b.author_name || b.pen_name)) ? String(b.author || b.author_name || b.pen_name) : 'Không rõ'
+      const cur = map.get(a) || { id: a, pen_name: a, followers_count: 0, books_count: 0, is_following: false }
+      cur.books_count += 1
+      map.set(a, cur)
+    }
+    return res.json(Array.from(map.values()))
+  } catch (err) {
+    console.error('GET /authors err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// GET /authors/:id/books - list books by author_id
+app.get('/authors/:id/books', async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const authorId = req.params.id
+    const rows = await db.getBooksByAuthorId(authorId)
+    const books = (rows || []).map(r => {
+      const chapterCount = (Number.parseInt(r.chapters_count, 10) || 0) || (Array.isArray(r.chapters) ? r.chapters.length : 0)
+      return {
+        id: String(r.id || r.story_id),
+        story_id: String(r.story_id || r.id),
+        title: r.title,
+        author: r.author || r.author_id,
+        author_id: r.author_id ? String(r.author_id) : null,
+        author_user_id: r.author_user_id ? String(r.author_user_id) : null,
+        description: r.description,
+        genre: r.genre,
+        chapters_count: chapterCount,
+        chapters: new Array(chapterCount),
+        likes_count: typeof r.likes_count === 'number' ? r.likes_count : Number(r.likes_count || 0),
+        views: typeof r.views === 'number' ? r.views : Number(r.views_count || r.views || 0),
+        cover_url: r.cover_url ? `${req.protocol}://${req.get('host')}${r.cover_url}` : null,
+      }
+    })
+    res.json(books)
+  } catch (err) {
+    console.error('GET /authors/:id/books err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// POST /authors/:id/follow - follow an author (auth)
+app.post('/authors/:id/follow', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const userId = req.user.id
+    const authorId = req.params.id
+    // Prevent self-follow (user following their own author profile)
+    try {
+      const author = await db.getAuthorById(authorId)
+      if (author && author.user_id && String(author.user_id) === String(userId)) {
+        return res.status(400).json({ error: 'cannot_follow_self', message: 'Không thể tự theo dõi chính mình.' })
+      }
+    } catch (e) {
+      // ignore lookup errors and proceed (create will still be validated elsewhere)
+    }
+    const row = await db.createAuthorFollow(userId, authorId)
+    res.status(201).json(row)
+  } catch (err) {
+    console.error('POST /authors/:id/follow err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// DELETE /authors/:id/follow - unfollow an author (auth)
+app.delete('/authors/:id/follow', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const userId = req.user.id
+    const authorId = req.params.id
+    const result = await db.deleteAuthorFollowByPair(userId, authorId)
+    res.json(result)
+  } catch (err) {
+    console.error('DELETE /authors/:id/follow err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// GET /following/feed - authenticated user's feed (new stories + new chapters from followed authors)
+app.get('/following/feed', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const userId = req.user && req.user.id
+    if (!userId) return res.status(401).json({ error: 'missing authorization' })
+
+    const limit = Math.min(50, Number.parseInt(String(req.query.limit || '20'), 10) || 20)
+    const offset = Math.max(0, Number.parseInt(String(req.query.offset || '0'), 10) || 0)
+
+    const rows = await db.getFollowingFeed(userId, { limit, offset })
+
+    const items = (rows || []).map(r => ({
+      id: String(r.id),
+      type: r.type,
+      created_at: r.created_at,
+      author_id: r.author_id,
+      author_user_id: r.author_user_id,
+      author_name: r.author_name,
+      story_id: r.story_id,
+      story_title: r.story_title,
+      genre: r.genre,
+      likes_count: Number(r.likes_count || 0),
+      views: Number(r.views || 0),
+      chapter_id: r.chapter_id,
+      chapter_no: r.chapter_no,
+      chapter_title: r.chapter_title,
+      cover_url: r.cover_image ? `${req.protocol}://${req.get('host')}${r.cover_image}` : null,
+    }))
+
+    res.json(items)
+  } catch (err) {
+    console.error('GET /following/feed err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// GET /feed - public feed (new stories + new chapters globally)
+app.get('/feed', async (req, res) => {
+  try {
+    if (useMysql) {
+      const limit = Math.min(50, Number.parseInt(String(req.query.limit || '20'), 10) || 20)
+      const offset = Math.max(0, Number.parseInt(String(req.query.offset || '0'), 10) || 0)
+      const rows = await db.getPublicFeed({ limit, offset })
+      const items = (rows || []).map(r => ({
+        id: String(r.id),
+        type: r.type,
+        created_at: r.created_at,
+        author_id: r.author_id,
+        author_user_id: r.author_user_id,
+        author_name: r.author_name,
+        story_id: r.story_id,
+        story_title: r.story_title,
+        genre: r.genre,
+        likes_count: Number(r.likes_count || 0),
+        views: Number(r.views || 0),
+        chapter_id: r.chapter_id,
+        chapter_no: r.chapter_no,
+        chapter_title: r.chapter_title,
+        cover_url: r.cover_image ? `${req.protocol}://${req.get('host')}${r.cover_image}` : null,
+      }))
+      return res.json(items)
+    }
+
+    // file-mode fallback: use latest books only
+    const data = readData()
+    const books = (data.books || []).slice().reverse().slice(0, 20).map((b, idx) => ({
+      id: `story:${String(b.id || idx)}`,
+      type: 'story',
+      created_at: b.created_at || new Date().toISOString(),
+      author_id: null,
+      author_user_id: null,
+      author_name: b.author || 'Tác giả',
+      story_id: String(b.id || idx),
+      story_title: b.title || b.name || 'Truyện',
+      genre: b.genre || null,
+      likes_count: Number(b.likes_count || b.likes || 0),
+      views: Number(b.views || b.view_count || 0),
+      chapter_id: null,
+      chapter_no: null,
+      chapter_title: null,
+      cover_url: b.cover_url || null,
+    }))
+    return res.json(books)
+  } catch (err) {
+    console.error('GET /feed err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
 // Follows
 // POST /follows { followee_id } - authenticated user follows someone
 app.post('/follows', authMiddleware, async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     const followerId = req.user.id
-    const { followee_id } = req.body
-    if (!followee_id) return res.status(400).json({ error: 'followee_id required' })
+    const followee_id = (req.body && (req.body.followee_id || req.body.story_id || req.body.book_id || req.body.followed_id || req.body.target_id))
+    if (!followee_id) return res.status(400).json({ error: 'followee_id (or story_id/book_id) required' })
     const row = await db.createFollow(followerId, followee_id)
     res.status(201).json(row)
   } catch (err) {
@@ -1123,10 +1523,9 @@ app.delete('/follows/:id', authMiddleware, async (req, res) => {
       return res.json(result)
     }
     // check ownership
-    const p = await require('./mysql').initPool()
-    const [rows] = await p.execute('SELECT follower_id FROM follows WHERE follow_id = ?', [id])
-    if (!rows || !rows[0]) return res.status(404).json({ error: 'not found' })
-    if (String(rows[0].follower_id) !== String(req.user.id)) return res.status(403).json({ error: 'forbidden' })
+    const row = await db.getFollowById(id)
+    if (!row) return res.status(404).json({ error: 'not found' })
+    if (String(row.follower_id) !== String(req.user.id)) return res.status(403).json({ error: 'forbidden' })
     const result = await db.deleteFollow(id)
     res.json(result)
   } catch (err) {
@@ -1301,6 +1700,49 @@ app.get('/me', authMiddleware, async (req, res) => {
   }
 })
 
+// Notifications (auth): who liked your stories, who followed you, and donations received.
+app.get('/notifications', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const userId = req.user && req.user.id
+    if (!userId) return res.status(401).json({ error: 'missing authorization' })
+    const { limit, offset } = req.query || {}
+    const items = await db.getNotifications(userId, { limit, offset })
+    return res.json(items)
+  } catch (err) {
+    console.error('GET /notifications err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// Notifications unread indicator (auth)
+app.get('/notifications/unread', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const userId = req.user && req.user.id
+    if (!userId) return res.status(401).json({ error: 'missing authorization' })
+    const state = await db.hasUnreadNotifications(userId)
+    return res.json(state)
+  } catch (err) {
+    console.error('GET /notifications/unread err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// Mark notifications as seen (auth)
+app.post('/notifications/seen', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const userId = req.user && req.user.id
+    if (!userId) return res.status(401).json({ error: 'missing authorization' })
+    const ok = await db.markNotificationsSeen(userId)
+    return res.json(ok)
+  } catch (err) {
+    console.error('POST /notifications/seen err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
 app.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body
@@ -1345,6 +1787,32 @@ app.post('/payments', authMiddleware, async (req, res) => {
   }
 })
 
+// Admin: list all payments (VIP purchases, admin topups, etc.)
+app.get('/payments', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    const list = await db.getPayments()
+    res.json(list)
+  } catch (err) {
+    console.error('get payments err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// Admin: list all donations (who donated to which author)
+app.get('/donations', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    const list = await db.getDonationsAdmin()
+    res.json(list)
+  } catch (err) {
+    console.error('get donations err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
 // Wallet endpoints
 // GET /wallet - returns coin balance for authenticated user
 app.get('/wallet', authMiddleware, async (req, res) => {
@@ -1369,7 +1837,7 @@ app.post('/users/:id/wallet/topup', authMiddleware, async (req, res) => {
     const { coins, amount, note } = req.body || {}
     if (!coins || Number(coins) <= 0) return res.status(400).json({ error: 'coins required' })
     const wallet = await db.creditWallet(targetUserId, Number(coins))
-    try { await db.createPayment({ user_id: targetUserId, amount: amount || 0, provider: 'admin', provider_ref: note || 'admin-topup', months: null, days: null }) } catch (e) { console.error('admin createPayment err', e) }
+    try { await db.createPayment({ user_id: targetUserId, amount: amount || 0, coins: Number(coins), provider: 'admin', provider_ref: note || 'admin-topup', months: null, days: null }) } catch (e) { console.error('admin createPayment err', e) }
     res.json({ success: true, wallet })
   } catch (err) {
     console.error('admin topup err', err)
@@ -1422,7 +1890,7 @@ app.post('/wallet/topup-requests/:id/approve', authMiddleware, async (req, res) 
     const admin_note = req.body && req.body.admin_note ? req.body.admin_note : null
     const updated = await db.setTopupRequestStatus(id, { status: 'approved', admin_id: req.user.id, admin_note, coins })
     const wallet = await db.creditWallet(existing.user_id, coins)
-    try { await db.createPayment({ user_id: existing.user_id, amount: existing.amount || 0, provider: existing.method || 'manual', provider_ref: existing.provider_ref || `topup#${id}`, months: null, days: null }) } catch (e) { console.error('record payment err', e) }
+    try { await db.createPayment({ user_id: existing.user_id, amount: existing.amount || 0, coins, provider: existing.method || 'manual', provider_ref: existing.provider_ref || `topup#${id}`, months: null, days: null }) } catch (e) { console.error('record payment err', e) }
     res.json({ success: true, request: updated, wallet })
   } catch (err) {
     console.error('approve topup err', err)
@@ -1458,7 +1926,7 @@ app.post('/wallet/topup', authMiddleware, async (req, res) => {
     if (!coins || Number(coins) <= 0) return res.status(400).json({ error: 'coins required' })
     // record payment (coins purchase) if amount/provider provided
     if (amount || provider) {
-      try { await db.createPayment({ user_id: userId, amount: amount || 0, provider: provider || 'bank', provider_ref: provider_ref || null, months: null, days: null }) } catch (e) { console.error('createPayment err', e) }
+      try { await db.createPayment({ user_id: userId, amount: amount || 0, coins: Number(coins), provider: provider || 'bank', provider_ref: provider_ref || null, months: null, days: null }) } catch (e) { console.error('createPayment err', e) }
     }
     const w = await db.creditWallet(userId, Number(coins))
     res.json(w)
@@ -1473,17 +1941,17 @@ app.post('/wallet/buy-vip', authMiddleware, async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     const userId = req.user && req.user.id
-    const { cost_coins, months, days } = req.body || {}
+    const { cost_coins } = req.body || {}
     if (!userId) return res.status(401).json({ error: 'missing authorization' })
     if (!cost_coins || Number(cost_coins) <= 0) return res.status(400).json({ error: 'cost_coins required' })
     // attempt debit
     const debit = await db.debitWallet(userId, Number(cost_coins))
     if (debit && debit.error) return res.status(400).json({ error: 'insufficient_funds', balance: debit.balance })
     // record payment using provider 'coin'
-    try { await db.createPayment({ user_id: userId, amount: 0, provider: 'coin', provider_ref: null, months: months || null, days: days || null }) } catch (e) { console.error('createPayment err', e) }
+    try { await db.createPayment({ user_id: userId, amount: 0, coins: -Number(cost_coins), provider: 'coin', provider_ref: null, months: 1, days: null }) } catch (e) { console.error('createPayment err', e) }
     // upgrade to vip
     try {
-      await db.updateUserVip(userId, { months: months || undefined, days: days || undefined, role: 'vip' })
+      await db.updateUserVip(userId, { role: 'vip' })
       const updated = await db.getUserById(userId)
       return res.json({ success: true, wallet: debit, user: updated })
     } catch (e) {
@@ -1508,8 +1976,9 @@ app.post('/wallet/buy-author', authMiddleware, async (req, res) => {
     if (!cost_coins || Number(cost_coins) <= 0) return res.status(400).json({ error: 'cost_coins required' })
     const debit = await db.debitWallet(userId, Number(cost_coins))
     if (debit && debit.error) return res.status(400).json({ error: 'insufficient_funds', balance: debit.balance })
-    try { await db.createPayment({ user_id: userId, amount: 0, provider: 'coin', provider_ref: 'buy-author', months: null, days: null }) } catch (e) { console.error('createPayment err', e) }
+    try { await db.createPayment({ user_id: userId, amount: 0, coins: -Number(cost_coins), provider: 'coin', provider_ref: 'buy-author', months: 1, days: null }) } catch (e) { console.error('createPayment err', e) }
     try { await db.promoteUserToAuthor(userId, { pen_name: null, bio: null }) } catch (e) { console.error('promote author err', e) }
+    try { await db.updateUserVip(userId, { role: 'author' }) } catch (e) { console.error('author vip err', e) }
     const updated = await db.getUserById(userId)
     return res.json({ success: true, wallet: debit, user: updated })
   } catch (err) {
@@ -1529,17 +1998,35 @@ app.post('/books/:id/donate', authMiddleware, async (req, res) => {
     if (!coins || Number(coins) <= 0) return res.status(400).json({ error: 'coins required' })
     const book = await db.getBookById(storyId)
     if (!book) return res.status(404).json({ error: 'story not found' })
-    const authorId = book.author_id || book.author_id || book.author || null
-    if (!authorId) return res.status(400).json({ error: 'story has no author' })
+
+    // resolve recipient user id: prefer linked author_user_id; otherwise only use author_id if it maps to a user
+    let recipientUserId = book.author_user_id || null
+    if (!recipientUserId && book.author_id) {
+      try {
+        const maybeUser = await db.getUserById(book.author_id)
+        if (maybeUser && maybeUser.id) recipientUserId = String(maybeUser.id)
+      } catch (e) { /* ignore */ }
+    }
+
+    if (!recipientUserId) return res.status(400).json({ error: 'story has no linked author user' })
+    if (String(recipientUserId) === String(donorId)) return res.status(400).json({ error: 'cannot_donate_to_self' })
+
+    // block donations to admin accounts
+    try {
+      const recipient = await db.getUserById(recipientUserId)
+      if (recipient && String(recipient.role || '').toLowerCase() === 'admin') {
+        return res.status(400).json({ error: 'recipient_not_allowed', message: 'Không thể tặng xu cho tài khoản admin.' })
+      }
+    } catch (e) { /* ignore */ }
     // debit donor
     const debit = await db.debitWallet(donorId, Number(coins))
     if (debit && debit.error) return res.status(400).json({ error: 'insufficient_funds', balance: debit.balance })
     // credit author
-    const credit = await db.creditWallet(authorId, Number(coins))
+    const credit = await db.creditWallet(recipientUserId, Number(coins))
     // record donation
-    const donation = await db.createDonation({ donor_id: donorId, story_id: storyId, author_id: authorId, coins: Number(coins), message: message || null })
-    // record payment row for audit
-    try { await db.createPayment({ user_id: donorId, amount: 0, provider: 'donation', provider_ref: JSON.stringify({ donation_id: donation.donation_id }), months: null, days: null }) } catch (e) { console.error('createPayment err', e) }
+    const donation = await db.createDonation({ donor_id: donorId, story_id: storyId, author_id: recipientUserId, coins: Number(coins), message: message || null })
+    // record payment row for audit (negative coins spent by donor)
+    try { await db.createPayment({ user_id: donorId, amount: 0, coins: -Number(coins), provider: 'donation', provider_ref: JSON.stringify({ donation_id: donation.donation_id }), months: null, days: null }) } catch (e) { console.error('createPayment err', e) }
     return res.json({ success: true, donation, donor_wallet: debit, author_wallet: credit })
   } catch (err) {
     console.error('donate err', err)
@@ -1674,7 +2161,7 @@ app.put('/withdrawals/:id', authMiddleware, async (req, res) => {
     const updated = await db.updateWithdrawalStatus(id, { status })
     // if approved/processed, record a payout payment row for bookkeeping
     if (status === 'processed' || status === 'approved') {
-      try { await db.createPayment({ user_id: found.user_id, amount: 0, provider: 'payout', provider_ref: JSON.stringify({ withdrawal_id: id }), months: null, days: null }) } catch (e) { console.error('createPayment err', e) }
+      try { await db.createPayment({ user_id: found.user_id, amount: 0, coins: -Number(found.coins || 0), provider: 'payout', provider_ref: JSON.stringify({ withdrawal_id: id }), months: null, days: null }) } catch (e) { console.error('createPayment err', e) }
     }
     res.json(updated)
   } catch (err) {
@@ -1724,7 +2211,42 @@ app.get('/books/:id/chapters', async (req, res) => {
 
 app.get('/books/:bookId/chapters/:chapterId', async (req, res) => {
   try {
-    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!useMysql) {
+      // file-mode: return chapter content and increment story views
+      const data = readData()
+      const book = (data.books || []).find(b => String(b.id) === String(req.params.bookId))
+      if (!book) return res.status(404).json({ error: 'not found' })
+      const chapters = Array.isArray(book.chapters) ? book.chapters : []
+      const raw = String(req.params.chapterId)
+      const maybeNum = Number(raw)
+
+      let chapter = null
+      let chapterNo = 0
+      if (!isNaN(maybeNum) && Number.isFinite(maybeNum) && maybeNum >= 1) {
+        chapterNo = maybeNum
+        chapter = chapters[maybeNum - 1] || null
+      } else {
+        chapter = chapters.find(c => String(c.id) === raw) || null
+        if (chapter) {
+          const idx = chapters.indexOf(chapter)
+          chapterNo = idx >= 0 ? idx + 1 : 0
+        }
+      }
+
+      if (!chapter) return res.status(404).json({ error: 'not found' })
+
+      // increment views
+      book.views = Number(book.views || 0) + 1
+      writeData(data)
+
+      return res.json({
+        id: String(chapter.id || raw),
+        chapter_no: chapter.chapter_no || chapter.chapterNo || chapterNo || null,
+        title: chapter.title || (chapterNo ? `Chương ${chapterNo}` : 'Chương'),
+        content: chapter.content || chapter.body || chapter.text || '',
+        ad_required: false
+      })
+    }
     // optional auth: guests may access up to 3 chapters
     let user = null
     const auth = req.headers.authorization
@@ -1820,6 +2342,13 @@ app.get('/books/:bookId/chapters/:chapterId', async (req, res) => {
     }
 
     // VIP / author / admin: full access without ads
+    // Still record views for accurate story view totals.
+    try {
+      const uid = user && user.id ? String(user.id) : 'unknown'
+      await db.recordChapterView(uid, req.params.bookId, String(chapter.id))
+    } catch (e) {
+      console.error('record vip/author/admin view err', e)
+    }
     return res.json(Object.assign({}, chapter, { ad_required: false }))
   } catch (err) {
     console.error(err)
@@ -1908,36 +2437,92 @@ if (process.env.ALLOW_DEV_TOKENS === 'true') {
       return res.status(500).json({ error: 'internal' })
     }
   })
-
-  // Update current user's avatar (user/vip/author/admin)
-  app.post('/me/avatar', authMiddleware, async (req, res) => {
-    try {
-      if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-      const userId = req.user && req.user.id
-      if (!userId) return res.status(401).json({ error: 'missing authorization' })
-      const { avatar_url } = req.body || {}
-      if (!avatar_url || typeof avatar_url !== 'string') return res.status(400).json({ error: 'avatar_url required' })
-      let stored = avatar_url
-      if (avatar_url.startsWith('data:')) {
-        const saved = saveDataUrlToAvatar(avatar_url)
-        if (!saved) return res.status(400).json({ error: 'invalid_image' })
-        stored = saved
-      }
-      if (stored.length > 500) return res.status(400).json({ error: 'avatar_url too long' })
-      const ok = await db.updateUserAvatar(userId, stored)
-      if (!ok) return res.status(500).json({ error: 'update_failed' })
-      const updated = await db.getUserById(userId)
-      if (updated && updated.avatar_url && updated.avatar_url.startsWith('/')) {
-        updated.avatar_url = `${req.protocol}://${req.get('host')}${updated.avatar_url}`
-      }
-      return res.json(updated)
-    } catch (err) {
-      console.error('POST /me/avatar err', err)
-      res.status(500).json({ error: 'internal' })
-    }
-  })
   console.log('Debug token endpoint enabled at POST /debug/token (ALLOW_DEV_TOKENS=true)')
 }
+
+// Update current user's avatar (user/vip/author/admin)
+app.post('/me/avatar', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const userId = req.user && req.user.id
+    if (!userId) return res.status(401).json({ error: 'missing authorization' })
+    const { avatar_url } = req.body || {}
+    if (!avatar_url || typeof avatar_url !== 'string') return res.status(400).json({ error: 'avatar_url required' })
+    let stored = avatar_url
+    if (avatar_url.startsWith('data:')) {
+      const saved = saveDataUrlToAvatar(avatar_url)
+      if (!saved) return res.status(400).json({ error: 'invalid_image' })
+      stored = saved
+    }
+    if (stored.length > 500) return res.status(400).json({ error: 'avatar_url too long' })
+    const ok = await db.updateUserAvatar(userId, stored)
+    if (!ok) return res.status(500).json({ error: 'update_failed' })
+    const updated = await db.getUserById(userId)
+    if (updated && updated.avatar_url && updated.avatar_url.startsWith('/')) {
+      updated.avatar_url = `${req.protocol}://${req.get('host')}${updated.avatar_url}`
+    }
+    return res.json(updated)
+  } catch (err) {
+    console.error('POST /me/avatar err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// Change current user's password
+app.post('/me/password', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const userId = req.user && req.user.id
+    if (!userId) return res.status(401).json({ error: 'missing authorization' })
+
+    const { old_password, new_password } = req.body || {}
+    if (!old_password || !new_password) return res.status(400).json({ error: 'old_password and new_password required' })
+    if (typeof old_password !== 'string' || typeof new_password !== 'string') return res.status(400).json({ error: 'invalid payload' })
+    if (new_password.length < 6) return res.status(400).json({ error: 'weak_password', message: 'Mật khẩu mới phải có ít nhất 6 ký tự.' })
+
+    const currentHash = await db.getUserPasswordHashById(userId)
+    if (!currentHash) return res.status(400).json({ error: 'no_password_set' })
+
+    const ok = await bcrypt.compare(old_password, currentHash)
+    if (!ok) return res.status(400).json({ error: 'invalid_old_password', message: 'Mật khẩu hiện tại không đúng.' })
+
+    const nextHash = await bcrypt.hash(new_password, 10)
+    const updated = await db.updateUserPasswordHash(userId, nextHash)
+    if (!updated) return res.status(500).json({ error: 'update_failed' })
+    return res.json({ success: true })
+  } catch (err) {
+    console.error('POST /me/password err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// Admin: update any user's avatar
+app.post('/users/:id/avatar', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    const targetUserId = req.params.id
+    const { avatar_url } = req.body || {}
+    if (!avatar_url || typeof avatar_url !== 'string') return res.status(400).json({ error: 'avatar_url required' })
+    let stored = avatar_url
+    if (avatar_url.startsWith('data:')) {
+      const saved = saveDataUrlToAvatar(avatar_url)
+      if (!saved) return res.status(400).json({ error: 'invalid_image' })
+      stored = saved
+    }
+    if (stored.length > 500) return res.status(400).json({ error: 'avatar_url too long' })
+    const ok = await db.updateUserAvatar(targetUserId, stored)
+    if (!ok) return res.status(500).json({ error: 'update_failed' })
+    const updated = await db.getUserById(targetUserId)
+    if (updated && updated.avatar_url && updated.avatar_url.startsWith('/')) {
+      updated.avatar_url = `${req.protocol}://${req.get('host')}${updated.avatar_url}`
+    }
+    return res.json(updated)
+  } catch (err) {
+    console.error('POST /users/:id/avatar err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
 // Debug: dump chapters for a book (dev only)
 if (process.env.ALLOW_DEV_TOKENS === 'true') {
   app.get('/debug/books/:id/chapters', async (req, res) => {
@@ -2098,14 +2683,36 @@ app.put('/comments/:id', authMiddleware, async (req, res) => {
 app.delete('/comments/:id', authMiddleware, async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
     const id = req.params.id
-    const result = await db.deleteComment(id)
-    res.json(result)
+    if (!req.user) return res.status(401).json({ error: 'missing authorization' })
+
+    if (req.user.role === 'admin') {
+      const result = await db.deleteComment(id)
+      return res.json(result)
+    }
+
+    const c = await db.getCommentById(id)
+    if (!c) return res.status(404).json({ error: 'not found' })
+    if (String(c.user_id) !== String(req.user.id)) return res.status(403).json({ error: 'forbidden' })
+
+    const result = await db.deleteCommentByUser(id, req.user.id)
+    return res.json(result)
   } catch (err) {
     console.error('DELETE /comments/:id err', err)
     res.status(500).json({ error: 'internal', message: err.message })
   }
 })
 
-app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
+const server = app.listen(PORT, () => console.log(`Server listening on ${PORT}`))
+
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`\n[server] Port ${PORT} is already in use.`)
+    console.error('[server] Close the other process using this port, or start this server on a different port.')
+    console.error('[server] Tip (Windows): run `Get-NetTCPConnection -LocalPort 4000 | Select OwningProcess` then `Stop-Process -Id <pid> -Force`')
+    console.error('[server] Or set PORT in admin-dashboard/server/.env, e.g. PORT=4001')
+    process.exit(1)
+  }
+  console.error('\n[server] listen error:', err)
+  process.exit(1)
+})

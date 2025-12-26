@@ -21,21 +21,21 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-       "bundler": "metro"
+      "bundler": "metro"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-font"
     ],
-     "scheme": "reader_app",
-     "experiments": {
+    "scheme": "readerapp",
+    "experiments": {
       "typedRoutes": true
-     },
-     "extra": {
-       "googleExpoClientId": "",
-       "googleAndroidClientId": "",
-       "googleWebClientId": "",
-       "facebookAppId": ""
-     }
-
+    },
+    "extra": {
+      "googleExpoClientId": "",
+      "googleAndroidClientId": "",
+      "googleWebClientId": "",
+      "facebookAppId": ""
+    }
   }
 }

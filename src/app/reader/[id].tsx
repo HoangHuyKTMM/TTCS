@@ -5,10 +5,17 @@ import { Link, useLocalSearchParams } from "expo-router";
 import { apiFetchChapter, apiFetchBook, apiFetchChapters } from '../../lib/api'
 import { saveReadingProgress } from '../../lib/reading'
 import * as Auth from '../../lib/auth'
+import AdInterstitial from '../../components/AdInterstitial'
+import { shouldShowAds } from '../../lib/ads'
+import { getOfflineChapter } from '../../lib/offline'
 
 export default function ReaderScreen() {
   const { id, ch } = useLocalSearchParams<{ id: string; ch?: string }>();
   const chapterIndex = Math.max(1, Number(ch ?? 1));
+
+  const [interstitialVisible, setInterstitialVisible] = useState(false)
+  const [user, setUser] = useState<any | null>(null)
+  const [userLoaded, setUserLoaded] = useState(false)
 
   const [fontSize, setFontSize] = useState(16);
   const [theme, setTheme] = useState<"light" | "sepia" | "dark">("light");
@@ -17,10 +24,50 @@ export default function ReaderScreen() {
   const [chaptersTotal, setChaptersTotal] = useState<number | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
+  // Show video ad immediately when entering this screen (per-book, not per-chapter).
+  useEffect(() => {
+    if (!id) return
+    if (!userLoaded) return
+    if (!shouldShowAds(user)) return
+    setInterstitialVisible(true)
+  }, [id, userLoaded, user])
+
+  useEffect(() => {
+    let active = true
+    setUserLoaded(false)
+    Auth.getUser().then(u => {
+      if (!active) return
+      setUser(u)
+      setUserLoaded(true)
+    })
+    return () => { active = false }
+  }, [])
+
   useEffect(() => {
     let mounted = true
     async function load() {
       if (!id) return
+
+      // OFFLINE first: if downloaded, read from local file.
+      try {
+        const offline = await getOfflineChapter(String(id), chapterIndex)
+        if (offline && offline.content) {
+          if (!mounted) return
+          setErrorMsg(null)
+          const text = offline.content
+          const paras = String(text).split(/\n\s*\n/).map((p: string) => p.trim()).filter(Boolean)
+          setContent(paras.length ? paras : [String(text)])
+          if (typeof offline.chaptersTotal === 'number') setChaptersTotal(offline.chaptersTotal)
+          // Save progress (best-effort)
+          try {
+            await saveReadingProgress({ bookId: String(id), chapter: String(chapterIndex), chapterNo: chapterIndex })
+          } catch {}
+          return
+        }
+      } catch {
+        // ignore offline errors and continue to online
+      }
+
       try {
         const token = await Auth.getToken()
         const res: any = await apiFetchChapter(String(id), String(chapterIndex), token || undefined)
@@ -30,7 +77,7 @@ export default function ReaderScreen() {
           setErrorMsg(null)
           const text = typeof res.content === 'string' ? res.content : (res.body || res.text || '')
           if (text) {
-            const paras = text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean)
+            const paras = text.split(/\n\s*\n/).map((p: string) => p.trim()).filter(Boolean)
             setContent(paras.length ? paras : [text])
             // save reading progress (book metadata fetched separately)
             try {
@@ -193,6 +240,12 @@ export default function ReaderScreen() {
           )}
         </View>
       </View>
+
+      <AdInterstitial
+        visible={interstitialVisible}
+        placement="reader"
+        onFinish={() => setInterstitialVisible(false)}
+      />
     </SafeAreaView>
   );
 }

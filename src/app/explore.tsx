@@ -1,8 +1,7 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
-import { Image, TouchableOpacity, Linking } from 'react-native'
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import { Image, TouchableOpacity, Linking, RefreshControl } from 'react-native'
 import { API_BASE, apiFetchBooks } from '../lib/api'
 import * as Auth from '../lib/auth'
-import AdBanner from '../components/AdBanner'
 import { shouldShowAds } from '../lib/ads'
 import AdInterstitial from '../components/AdInterstitial'
 import { useRouter } from 'expo-router'
@@ -23,6 +22,7 @@ type RankItem = {
   title: string;
   subtitle: string;
   stats: string;
+  cover?: string;
 };
 
 type RecommendItem = {
@@ -30,6 +30,7 @@ type RecommendItem = {
   title: string;
   desc: string;
   stats: string;
+  cover?: string;
 };
 
 const TABS = ["Đề xuất"] as const;
@@ -37,74 +38,158 @@ const TABS = ["Đề xuất"] as const;
 export default function ExplorePage() {
   const [tab, setTab] = useState<(typeof TABS)[number]>(TABS[0]);
   const [books, setBooks] = useState<any[]>([])
+  const [recData, setRecData] = useState<RecommendItem[]>([])
+  const [refreshing, setRefreshing] = useState(false)
 
   const [error, setError] = useState<string | null>(null)
   const [user, setUser] = useState<any | null>(null)
+  const [userLoaded, setUserLoaded] = useState(false)
+  const [entryAdVisible, setEntryAdVisible] = useState(false)
+  const entryAdShownRef = useRef(false)
   const [interstitialVisible, setInterstitialVisible] = useState(false)
   const [targetBookId, setTargetBookId] = useState<string | null>(null)
+  const pendingOpenRef = useRef(false)
   const router = useRouter()
-  useFocusEffect(useCallback(() => {
-    let active = true
-    Auth.getUser().then(u => { if (active) setUser(u) })
-    return () => { active = false }
-  }, []))
-  useEffect(() => {
+  const loadBooks = useCallback(async () => {
     let mounted = true
-    async function load() {
-      try {
-        const res: any = await apiFetchBooks()
-        if (!mounted) return
-        if (res && res.error) {
-          console.error('fetch books err', res)
-          setError(res.message || 'Network request failed')
-          setBooks([])
-        } else if (Array.isArray(res)) {
-          setBooks(res)
-          setError(null)
-        } else {
-          setBooks([])
-        }
-      } catch (e) {
-        console.error('fetch books err', e)
-        setError(String(e))
+    setRefreshing(true)
+    try {
+      const res: any = await apiFetchBooks()
+      if (!mounted) return
+      if (res && res.error) {
+        console.error('fetch books err', res)
+        setError(res.message || 'Network request failed')
         setBooks([])
+        setRecData([])
+      } else if (Array.isArray(res)) {
+        const mapped = res.map((b: any, idx: number) => {
+          const views = Number(b.views || b.view_count || b.reads || b.view || b.total_views || 0)
+          const likes = Number(b.likes_count || b.likes || b.favorites || b.followers_count || 0)
+          return {
+            id: String(b.id || b.story_id || idx + 1),
+            title: b.title || b.name || 'Không rõ',
+            genre: b.genre || '',
+            views,
+            likes,
+            desc: b.description || b.desc || '',
+            cover: b.cover_url ? (String(b.cover_url).startsWith('http') ? b.cover_url : `${API_BASE}${b.cover_url}`) : null,
+          }
+        })
+        setBooks(mapped)
+
+        // Random 6 books for "Có Thể Bạn Sẽ Thích".
+        // IMPORTANT: randomization happens only when data is (re)loaded.
+        const pool = [...mapped]
+        for (let i = pool.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1))
+          const tmp = pool[i]
+          pool[i] = pool[j]
+          pool[j] = tmp
+        }
+        setRecData(
+          pool.slice(0, 6).map((b: any) => ({
+            id: String(b.id),
+            title: b.title || '',
+            desc: b.desc || '',
+            stats: `${fmtNum(Number(b.views || 0))} lượt xem · ${fmtNum(Number(b.likes || 0))} lượt thích`,
+            cover: b.cover ? (String(b.cover).startsWith('http') ? b.cover : `${API_BASE}${b.cover}`) : null
+          }))
+        )
+
+        setError(null)
+      } else {
+        setBooks([])
+        setRecData([])
       }
+    } catch (e) {
+      console.error('fetch books err', e)
+      setError(String(e))
+      setBooks([])
+      setRecData([])
+    } finally {
+      if (mounted) setRefreshing(false)
     }
-    load()
     return () => { mounted = false }
   }, [])
+
+  useFocusEffect(useCallback(() => {
+    let active = true
+    setUserLoaded(false)
+    Auth.getUser().then(u => {
+      if (!active) return
+      setUser(u)
+      setUserLoaded(true)
+    })
+    // Refresh on focus so the home widgets (BXH + Có Thể Bạn Sẽ Thích) show updated likes/views.
+    loadBooks()
+    return () => { active = false }
+  }, [loadBooks]))
+
+  // Show full-screen ad when entering this page (replace the top banner ad).
+  useEffect(() => {
+    if (!userLoaded) return
+    if (!shouldShowAds(user)) return
+    if (entryAdShownRef.current) return
+    entryAdShownRef.current = true
+    setEntryAdVisible(true)
+  }, [userLoaded, user])
+
+  // NOTE: don't call loadBooks() here; useFocusEffect already loads on initial focus.
 
   function openBookNow(id: string) {
     router.push({ pathname: '/book/[id]', params: { id } } as any)
   }
 
   function handleOpenBook(id: string) {
-    if (shouldShowAds(user)) {
+    // Don't decide before we know the user's role.
+    if (!userLoaded) {
       setTargetBookId(id)
-      setInterstitialVisible(true)
-    } else {
-      openBookNow(id)
+      pendingOpenRef.current = true
+      return
     }
+    if (!shouldShowAds(user)) return openBookNow(id)
+    setTargetBookId(id)
+    setInterstitialVisible(true)
   }
+
+  // If user tapped a book before role loaded, resolve it after load.
+  useEffect(() => {
+    if (!userLoaded) return
+    if (!pendingOpenRef.current) return
+    if (!targetBookId) return
+    pendingOpenRef.current = false
+    if (!shouldShowAds(user)) {
+      openBookNow(targetBookId)
+      setTargetBookId(null)
+      return
+    }
+    setInterstitialVisible(true)
+  }, [userLoaded, user, targetBookId])
+
+  const fmtNum = (n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0)
+
+  const topByViews = useMemo(() => {
+    return [...books]
+      .sort((a, b) => Number(b.views || 0) - Number(a.views || 0))
+      .slice(0, 6)
+  }, [books])
 
   const rankColumns: RankItem[][] = useMemo(() => {
     const cols: RankItem[][] = [];
-    const rankData = books.slice(0, 9).map((b, idx) => ({
-      id: String(b.id || b.story_id || idx + 1),
-      title: b.title || b.name || 'Không rõ',
-      subtitle: (b.author || b.pen_name || '') + (b.genre ? ` / ${b.genre}` : ''),
-      stats: `${(b.chapters && b.chapters.length) || b.chapters_count || 0}`,
-      cover: b.cover_url ? (String(b.cover_url).startsWith('http') ? b.cover_url : `${API_BASE}${b.cover_url}`) : null
+    const rankData = topByViews.map((b, idx) => ({
+      id: String(b.id || idx + 1),
+      title: b.title || 'Không rõ',
+      subtitle: b.genre || '',
+      stats: `${fmtNum(Number(b.views || 0))} lượt xem · ${fmtNum(Number(b.likes || 0))} lượt thích`,
+      cover: b.cover ? (String(b.cover).startsWith('http') ? b.cover : `${API_BASE}${b.cover}`) : null
     }))
     for (let i = 0; i < rankData.length; i += 3) {
       cols.push(rankData.slice(i, i + 3));
     }
     return cols;
-  }, [books]);
+  }, [topByViews]);
 
-  const recData: RecommendItem[] = useMemo(() => {
-    return books.slice(0, 6).map((b: any) => ({ id: String(b.id || b.story_id), title: b.title || b.name || '', desc: b.description || b.desc || '', stats: `${(b.chapters && b.chapters.length) || b.chapters_count || 0} chương`, cover: b.cover_url ? (String(b.cover_url).startsWith('http') ? b.cover_url : `${API_BASE}${b.cover_url}`) : null }))
-  }, [books])
+  // recData is now computed in loadBooks() to avoid re-randomizing on unrelated re-renders.
 
   // banners
   const [banners, setBanners] = useState<any[]>([])
@@ -150,8 +235,11 @@ export default function ExplorePage() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {shouldShowAds(user) ? <AdBanner size="medium" /> : null}
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadBooks} />}
+      >
         <View style={styles.tabsRow}>
           {TABS.map((t) => {
             const active = tab === t;
@@ -171,9 +259,6 @@ export default function ExplorePage() {
                 <Text style={styles.searchPlaceholder}>Tìm kiếm tiểu thuyết, tác giả…</Text>
               </Pressable>
             </Link>
-            <View style={styles.iconBtn} />
-            <View style={styles.iconBtn} />
-            <View style={styles.iconBtn} />
           </View>
         )}
 
@@ -261,8 +346,14 @@ export default function ExplorePage() {
             </View>
           </Pressable>
         ))}
-        <AdInterstitial visible={interstitialVisible} onFinish={() => { setInterstitialVisible(false); if (targetBookId) openBookNow(targetBookId); setTargetBookId(null) }} />
+        <AdInterstitial visible={interstitialVisible} placement="interstitial" onFinish={() => { setInterstitialVisible(false); if (targetBookId) openBookNow(targetBookId); setTargetBookId(null) }} />
       </ScrollView>
+
+      <AdInterstitial
+        visible={entryAdVisible}
+        placement="home"
+        onFinish={() => setEntryAdVisible(false)}
+      />
     </SafeAreaView>
   );
 }

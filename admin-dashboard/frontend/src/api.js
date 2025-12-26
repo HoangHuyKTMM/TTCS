@@ -1,7 +1,18 @@
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000'
 
+function isUnauthorized(res) {
+  return res && (res.status === 401 || res.status === 403)
+}
+
 function getToken() {
   try { return localStorage.getItem('admin_token') } catch (e) { return null }
+}
+
+function withAuth(headers = {}) {
+  const token = getToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  else headers['X-Bypass-Auth'] = 'true' // server allows local dev bypass when request is from localhost
+  return headers
 }
 
 export async function fetchBooks() {
@@ -50,6 +61,51 @@ export async function fetchBanners() {
   if (token) headers['Authorization'] = `Bearer ${token}`
   const res = await fetch(`${API_BASE}/banners`, { headers })
   return res.json()
+}
+
+// Video Ads
+export async function fetchAdsAdmin() {
+  const headers = withAuth({ 'Content-Type': 'application/json' })
+  const res = await fetch(`${API_BASE}/ads/admin`, { headers })
+  const json = await res.json().catch(() => ({}))
+  if (!res.ok) return { error: json && (json.error || json.message) ? (json.error || json.message) : `HTTP ${res.status}` }
+  return json
+}
+
+export async function createAd(payload) {
+  const fd = new FormData()
+  fd.append('title', payload.title || '')
+  fd.append('link', payload.link || '')
+  fd.append('placement', payload.placement || 'interstitial')
+  fd.append('enabled', payload.enabled ? '1' : '0')
+  if (payload.videoFile) fd.append('video', payload.videoFile)
+  const headers = withAuth({})
+  const res = await fetch(`${API_BASE}/ads`, { method: 'POST', headers, body: fd })
+  const json = await res.json().catch(() => ({}))
+  if (!res.ok) return { error: json && (json.error || json.message) ? (json.error || json.message) : `HTTP ${res.status}` }
+  return json
+}
+
+export async function updateAd(id, payload) {
+  const fd = new FormData()
+  if (payload.title !== undefined) fd.append('title', payload.title || '')
+  if (payload.link !== undefined) fd.append('link', payload.link || '')
+  if (payload.placement !== undefined) fd.append('placement', payload.placement || 'interstitial')
+  if (payload.enabled !== undefined) fd.append('enabled', payload.enabled ? '1' : '0')
+  if (payload.videoFile) fd.append('video', payload.videoFile)
+  const headers = withAuth({})
+  const res = await fetch(`${API_BASE}/ads/${id}`, { method: 'PUT', headers, body: fd })
+  const json = await res.json().catch(() => ({}))
+  if (!res.ok) return { error: json && (json.error || json.message) ? (json.error || json.message) : `HTTP ${res.status}` }
+  return json
+}
+
+export async function deleteAd(id) {
+  const headers = withAuth({ 'Content-Type': 'application/json' })
+  const res = await fetch(`${API_BASE}/ads/${id}`, { method: 'DELETE', headers })
+  const json = await res.json().catch(() => ({}))
+  if (!res.ok) return { error: json && (json.error || json.message) ? (json.error || json.message) : `HTTP ${res.status}` }
+  return json
 }
 
 export async function createBanner(payload) {
@@ -147,6 +203,7 @@ export async function fetchUsers() {
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
   const res = await fetch(`${API_BASE}/users`, { headers })
+  if (isUnauthorized(res)) return { error: 'unauthorized', status: res.status }
   return res.json()
 }
 
@@ -243,13 +300,33 @@ export async function register(payload) {
   return res.json()
 }
 
-// Comments API
-export async function fetchComments(bookId) {
+export async function fetchPayments() {
   const headers = { 'Content-Type': 'application/json' }
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
-  const url = bookId ? `${API_BASE}/comments?book_id=${encodeURIComponent(bookId)}` : `${API_BASE}/comments`
-  const res = await fetch(url, { headers })
+  const res = await fetch(`${API_BASE}/payments`, { headers })
+  return res.json()
+}
+
+export async function fetchDonations() {
+  const headers = { 'Content-Type': 'application/json' }
+  const token = getToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(`${API_BASE}/donations`, { headers })
+  return res.json()
+}
+
+// Comments API
+export async function fetchComments(opts = {}) {
+  const headers = { 'Content-Type': 'application/json' }
+  const token = getToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const params = new URLSearchParams()
+  if (opts.bookId) params.set('book_id', opts.bookId)
+  if (opts.status) params.set('status', opts.status)
+  if (opts.limit) params.set('limit', String(opts.limit))
+  const qs = params.toString() ? `?${params.toString()}` : ''
+  const res = await fetch(`${API_BASE}/comments${qs}`, { headers })
   return res.json()
 }
 
@@ -352,6 +429,7 @@ export async function fetchTopupRequests(status) {
   if (token) headers['Authorization'] = `Bearer ${token}`
   const qs = status ? `?status=${encodeURIComponent(status)}` : ''
   const res = await fetch(`${API_BASE}/wallet/topup-requests${qs}`, { headers })
+  if (isUnauthorized(res)) return { error: 'unauthorized', status: res.status }
   return res.json()
 }
 
@@ -368,5 +446,14 @@ export async function rejectTopupRequest(id, payload = {}) {
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
   const res = await fetch(`${API_BASE}/wallet/topup-requests/${id}/reject`, { method: 'POST', headers, body: JSON.stringify(payload) })
+  return res.json()
+}
+
+// Admin update user avatar
+export async function adminUpdateUserAvatar(userId, avatar_url) {
+  const headers = { 'Content-Type': 'application/json' }
+  const token = getToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(`${API_BASE}/users/${userId}/avatar`, { method: 'POST', headers, body: JSON.stringify({ avatar_url }) })
   return res.json()
 }

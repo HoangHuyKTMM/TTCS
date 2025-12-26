@@ -69,3 +69,6 @@ INSERT INTO chapters (book_id, title, content) VALUES
 -- Link story to genres
 INSERT INTO story_genres (story_id, genre_id) VALUES
 (1, 1);
+
+-- Visibility flag for stories (used to hide author content when subscription expires)
+ALTER TABLE stories ADD COLUMN IF NOT EXISTS is_hidden TINYINT(1) NOT NULL DEFAULT 0;

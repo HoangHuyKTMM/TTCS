@@ -3,7 +3,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { ScrollView, View, Text, TextInput, Pressable, StyleSheet, Alert, Image } from 'react-native'
 import { useRouter } from 'expo-router'
 import * as Auth from '../../lib/auth'
-import { apiCreateBook, apiCreateChapter, apiFetchBooks, apiFetchGenres } from '../../lib/api'
+import { apiCreateBook, apiFetchGenres } from '../../lib/api'
 import * as ImagePicker from 'expo-image-picker'
 
 export default function AuthorCreateScreen() {
@@ -18,12 +18,6 @@ export default function AuthorCreateScreen() {
   const [availableGenres, setAvailableGenres] = useState<any[]>([])
   const [selectedGenreIds, setSelectedGenreIds] = useState<string[]>([])
 
-  const [books, setBooks] = useState<any[]>([])
-  const [selectedBookId, setSelectedBookId] = useState<string | null>(null)
-
-  const [chapterTitle, setChapterTitle] = useState('')
-  const [chapterContent, setChapterContent] = useState('')
-
   useEffect(() => {
     let mounted = true
     Auth.getToken().then(t => { if (mounted) setToken(t) })
@@ -33,7 +27,6 @@ export default function AuthorCreateScreen() {
 
   useEffect(() => {
     if (!token || !user) return
-    loadMyBooks()
     loadGenres()
   }, [token, user])
 
@@ -41,26 +34,6 @@ export default function AuthorCreateScreen() {
     try {
       const res: any = await apiFetchGenres(token || undefined)
       if (Array.isArray(res)) setAvailableGenres(res)
-    } catch (e) { /* ignore */ }
-  }
-
-  async function loadMyBooks() {
-    try {
-      const res: any = await apiFetchBooks(token || undefined)
-      if (Array.isArray(res)) {
-        const mine = user?.role === 'author'
-          ? res.filter((b: any) => {
-              const uid = String(user.id)
-              const byAuthorUser = b.author_user_id || b.authorUserId || b.author_uid
-              if (byAuthorUser && String(byAuthorUser) === uid) return true
-              // fallback: some rows may still store author_id as user_id in older data
-              if (b.author_id && String(b.author_id) === uid) return true
-              return false
-            })
-          : res
-        setBooks(mine)
-        if (!selectedBookId && mine.length > 0) setSelectedBookId(String(mine[0].id || mine[0].story_id))
-      }
     } catch (e) { /* ignore */ }
   }
 
@@ -75,9 +48,6 @@ export default function AuthorCreateScreen() {
       if (res && !res.error) {
         Alert.alert('Đã tạo truyện', res.title || 'Thành công')
         setTitle(''); setSelectedGenreIds([]); setDescription(''); setCoverUrl('')
-        await loadMyBooks()
-        const newId = String(res.id || res.story_id)
-        setSelectedBookId(newId)
       } else {
         if (res?.error === 'forbidden') {
           Alert.alert('Lỗi', 'Chỉ tài khoản Tác giả/Admin mới được tạo truyện. Vui lòng đăng nhập tài khoản phù hợp hoặc gửi yêu cầu trở thành tác giả.')
@@ -117,23 +87,6 @@ export default function AuthorCreateScreen() {
         setCoverUrl(dataUrl)
       } else if (asset.uri) {
         setCoverUrl(asset.uri)
-      }
-    } catch (e: any) {
-      Alert.alert('Lỗi', e?.message ? e.message : String(e))
-    }
-  }
-
-  async function handleCreateChapter() {
-    if (!token) return Alert.alert('Cần đăng nhập')
-    if (!selectedBookId) return Alert.alert('Chọn truyện để đăng chương')
-    if (!chapterTitle.trim() || !chapterContent.trim()) return Alert.alert('Nhập tiêu đề và nội dung chương')
-    try {
-      const res: any = await apiCreateChapter(selectedBookId, { title: chapterTitle.trim(), content: chapterContent.trim() }, token)
-      if (res && !res.error) {
-        Alert.alert('Đã đăng chương', res.title || chapterTitle)
-        setChapterTitle(''); setChapterContent('')
-      } else {
-        Alert.alert('Lỗi', String(res?.error || 'Không đăng được chương'))
       }
     } catch (e: any) {
       Alert.alert('Lỗi', e?.message ? e.message : String(e))
@@ -183,32 +136,6 @@ export default function AuthorCreateScreen() {
           <TextInput value={description} onChangeText={setDescription} placeholder="Giới thiệu ngắn" style={[styles.input, { height: 80 }]} multiline />
           <Pressable style={styles.primaryBtn} onPress={handleCreateBook}>
             <Text style={styles.primaryText}>Tạo truyện</Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Đăng chương mới</Text>
-          <Text style={styles.label}>Chọn truyện</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 8 }}>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              {books.length === 0 ? <Text style={styles.label}>Chưa có truyện</Text> : null}
-              {books.map((b) => {
-                const bid = String(b.id || b.story_id)
-                const active = selectedBookId === bid
-                return (
-                  <Pressable key={bid} onPress={() => setSelectedBookId(bid)} style={[styles.chip, active && styles.chipActive]}>
-                    <Text style={[styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>{b.title || 'Không tên'}</Text>
-                  </Pressable>
-                )
-              })}
-            </View>
-          </ScrollView>
-          <Text style={styles.label}>Tiêu đề chương</Text>
-          <TextInput value={chapterTitle} onChangeText={setChapterTitle} placeholder="Chương 1" style={styles.input} />
-          <Text style={styles.label}>Nội dung</Text>
-          <TextInput value={chapterContent} onChangeText={setChapterContent} placeholder="Nội dung chương" style={[styles.input, { height: 160 }]} multiline />
-          <Pressable style={styles.primaryBtn} onPress={handleCreateChapter}>
-            <Text style={styles.primaryText}>Đăng chương</Text>
           </Pressable>
         </View>
 

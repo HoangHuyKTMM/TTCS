@@ -24,6 +24,15 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="follow"
+        options={{
+          title: "Theo dõi",
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons name={focused ? "people" : "people-outline"} size={20} color={color as string} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="library"
         options={{
           title: "Thư viện",
@@ -35,9 +44,9 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="rank"
         options={{
-          title: "BXH",
+          title: "Diễn đàn",
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "trophy" : "trophy-outline"} size={20} color={color as string} />
+            <Ionicons name={focused ? "chatbubbles" : "chatbubbles-outline"} size={20} color={color as string} />
           ),
         }}
       />

@@ -1,409 +1,396 @@
-import React, { useEffect, useState } from "react";
-import { StyleSheet, Text, View, ScrollView, Pressable, TextInput } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { StyleSheet, Text, View, ScrollView, Pressable, TextInput, Alert, Image, RefreshControl } from "react-native";
 import { Link, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
-import * as Auth from '../lib/auth';
-import { apiGetMe, apiGetWallet, apiCreateTopupRequest, apiListTopupRequests, apiBuyVipWithCoins, apiBuyAuthorWithCoins, apiFetchBooks, apiCreateChapter } from '../lib/api'
-import { Alert } from 'react-native'
+import * as Auth from "../lib/auth";
+import * as ImagePicker from "expo-image-picker";
+import {
+  apiGetMe,
+  apiGetWallet,
+  apiCreateTopupRequest,
+  apiListTopupRequests,
+  apiBuyVipWithCoins,
+  apiBuyAuthorWithCoins,
+  apiFetchBooks,
+  apiCreateChapter,
+  apiUpdateAvatar,
+  apiHasUnreadNotifications,
+  API_BASE,
+} from "../lib/api";
+
+type ChapterInput = { title: string; content: string };
+type ListItem = { key: string; icon: string; label: string; badge?: string; href?: string };
+
+const LIST_ITEMS: ListItem[] = [
+  { key: "account", icon: "👤", label: "Tài khoản", href: "/account" },
+  { key: "notifications", icon: "🔔", label: "Thông báo", href: "/notifications" },
+];
+
+const VIP_COST = 500;
+const AUTHOR_COST_BASE = 800;
+const AUTHOR_COST_VIP = 300;
 
 export default function ProfileScreen() {
-  const router = useRouter()
-  const [token, setToken] = useState<string | null>(null)
-  const [user, setUser] = useState<any | null>(null)
-  const [wallet, setWallet] = useState<any | null>(null)
-  const [topupCoins, setTopupCoins] = useState<string>('100')
-  const [topupAmount, setTopupAmount] = useState<string>('10000')
-  const [topupRequests, setTopupRequests] = useState<any[]>([])
-  const [authoredBooks, setAuthoredBooks] = useState<any[]>([])
-  const [selectedBookId, setSelectedBookId] = useState<string | null>(null)
-  const [chapterTitle, setChapterTitle] = useState<string>('Chương 1')
-  const [chapterContent, setChapterContent] = useState<string>('')
+  const router = useRouter();
+  const [token, setToken] = useState<string | null>(null);
+  const [hasUnreadNotifs, setHasUnreadNotifs] = useState(false);
+  const [user, setUser] = useState<any | null>(null);
+  const [wallet, setWallet] = useState<any | null>(null);
+  const [topupCoins, setTopupCoins] = useState<string>("100");
+  const [topupAmount, setTopupAmount] = useState<string>("10000");
+  const [topupRequests, setTopupRequests] = useState<any[]>([]);
+  const [authoredBooks, setAuthoredBooks] = useState<any[]>([]);
+  const [activeChapterBookId, setActiveChapterBookId] = useState<string | null>(null);
+  const [chapterInputs, setChapterInputs] = useState<Record<string, ChapterInput>>({});
+  const [refreshing, setRefreshing] = useState(false);
 
-  const VIP_COST = 500
-  const AUTHOR_COST_BASE = 800
-  const AUTHOR_COST_VIP = 300
+  const myAuthoredBooks = useMemo(() => {
+    const uid = user?.id || user?.user_id || null;
+    const authorId = user?.author_id || user?.authorId || null;
+    if (!uid && !authorId) return [];
+    return authoredBooks.filter((b) => {
+      const authorUid = b.author_user_id || b.authorUserId || b.user_id;
+      const bookAuthorId = b.author_id || b.authorId;
+      if (authorUid && uid && String(authorUid) === String(uid)) return true;
+      if (authorId && bookAuthorId && String(bookAuthorId) === String(authorId)) return true;
+      // fallback: if book has author_id but user id is also author id (some schemas reuse user_id)
+      if (bookAuthorId && uid && String(bookAuthorId) === String(uid)) return true;
+      return false;
+    });
+  }, [authoredBooks, user]);
+
+  const ensureChapterInput = (bookId: string) => {
+    setChapterInputs((prev) => {
+      if (prev[bookId]) return prev;
+      return { ...prev, [bookId]: { title: "Chương 1", content: "" } };
+    });
+  };
 
   function computePriceForCoins(coins: number) {
-    if (!coins || coins <= 0) return 0
-    // Greedy apply bundles (1000, 500, 300, 100), remainder at base rate 10 xu = 1k (1 xu = 100 VND)
-    let remaining = Math.floor(coins)
-    let cost = 0
-    const bundles = [
-      { size: 1000, price: 88000 },
-      { size: 500, price: 45000 },
-      { size: 300, price: 28000 },
-      { size: 100, price: 10000 },
-    ]
-    for (const b of bundles) {
-      if (remaining >= b.size) {
-        const count = Math.floor(remaining / b.size)
-        cost += count * b.price
-        remaining -= count * b.size
-      }
-    }
-    if (remaining > 0) {
-      cost += remaining * 100 // 1 xu = 100 VND
-    }
-    return cost
+    if (!coins || coins <= 0) return 0;
+    return coins * 100; // simple mapping: 1 xu = 100 VNĐ (example)
   }
 
-  useEffect(() => {
-    let mounted = true
-    Auth.getToken().then(t => {
-      if (!mounted) return
-      setToken(t)
-    })
-    Auth.getUser().then(u => {
-      if (!mounted) return
-      setUser(u)
-    })
-    return () => { mounted = false }
-  }, [])
+  const loadToken = async () => {
+    const t = await Auth.getToken();
+    setToken(t);
+    return t;
+  };
 
-  useEffect(() => {
-    if (!token) return
-    refreshUser()
-    loadWalletAndTopups(token)
-    loadAuthoredBooks(token)
-  }, [token])
+  const computeVipDaysLeft = (vipUntil?: string | null) => {
+    if (!vipUntil) return null;
+    const ts = new Date(vipUntil).getTime();
+    if (Number.isNaN(ts)) return null;
+    const diff = ts - Date.now();
+    if (diff <= 0) return 0;
+    const dayMs = 1000 * 60 * 60 * 24;
+    return Math.ceil(diff / dayMs);
+  };
 
-  // Refresh when returning to this screen
-  useFocusEffect(
-    React.useCallback(() => {
-      refreshUser()
-      if (token && user && user.role === 'author') {
-        loadAuthoredBooks(token)
-      }
-      return () => {}
-    }, [token, user?.role])
-  )
+  const updateUserState = (u: any) => {
+    if (!u) return;
+    const role = (u.role ? String(u.role) : "").toLowerCase();
+    const vipUntil = u.vip_until || u.vip_expired_at || null;
+    const vip_days_left = computeVipDaysLeft(vipUntil);
+    const vipActive = vip_days_left !== null ? vip_days_left > 0 : !!vipUntil;
+    const normalized = {
+      ...u,
+      role,
+      vip_until: vipUntil,
+      vip_days_left,
+      is_vip: u.is_vip || role === "vip" || role === "premium" || vipActive,
+      is_author: u.is_author || role === "author",
+    };
+    setUser(normalized);
+    Auth.saveUser(normalized);
+  };
 
-  async function handleLogout() {
-    await Auth.removeToken()
-    await Auth.removeUser()
-    setToken(null)
-    setUser(null)
-    router.replace('/(auth)/login')
-  }
-
-  async function refreshUser() {
-    const t = await Auth.getToken()
-    if (!t) return
-    const res: any = await apiGetMe(t)
+  const loadMe = async (t: string) => {
+    const res: any = await apiGetMe(t);
     if (res && !res.error) {
-      setUser(res)
-      await Auth.saveUser(res)
-      await loadWalletAndTopups(t)
+      updateUserState(res);
     }
-  }
+  };
 
-  async function loadWalletAndTopups(tkn?: string) {
-    const t = tkn || token || await Auth.getToken()
-    if (!t) return
-    // refresh wallet
-    try {
-      const w: any = await apiGetWallet(t)
-      if (w && !w.error) setWallet(w)
-    } catch (e) { console.error('fetch wallet err', e) }
-    // refresh top-up requests
-    try {
-      const list: any = await apiListTopupRequests(t)
-      if (Array.isArray(list)) setTopupRequests(list)
-    } catch (e) { console.error('fetch topup requests err', e) }
-  }
+  const updateWalletState = (w: any) => {
+    if (!w) return;
+    const coins = w.coins ?? w.balance ?? w.coin_balance ?? 0;
+    setWallet({ ...w, coins });
+  };
 
-  // auto-sync amount when coin input changes
+  const loadWallet = async (t: string) => {
+    const res: any = await apiGetWallet(t);
+    if (res && !res.error) updateWalletState(res);
+  };
+
+  const refreshWalletOnly = async () => {
+    const t = token || (await Auth.getToken());
+    if (!t) return;
+    await loadWallet(t);
+  };
+
+  const loadTopupRequests = async (t: string) => {
+    const res: any = await apiListTopupRequests(t);
+    if (res && !res.error && Array.isArray(res)) setTopupRequests(res);
+  };
+
+  const loadAuthoredBooks = async (t: string) => {
+    const res: any = await apiFetchBooks(t, { mine: true });
+    if (res && !res.error && Array.isArray(res)) setAuthoredBooks(res);
+  };
+
+  const refreshAll = async () => {
+    const t = await loadToken();
+    if (!t) {
+      setHasUnreadNotifs(false);
+      return;
+    }
+    setRefreshing(true);
+    await Promise.all([loadMe(t), loadWallet(t), loadTopupRequests(t), loadAuthoredBooks(t)]);
+    try {
+      const st: any = await apiHasUnreadNotifications(t);
+      setHasUnreadNotifs(!!(st && (st.has_unread === true || st.has_unread === 1)));
+    } catch {
+      setHasUnreadNotifs(false);
+    }
+    setRefreshing(false);
+  };
+
   useEffect(() => {
-    const coins = Number(topupCoins || 0)
-    if (!isNaN(coins) && coins > 0) {
-      const price = computePriceForCoins(coins)
-      setTopupAmount(String(price))
+    refreshAll();
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshAll();
+    }, [])
+  );
+
+  const handleLogout = async () => {
+    await Auth.removeToken();
+    await Auth.removeUser();
+    setToken(null);
+    setHasUnreadNotifs(false);
+    setUser(null);
+    setWallet(null);
+    setTopupRequests([]);
+    setAuthoredBooks([]);
+    setActiveChapterBookId(null);
+    setChapterInputs({});
+    router.replace("/");
+  };
+
+  const handleCreateTopupRequest = async () => {
+    const coins = Number(topupCoins || 0);
+    const amount = Number(topupAmount || 0);
+    if (!coins || coins <= 0) return Alert.alert("Lỗi", "Vui lòng nhập số xu hợp lệ.");
+    if (!token) return Alert.alert("Lỗi", "Bạn cần đăng nhập.");
+
+    const payload: any = { coins, amount: amount || computePriceForCoins(coins), method: "bank", note: "Top-up mobile" };
+    const res: any = await apiCreateTopupRequest(payload, token);
+    if (res && res.error) return Alert.alert("Lỗi", res.message || "Tạo yêu cầu thất bại");
+    Alert.alert("Thành công", "Đã tạo yêu cầu nạp.");
+    setTopupCoins("100");
+    setTopupAmount(String(computePriceForCoins(100)));
+    loadTopupRequests(token);
+    refreshWalletOnly();
+  };
+
+  const handleBuyVip = async () => {
+    if (!token || !user) return Alert.alert("Lỗi", "Bạn cần đăng nhập.");
+    if (isVip || isAuthor) return Alert.alert("Thông báo", "Bạn đã có quyền VIP.");
+    const res: any = await apiBuyVipWithCoins(VIP_COST, { months: 1 }, token);
+    if (res && res.error) return Alert.alert("Lỗi", res.message || "Không thể mua VIP");
+    Alert.alert("Thành công", "Bạn đã mua VIP.");
+    if (res.wallet) updateWalletState(res.wallet);
+    if (res.user) updateUserState(res.user);
+    else {
+      // optimistic: mark current user as VIP
+      setUser((prev: any) => {
+        if (!prev) return prev;
+        const next = { ...prev, is_vip: true, role: prev.role || "vip" };
+        Auth.saveUser(next);
+        return next;
+      });
     }
-  }, [topupCoins])
+    refreshAll();
+    refreshWalletOnly();
+  };
 
-  useEffect(() => {
-    if (user && user.role === 'author' && token) {
-      loadAuthoredBooks(token)
+  const handleChangeAvatar = async () => {
+    if (!token) return Alert.alert("Lỗi", "Bạn cần đăng nhập.");
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return Alert.alert("Lỗi", "Cần quyền truy cập thư viện ảnh.");
+    const picked = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+      base64: true,
+    });
+    if (picked.canceled) return;
+    const asset = picked.assets && picked.assets[0];
+    if (!asset || !asset.base64) return Alert.alert("Lỗi", "Không thể đọc ảnh đã chọn.");
+    const mime = asset.mimeType || "image/jpeg";
+    const dataUrl = `data:${mime};base64,${asset.base64}`;
+    const res: any = await apiUpdateAvatar(dataUrl, token);
+    if (res && res.error) return Alert.alert("Lỗi", res.message || "Đổi avatar thất bại");
+    Alert.alert("Thành công", "Đã cập nhật avatar.");
+    if (res) updateUserState(res);
+  };
+
+  const handleBuyAuthor = async () => {
+    if (!token) return Alert.alert("Lỗi", "Bạn cần đăng nhập.");
+    if (isAuthor) return Alert.alert("Thông báo", "Bạn đã là tác giả.");
+    const cost = isVip ? AUTHOR_COST_VIP : AUTHOR_COST_BASE;
+    const res: any = await apiBuyAuthorWithCoins(cost, token);
+    if (res && res.error) return Alert.alert("Lỗi", res.message || "Không thể mở quyền tác giả");
+    Alert.alert("Thành công", "Bạn đã mở quyền tác giả.");
+    if (res.wallet) updateWalletState(res.wallet);
+    if (res.user) updateUserState(res.user);
+    else {
+      // optimistic: mark current user as author
+      setUser((prev: any) => {
+        if (!prev) return prev;
+        const next = { ...prev, is_author: true, role: "author" };
+        Auth.saveUser(next);
+        return next;
+      });
     }
-  }, [user])
+    refreshAll();
+    refreshWalletOnly();
+  };
 
-  async function loadAuthoredBooks(tkn?: string) {
-    const t = tkn || token || await Auth.getToken()
-    if (!t) return
-    try {
-      const res: any = await apiFetchBooks(t, { mine: true })
-      if (Array.isArray(res)) {
-        const list = authoredFilter(res)
-        setAuthoredBooks(list)
-        if (!selectedBookId && list.length > 0) {
-          setSelectedBookId(String(list[0].id || list[0].story_id))
-        } else if (selectedBookId && !list.find((b: any) => String(b.id || b.story_id) === String(selectedBookId))) {
-          // reset selection if current selection no longer exists
-          if (list.length > 0) setSelectedBookId(String(list[0].id || list[0].story_id))
-          else setSelectedBookId(null)
-        }
-      }
-    } catch (e) {
-      // ignore
-    }
-  }
+  const handleCreateChapter = async (bookId: string) => {
+    if (!token) return Alert.alert("Lỗi", "Bạn cần đăng nhập.");
+    const input = chapterInputs[bookId];
+    if (!input || !input.title || !input.content) return Alert.alert("Lỗi", "Nhập tiêu đề và nội dung chương.");
+    const res: any = await apiCreateChapter(bookId, { title: input.title, content: input.content }, token);
+    if (res && res.error) return Alert.alert("Lỗi", res.message || "Không thể đăng chương");
+    Alert.alert("Thành công", "Đăng chương thành công.");
+    setChapterInputs((prev) => ({ ...prev, [bookId]: { title: "", content: "" } }));
+    setActiveChapterBookId(null);
+    loadAuthoredBooks(token);
+  };
 
-  const authoredFilter = (arr: any[]) => {
-    if (!user) return []
-    const uid = String(user.id)
-    const authorId = user.author_id ? String(user.author_id) : null
-    return arr.filter((b: any) => {
-      // preferred: authors.user_id propagated as author_user_id
-      if (b.author_user_id && String(b.author_user_id) === uid) return true
-      if (b.authorUserId && String(b.authorUserId) === uid) return true
-      // match by author_id if backend attached to user
-      if (authorId && b.author_id && String(b.author_id) === authorId) return true
-      // legacy: some rows may store author_id equal to user_id
-      if (b.author_id && String(b.author_id) === uid) return true
-      return false
-    })
-  }
+  const role = (user && user.role ? String(user.role).toLowerCase() : "") as string;
+  const isVip = !!(user && (user.is_vip || user.vip_expired_at || role === "vip" || role === "premium"));
+  const isAuthor = !!(user && (user.is_author || role === "author"));
+  const vipDaysLeft = user ? (user.vip_days_left ?? computeVipDaysLeft(user.vip_until)) : null;
+  const roleLabelBase = isAuthor ? "Tác giả" : isVip ? "Thành viên VIP" : "Thành viên";
+  const roleLabelWithDays = (isVip || isAuthor) && vipDaysLeft !== null ? `${roleLabelBase} (${vipDaysLeft} ngày)` : roleLabelBase;
 
-  async function handleCreateChapter() {
-    if (!token) return Alert.alert('Cần đăng nhập')
-    if (!selectedBookId) return Alert.alert('Chọn truyện để đăng chương')
-    if (!chapterTitle.trim() || !chapterContent.trim()) return Alert.alert('Nhập tiêu đề và nội dung chương')
-    try {
-      const res: any = await apiCreateChapter(selectedBookId, { title: chapterTitle.trim(), content: chapterContent.trim() }, token)
-      if (res && !res.error) {
-        Alert.alert('Đã đăng chương', res.title || chapterTitle)
-        setChapterTitle('Chương 1')
-        setChapterContent('')
-      } else {
-        Alert.alert('Lỗi', String(res?.error || 'Không đăng được chương'))
-      }
-    } catch (e: any) {
-      Alert.alert('Lỗi', e?.message ? e.message : String(e))
-    }
-  }
-
-  const resolveAuthorCost = () => {
-    const role = user && user.role ? String(user.role).toLowerCase() : ''
-    if (role === 'vip') return AUTHOR_COST_VIP
-    return AUTHOR_COST_BASE
-  }
-
-  async function handleSubscribeVip() {
-    if (!user || !token) return
-    try {
-      // ensure we have latest wallet to check balance
-      let currentWallet = wallet
-      if (!currentWallet) {
-        try {
-          const w: any = await apiGetWallet(token)
-          if (w && !w.error) currentWallet = w
-          if (w && !w.error) setWallet(w)
-        } catch (e) { /* ignore */ }
-      }
-      if (currentWallet && typeof currentWallet.balance === 'number' && currentWallet.balance < VIP_COST) {
-        Alert.alert(
-          'Không đủ xu',
-          `Cần ${VIP_COST} xu để mua VIP. Số dư hiện tại: ${currentWallet.balance}. Bạn muốn tạo lệnh nạp xu?`,
-          [
-            { text: 'Hủy', style: 'cancel' },
-            { text: 'Nạp xu', onPress: () => { setTopupCoins(String(VIP_COST)); } }
-          ]
-        )
-        return
-      }
-      const res: any = await apiBuyVipWithCoins(VIP_COST, { months: 1 }, token)
-      if (res && !res.error) {
-        if (res.user) { setUser(res.user); await Auth.saveUser(res.user) }
-        if (res.wallet) setWallet(res.wallet)
-        await loadWalletAndTopups(token)
-        alert(`Đã mua VIP bằng ${VIP_COST} xu`)
-      } else {
-        const msg = res && (res.message || res.error) ? String(res.message || res.error) : 'Không rõ lỗi'
-        console.warn('apiBuyVipWithCoins failed', res)
-        alert('Mua VIP thất bại: ' + msg)
-      }
-    } catch (e: any) {
-      console.error('handleSubscribeVip err', e)
-      alert('Đăng ký VIP thất bại: ' + (e && e.message ? e.message : String(e)))
-    }
-  }
-
-  async function handleBuyAuthor() {
-    if (!user || !token) return
-    const cost = resolveAuthorCost()
-    try {
-      // ensure we have latest wallet to check balance
-      let currentWallet = wallet
-      if (!currentWallet) {
-        try {
-          const w: any = await apiGetWallet(token)
-          if (w && !w.error) currentWallet = w
-          if (w && !w.error) setWallet(w)
-        } catch (e) { /* ignore */ }
-      }
-      if (currentWallet && typeof currentWallet.balance === 'number' && currentWallet.balance < cost) {
-        Alert.alert(
-          'Không đủ xu',
-          `Cần ${cost} xu để mua quyền tác giả. Số dư hiện tại: ${currentWallet.balance}. Bạn muốn tạo lệnh nạp xu?`,
-          [
-            { text: 'Hủy', style: 'cancel' },
-            { text: 'Nạp xu', onPress: () => { setTopupCoins(String(cost)); } }
-          ]
-        )
-        return
-      }
-      const res: any = await apiBuyAuthorWithCoins(cost, token)
-      if (res && !res.error) {
-        if (res.user) { setUser(res.user); await Auth.saveUser(res.user) }
-        if (res.wallet) setWallet(res.wallet)
-        await loadWalletAndTopups(token)
-        alert(`Đã mua quyền tác giả bằng ${cost} xu`)
-      } else {
-        const msg = res && (res.message || res.error) ? String(res.message || res.error) : 'Không rõ lỗi'
-        console.warn('apiBuyAuthorWithCoins failed', res)
-        alert('Mua quyền tác giả thất bại: ' + msg)
-      }
-    } catch (e: any) {
-      console.error('handleBuyAuthor err', e)
-      alert('Mua quyền tác giả thất bại: ' + (e && e.message ? e.message : String(e)))
-    }
-  }
-  
-  async function handleCreateTopupRequest() {
-    if (!token) return Alert.alert('Vui lòng đăng nhập')
-    const coins = Number(topupCoins || 0)
-    if (!coins || coins <= 0) return Alert.alert('Số xu không hợp lệ')
-    const amountNumber = topupAmount ? Number(topupAmount) : undefined
-    try {
-      const res: any = await apiCreateTopupRequest({ coins, amount: amountNumber, method: 'bank', note: 'Yêu cầu nạp từ app' }, token)
-      if (res && !res.error) {
-        Alert.alert('Đã tạo yêu cầu', 'Admin sẽ duyệt và cộng xu cho bạn')
-        await loadWalletAndTopups(token)
-      } else {
-        Alert.alert('Lỗi', String(res && (res.error || res.message) || 'Không rõ lỗi'))
-      }
-    } catch (e) {
-      console.error('create topup req err', e)
-      Alert.alert('Lỗi', String(e && e.message ? e.message : e))
-    }
-  }
-
-  const isVip = !!(user && (user.role === 'vip' || user.vip_until))
-  const isAuthor = !!(user && user.role === 'author')
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        {/* Header */}
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshAll} />}
+      >
         <View style={styles.headerCard}>
           <View style={styles.headerRow}>
-            <View style={styles.avatar} />
-            <View style={{ flex: 1 }}>
-              {!token ? (
-                <>
-                  <Link href={"/(auth)/login" as any} asChild>
-                    <Pressable>
-                      <Text style={styles.loginPrompt}>Bấm để đăng nhập</Text>
-                    </Pressable>
-                  </Link>
-                  <View style={styles.headerActionsRow}>
-                    <Link href={"/(auth)/login" as any} asChild>
-                      <Pressable style={styles.badgePrimary}>
-                        <Text style={styles.badgePrimaryText}>Điểm danh</Text>
-                      </Pressable>
-                    </Link>
+            <Pressable onPress={handleChangeAvatar} style={styles.avatarPress}>
+              {(() => {
+                const uri = user?.avatar_url ? (String(user.avatar_url).startsWith("http") ? user.avatar_url : `${API_BASE}${user.avatar_url}`) : null;
+                if (uri) return <Image source={{ uri }} style={styles.avatarImg} />;
+                const initial = user?.name?.[0]?.toUpperCase() || "🙂";
+                return (
+                  <View style={[styles.avatarImg, { justifyContent: "center", alignItems: "center" }]}>
+                    <Text style={{ fontSize: 22 }}>{initial}</Text>
                   </View>
-                </>
+                );
+              })()}
+            </Pressable>
+            <View style={{ flex: 1 }}>
+              {token && user ? (
+                <View style={{ gap: 4 }}>
+                  <Text style={styles.loginPrompt}>{user.name || ""}</Text>
+                  <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+                    <View style={styles.badgePrimary}><Text style={styles.badgePrimaryText}>{roleLabelWithDays}</Text></View>
+                  </View>
+                </View>
               ) : (
-                <>
-                  <Text style={styles.loginPrompt}>{user?.name || 'Người dùng'}</Text>
-                  <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{user?.email || ''}</Text>
-                  {user?.role === 'vip' || user?.vip_until ? (
-                    <View style={{ marginTop: 6 }}>
-                      <Text style={{ color: '#b9770e', fontWeight: '700' }}>VIP đến: {user?.vip_until ? String(user.vip_until).split('T')[0] : '---'}</Text>
-                    </View>
-                  ) : null}
-                  <Pressable onPress={handleLogout} style={[styles.badgePrimary, { marginTop: 8, backgroundColor: '#ef4444' }]}>
-                    <Text style={styles.badgePrimaryText}>Đăng xuất</Text>
-                  </Pressable>
-                  {isAuthor ? (
-                    <View style={[styles.badgePrimary, { marginTop: 8, backgroundColor: '#f59e0b' }] }>
-                      <Text style={styles.badgePrimaryText}>Tác giả</Text>
-                    </View>
-                  ) : (user ? (
-                    <>
-                      <Pressable onPress={handleBuyAuthor} style={[styles.badgePrimary, { marginTop: 8, backgroundColor: '#f59e0b' }] }>
-                        <Text style={styles.badgePrimaryText}>Trở thành tác giả ({resolveAuthorCost()} xu)</Text>
-                      </Pressable>
-                      {!isVip && (
-                        <Pressable onPress={handleSubscribeVip} style={[styles.badgePrimary, { marginTop: 8, backgroundColor: '#8b5cf6' }] }>
-                          <Text style={styles.badgePrimaryText}>Mua VIP ({VIP_COST} xu)</Text>
-                        </Pressable>
-                      )}
-                    </>
-                  ) : null)}
-                </>
+                <Text style={styles.loginPrompt}>Bạn chưa đăng nhập</Text>
               )}
             </View>
-            <View style={styles.headerIcon} />
-            <View style={styles.headerIcon} />
-            <View style={styles.headerIcon} />
-          </View>
-          {/* Stats */}
-          {token && (
-            <View style={styles.statsRow}>
-              <View style={styles.statCol}>
-                <Text style={styles.statValue}>{wallet && typeof wallet.balance === 'number' ? String(wallet.balance) : '-'}</Text>
-                <Text style={styles.statLabel}>Xu của tôi</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statCol}>
-                <Text style={styles.statValue}>-</Text>
-                <Text style={styles.statLabel}>Điểm của tôi</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statCol}>
-                <Text style={styles.statValue}>-</Text>
-                <Text style={styles.statLabel}>Phiếu</Text>
-              </View>
+            <View style={styles.headerActionsRow}>
+              {!token && (
+                <Link href="/(auth)/login" asChild>
+                  <Pressable style={styles.headerIcon}><Text style={{ textAlign: "center", paddingTop: 4 }}>🔑</Text></Pressable>
+                </Link>
+              )}
+              {token && (
+                <Pressable style={[styles.headerIcon, { paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 6 }]} onPress={handleLogout}>
+                  <Text style={{ textAlign: "center", paddingTop: 4 }}>🚪</Text>
+                  <Text style={{ color: "#0f172a", fontWeight: "700" }}>Đăng xuất</Text>
+                </Pressable>
+              )}
             </View>
-          )}
+          </View>
+          <Text style={{ fontSize: 12, color: "#475569", marginTop: 6 }}>Nhấn vào avatar để thay đổi.</Text>
+          <View style={{ flexDirection: "row", marginTop: 12, justifyContent: "space-between", alignItems: "center" }}>
+            <View>
+              <Text style={styles.statLabel}>Số dư</Text>
+              <Text style={styles.statValue}>{wallet ? (wallet.coins ?? wallet.balance ?? wallet.coin_balance ?? 0) : 0} xu</Text>
+            </View>
+            <View>
+              <Text style={styles.statLabel}>Cấp bậc</Text>
+              <Text style={styles.statValue}>{roleLabelWithDays}</Text>
+            </View>
+          </View>
         </View>
 
+        {token && user && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>✨ Ưu đãi</Text>
+            {!isVip && !isAuthor && (
+              <View style={styles.cardRow}>
+                <View>
+                  <Text style={styles.cardTitle}>Nâng cấp VIP</Text>
+                  <Text style={styles.cardSubtitle}>Chỉ {VIP_COST} xu / tháng</Text>
+                </View>
+                <Pressable style={styles.chip} onPress={handleBuyVip}><Text style={styles.chipText}>Mua</Text></Pressable>
+              </View>
+            )}
+            {!isAuthor && (
+              <View style={styles.cardRow}>
+                <View>
+                  <Text style={styles.cardTitle}>Mở quyền tác giả</Text>
+                  <Text style={styles.cardSubtitle}>Chỉ {isVip ? AUTHOR_COST_VIP : AUTHOR_COST_BASE} xu</Text>
+                </View>
+                <Pressable style={styles.chip} onPress={handleBuyAuthor}><Text style={styles.chipText}>Mua</Text></Pressable>
+              </View>
+            )}
+          </View>
+        )}
+
         {token && (
-          <View style={styles.topupCard}>
-            <Text style={styles.sectionTitle}>Nạp xu (tạo lệnh chờ duyệt)</Text>
-            <Text style={styles.statLabel}>Gói ưu đãi: 100 xu = 10k · 300 xu = 28k · 500 xu = 45k · 1000 xu = 88k. Xu lẻ: 10 xu = 1k.</Text>
-            <View style={styles.bundleRow}>
-              {[100,300,500,1000].map(c => (
-                <Pressable key={c} style={styles.bundleBtn} onPress={() => setTopupCoins(String(c))}>
-                  <Text style={styles.bundleBtnText}>{c} xu</Text>
-                  <Text style={styles.bundleBtnSub}>{computePriceForCoins(c).toLocaleString('vi-VN')} đ</Text>
-                </Pressable>
-              ))}
-            </View>
-            <View style={styles.topupRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabel}>Xu muốn nạp</Text>
-                <TextInput value={topupCoins} onChangeText={setTopupCoins} keyboardType="numeric" style={styles.input} placeholder="100" />
-              </View>
-              <View style={{ width: 12 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabel}>Số tiền (VND)</Text>
-                <TextInput value={topupAmount} onChangeText={setTopupAmount} keyboardType="numeric" style={styles.input} placeholder="50000" />
-                <Text style={[styles.statLabel, { marginTop: 4 }]}>Tính tự động theo bảng giá.</Text>
-              </View>
-            </View>
-            <Pressable onPress={handleCreateTopupRequest} style={styles.topupButton}>
-              <Text style={styles.topupButtonText}>Gửi yêu cầu nạp</Text>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>💳 Nạp xu</Text>
+            <Text style={styles.inputLabel}>Số xu</Text>
+            <TextInput
+              value={topupCoins}
+              onChangeText={(v) => { setTopupCoins(v); setTopupAmount(String(computePriceForCoins(Number(v || 0)))); }}
+              keyboardType="numeric"
+              style={styles.input}
+            />
+            <Text style={styles.inputLabel}>Số tiền (VNĐ)</Text>
+            <TextInput
+              value={topupAmount}
+              onChangeText={(v) => setTopupAmount(v)}
+              keyboardType="numeric"
+              style={styles.input}
+            />
+            <Pressable style={styles.topupButton} onPress={handleCreateTopupRequest}>
+              <Text style={styles.topupButtonText}>Tạo yêu cầu nạp</Text>
             </Pressable>
-            <View style={{ marginTop: 10 }}>
+            <View style={{ marginTop: 12 }}>
               <Text style={styles.inputLabel}>Yêu cầu gần đây</Text>
               {topupRequests && topupRequests.length > 0 ? (
                 topupRequests.slice(0, 3).map((r, idx) => (
                   <View key={r.request_id || idx} style={styles.topupRowItem}>
-                    <Text style={{ fontWeight: '700', color: '#0f172a' }}>{r.coins} xu</Text>
-                    <Text style={styles.statLabel}>{r.status || 'pending'} · {r.created_at ? String(r.created_at).substring(0, 10) : ''}</Text>
+                    <Text style={{ fontWeight: "700", color: "#0f172a" }}>{r.coins} xu</Text>
+                    <Text style={styles.statLabel}>{r.status || "pending"} · {r.created_at ? String(r.created_at).substring(0, 10) : ""}</Text>
                   </View>
                 ))
               ) : (
@@ -418,7 +405,7 @@ export default function ProfileScreen() {
             <View style={styles.createCard}>
               <Text style={styles.sectionTitle}>✍️  Sáng tác truyện</Text>
               <Text style={styles.statLabel}>Tạo truyện mới hoặc đăng chương cho truyện của bạn.</Text>
-              <Link href={{ pathname: '/author/create' } as any} asChild>
+              <Link href={{ pathname: "/author/create" } as any} asChild>
                 <Pressable style={[styles.topupButton, { marginTop: 10 }]}>
                   <Text style={styles.topupButtonText}>Đi tới trang sáng tác</Text>
                 </Pressable>
@@ -427,89 +414,97 @@ export default function ProfileScreen() {
 
             <View style={styles.createCard}>
               <Text style={styles.sectionTitle}>📚  Truyện của tôi</Text>
-              {authoredBooks.length === 0 ? (
+              {myAuthoredBooks.length === 0 ? (
                 <Text style={styles.statLabel}>Chưa có truyện nào.</Text>
               ) : (
-                authoredBooks.map((b, idx) => (
-                  <Link key={b.id || idx} href={{ pathname: '/book/[id]', params: { id: String(b.id || b.story_id) } } as any} asChild>
-                    <Pressable style={[styles.authoredItem, idx !== 0 && styles.listItemDivider]}>
-                      <View style={styles.authoredIconWrap}><Text style={styles.authoredIcon}>📖</Text></View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.authoredTitle} numberOfLines={1}>{b.title || 'Không tên'}</Text>
-                        <Text style={styles.authoredMeta}>{(b.chapters_count || 0)} chương · {b.genre || '---'}</Text>
-                      </View>
-                    </Pressable>
-                  </Link>
-                ))
-              )}
-            </View>
-
-            <View style={styles.createCard}>
-              <Text style={styles.sectionTitle}>📝  Đăng chương mới</Text>
-              {authoredBooks.length === 0 ? (
-                <Text style={styles.statLabel}>Bạn chưa có truyện để đăng chương. Hãy tạo truyện trước.</Text>
-              ) : (
-                <>
-                  <Text style={styles.inputLabel}>Chọn truyện</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 8 }}>
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
-                      {authoredBooks.map((b) => {
-                        const bid = String(b.id || b.story_id)
-                        const active = selectedBookId === bid
-                        return (
-                          <Pressable key={bid} onPress={() => setSelectedBookId(bid)} style={[styles.chip, active && styles.chipActive]}>
-                            <Text style={[styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>{b.title || 'Không tên'}</Text>
+                myAuthoredBooks.map((b, idx) => {
+                  const bid = String(b.id || b.story_id);
+                  const isActive = activeChapterBookId === bid;
+                  const input = chapterInputs[bid] || { title: "Chương 1", content: "" };
+                  return (
+                    <View key={bid} style={[styles.authoredItemWrap, idx !== 0 && styles.listItemDivider]}>
+                      <Link href={{ pathname: "/book/[id]", params: { id: bid } } as any} asChild>
+                        <Pressable style={styles.authoredItem}>
+                          <View style={styles.authoredIconWrap}><Text style={styles.authoredIcon}>📖</Text></View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.authoredTitle} numberOfLines={1}>{b.title || "Không tên"}</Text>
+                            <Text style={styles.authoredMeta}>{(b.chapters_count || b.chapters?.length || 0)} chương · {b.genre || "---"}</Text>
+                          </View>
+                        </Pressable>
+                      </Link>
+                      <Pressable
+                        style={[styles.chip, { alignSelf: "flex-start", marginTop: 6 }, isActive && styles.chipActive]}
+                        onPress={() => {
+                          setActiveChapterBookId(isActive ? null : bid);
+                          setTimeout(() => ensureChapterInput(bid), 0);
+                        }}
+                      >
+                        <Text style={[styles.chipText, isActive && styles.chipTextActive]}>{isActive ? "Đóng" : "Đăng chương"}</Text>
+                      </Pressable>
+                      {isActive && (
+                        <View style={{ marginTop: 8, gap: 6 }}>
+                          <Text style={styles.inputLabel}>Tiêu đề chương</Text>
+                          <TextInput
+                            value={input.title}
+                            onChangeText={(v) => {
+                              ensureChapterInput(bid);
+                              setChapterInputs((prev) => ({ ...prev, [bid]: { ...(prev[bid] || { title: "Chương 1", content: "" }), title: v } }));
+                            }}
+                            placeholder="Chương 1"
+                            style={styles.input}
+                          />
+                          <Text style={styles.inputLabel}>Nội dung</Text>
+                          <TextInput
+                            value={input.content}
+                            onChangeText={(v) => {
+                              ensureChapterInput(bid);
+                              setChapterInputs((prev) => ({ ...prev, [bid]: { ...(prev[bid] || { title: "Chương 1", content: "" }), content: v } }));
+                            }}
+                            placeholder="Nội dung chương"
+                            style={styles.textArea}
+                            multiline
+                          />
+                          <Pressable style={[styles.topupButton, { marginTop: 2 }]} onPress={() => handleCreateChapter(bid)}>
+                            <Text style={styles.topupButtonText}>Đăng chương</Text>
                           </Pressable>
-                        )
-                      })}
+                        </View>
+                      )}
                     </View>
-                  </ScrollView>
-                  <Text style={styles.inputLabel}>Tiêu đề chương</Text>
-                  <TextInput value={chapterTitle} onChangeText={setChapterTitle} placeholder="Chương 1" style={styles.input} />
-                  <Text style={styles.inputLabel}>Nội dung</Text>
-                  <TextInput value={chapterContent} onChangeText={setChapterContent} placeholder="Nội dung chương" style={styles.textArea} multiline />
-                  <Pressable style={[styles.topupButton, { marginTop: 10 }]} onPress={handleCreateChapter}>
-                    <Text style={styles.topupButtonText}>Đăng chương</Text>
-                  </Pressable>
-                </>
+                  );
+                })
               )}
             </View>
           </>
         )}
 
-        {/* List Sections */}
         <View style={styles.section}>
           {LIST_ITEMS.map((it, idx) => (
-            <View key={it.key} style={[styles.listItem, idx !== 0 && styles.listItemDivider]}>
-              <Text style={styles.listItemLeft}>{it.icon}  {it.label}</Text>
-              {it.badge ? <Text style={styles.listBadge}>{it.badge}</Text> : <View />}
-            </View>
+            <Pressable
+              key={it.key}
+              onPress={() => {
+                if (it.href) return router.push(it.href as any);
+                Alert.alert("Thông báo", "Chức năng đang phát triển.");
+              }}
+              style={({ pressed }) => [styles.listItem, idx !== 0 && styles.listItemDivider, pressed && { opacity: 0.7 }]}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text style={styles.listItemLeft}>{it.icon}  {it.label}</Text>
+                {it.key === "notifications" && token && hasUnreadNotifs ? <View style={styles.unreadDot} /> : null}
+              </View>
+              {it.badge ? <Text style={styles.listBadge}>{it.badge}</Text> : <Text style={{ color: "#94a3b8", fontWeight: "800" }}>›</Text>}
+            </Pressable>
           ))}
         </View>
       </ScrollView>
 
-      {/* Floating Action Button */}
       {token && (
         <Pressable style={styles.fab}>
           <Text style={styles.fabText}>✎</Text>
         </Pressable>
       )}
     </SafeAreaView>
-  )
+  );
 }
-
-type ListItem = { key: string; icon: string; label: string; badge?: string };
-
-const LIST_ITEMS: ListItem[] = [
-  { key: "vip", icon: "👑", label: "VIP" },
-  { key: "mall", icon: "🛒", label: "Toon Mall" },
-  { key: "search", icon: "🔍", label: "Tìm tiểu thuyết trên Internet", badge: "●" },
-  { key: "topup", icon: "💳", label: "Nạp tiền" },
-  { key: "tickets", icon: "🎫", label: "Phiếu đọc truyện của tôi" },
-  { key: "avatar", icon: "🖼️", label: "Khung avatar của tôi" },
-  { key: "sticker", icon: "🎟️", label: "Sticker của tôi" },
-  { key: "fan", icon: "🏅", label: "Danh hiệu fan" },
-] as const;
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f7f9fc" },
@@ -521,87 +516,65 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   headerRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  avatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: "#b3d7ff" },
+  avatarPress: { width: 56, height: 56 },
+  avatarImg: { width: 56, height: 56, borderRadius: 28, backgroundColor: "#b3d7ff", overflow: "hidden" },
   loginPrompt: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
   headerActionsRow: { flexDirection: "row", gap: 8, marginTop: 6 },
   headerIcon: { width: 24, height: 24, borderRadius: 12, backgroundColor: "#d0e6ff", marginLeft: 8 },
 
   badgePrimary: { backgroundColor: "#1088ff", borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 },
   badgePrimaryText: { color: "#fff", fontWeight: "700", fontSize: 12 },
+  badgeSecondary: { backgroundColor: "#e0f2f1", borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 },
+  badgeSecondaryText: { color: "#0a9396", fontWeight: "700", fontSize: 12 },
 
-  statsRow: {
-    marginTop: 16,
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  statCol: { flex: 1, alignItems: "center" },
-  statValue: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
-  statLabel: { fontSize: 12, color: "#6b7280", marginTop: 2 },
-  statDivider: { width: 1, height: 24, backgroundColor: "#e5e7eb" },
-
-  topupCard: { marginTop: 12, backgroundColor: "#fff", borderRadius: 12, padding: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: "#e5e7eb" },
-  createCard: { marginTop: 12, backgroundColor: "#fff", borderRadius: 12, padding: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: "#e5e7eb" },
-  sectionTitle: { fontSize: 16, fontWeight: "800", color: "#0f172a", marginBottom: 8 },
-  inputLabel: { fontSize: 12, color: "#6b7280", marginBottom: 4 },
-  input: { borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: "#fff" },
-  topupRow: { flexDirection: "row", gap: 12, marginBottom: 12 },
-  topupButton: { backgroundColor: "#1088ff", borderRadius: 10, paddingVertical: 10, alignItems: "center", marginTop: 4 },
-  topupButtonText: { color: "#fff", fontWeight: "700" },
-  topupRowItem: { paddingVertical: 6 },
-  bundleRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8, marginBottom: 8 },
-  bundleBtn: { backgroundColor: "#f8fafc", borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#e5e7eb" },
-  bundleBtnText: { fontWeight: "700", color: "#0f172a" },
-  bundleBtnSub: { fontSize: 12, color: "#6b7280" },
-
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: '#e5e7eb', backgroundColor: '#f8fafc', maxWidth: 200 },
-  chipActive: { backgroundColor: '#1088ff11', borderColor: '#1088ff' },
-  chipText: { color: '#0f172a' },
-  chipTextActive: { color: '#1088ff', fontWeight: '700' },
-  textArea: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 10, backgroundColor: '#fff', minHeight: 140, textAlignVertical: 'top' },
+  statLabel: { color: "#475569", fontSize: 13 },
+  statValue: { color: "#0f172a", fontWeight: "800", fontSize: 20 },
 
   section: {
-    marginTop: 12,
+    marginTop: 14,
     backgroundColor: "#fff",
-    borderRadius: 12,
-    paddingVertical: 4,
-  },
-  listItem: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  listItemDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#eef2f7" },
-  listItemLeft: { fontSize: 15, color: "#0f172a" },
-  listBadge: { color: "#ff3b30", fontSize: 12 },
-
-  authoredItem: { paddingVertical: 10 },
-  authoredTitle: { fontWeight: '700', color: '#0f172a', fontSize: 15 },
-  authoredMeta: { color: '#6b7280', marginTop: 2 },
-  authoredIconWrap: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#eef2ff', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
-  authoredIcon: { fontSize: 18 },
-
-  fab: {
-    position: "absolute",
-    right: 16,
-    bottom: 24,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "#1088ff",
-    alignItems: "center",
-    justifyContent: "center",
+    borderRadius: 16,
+    padding: 14,
     shadowColor: "#000",
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 2,
   },
+  sectionTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a", marginBottom: 8 },
+
+  cardRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#f1f5f9", padding: 12, borderRadius: 12, marginTop: 8 },
+  cardTitle: { fontSize: 15, fontWeight: "700", color: "#0f172a" },
+  cardSubtitle: { fontSize: 13, color: "#475569", marginTop: 2 },
+
+  chip: { backgroundColor: "#0f172a", borderRadius: 16, paddingHorizontal: 10, paddingVertical: 6 },
+  chipText: { color: "#fff", fontWeight: "700" },
+  chipActive: { backgroundColor: "#e0f2f1", borderWidth: 1, borderColor: "#0a9396" },
+  chipTextActive: { color: "#0a9396" },
+
+  inputLabel: { color: "#475569", marginTop: 8, marginBottom: 4, fontWeight: "600" },
+  input: { borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 10, padding: 10, backgroundColor: "#f8fafc" },
+  textArea: { minHeight: 100, borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 10, padding: 10, backgroundColor: "#f8fafc", textAlignVertical: "top" },
+
+  topupButton: { backgroundColor: "#1088ff", paddingVertical: 12, borderRadius: 12, alignItems: "center", marginTop: 10 },
+  topupButtonText: { color: "#fff", fontWeight: "800", fontSize: 15 },
+
+  topupRowItem: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#f1f5f9" },
+
+  createCard: { backgroundColor: "#fff", borderRadius: 16, padding: 14, marginTop: 14, shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 3, elevation: 2 },
+  authoredItemWrap: { paddingVertical: 10 },
+  authoredItem: { flexDirection: "row", alignItems: "center", gap: 10 },
+  authoredIconWrap: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#e2e8f0", justifyContent: "center", alignItems: "center" },
+  authoredIcon: { fontSize: 18 },
+  authoredTitle: { fontSize: 15, fontWeight: "700", color: "#0f172a" },
+  authoredMeta: { color: "#475569", marginTop: 2 },
+
+  listItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 12 },
+  listItemDivider: { borderTopWidth: 1, borderTopColor: "#f1f5f9" },
+  listItemLeft: { fontSize: 15, color: "#0f172a" },
+  listBadge: { backgroundColor: "#f97316", color: "#fff", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, fontWeight: "700" },
+  unreadDot: { width: 9, height: 9, borderRadius: 9, backgroundColor: "#ef4444" },
+
+  fab: { position: "absolute", right: 18, bottom: 18, width: 54, height: 54, borderRadius: 27, backgroundColor: "#1088ff", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 6, elevation: 4 },
   fabText: { color: "#fff", fontSize: 20, fontWeight: "800" },
 });

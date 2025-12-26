@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { fetchBooks, createBook, createChapter, getBookById, updateChapter, deleteChapter, login as apiLogin, fetchUsers, updateBook, deleteBook, updateUser, deleteUser, createUser, fetchBanners, createBanner, updateBanner, deleteBanner, fetchStats, fetchGenres, createGenre, updateGenre, deleteGenre, fetchTopupRequests, approveTopupRequest, rejectTopupRequest, adminCreditWallet } from './api'
+import { fetchBooks, createBook, createChapter, getBookById, updateChapter, deleteChapter, login as apiLogin, fetchUsers, updateBook, deleteBook, updateUser, deleteUser, createUser, fetchBanners, createBanner, updateBanner, deleteBanner, fetchAdsAdmin, createAd, updateAd, deleteAd, fetchStats, fetchGenres, createGenre, updateGenre, deleteGenre, fetchTopupRequests, approveTopupRequest, rejectTopupRequest, adminCreditWallet, fetchPayments, fetchDonations, fetchComments, adminUpdateComment, adminDeleteComment } from './api'
 import { Bar, Doughnut } from 'react-chartjs-2'
 import Chart from 'chart.js/auto'
 
@@ -20,7 +20,7 @@ export default function App() {
   const [books, setBooks] = useState([])
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
-  const [route, setRoute] = useState('dashboard') // 'dashboard' | 'books' | 'users' | 'genres' | 'coins'
+  const [route, setRoute] = useState('dashboard') // 'dashboard' | 'books' | 'users' | 'genres' | 'coins' | 'transactions'
   const [bookForm, setBookForm] = useState({ title: '', author: '', description: '', genre: '' })
   // allow storing file locally before upload
   const [coverFile, setCoverFile] = useState(null)
@@ -42,20 +42,88 @@ export default function App() {
   const [editGenreModal, setEditGenreModal] = useState(null)
   const [stats, setStats] = useState({ books: 0, users: 0, chapters: 0, banners: 0, comments: 0 })
   const [topups, setTopups] = useState([])
+  const [payments, setPayments] = useState([])
+  const [donations, setDonations] = useState([])
+  const [transactionsError, setTransactionsError] = useState(null)
+  const [comments, setComments] = useState([])
+  const [commentsError, setCommentsError] = useState(null)
+  const [commentsLoading, setCommentsLoading] = useState(false)
+  const [commentFilters, setCommentFilters] = useState({ status: 'pending', bookId: '', storyTitle: '' })
+  const maxStorySuggestions = 8
+  const [usersError, setUsersError] = useState(null)
+  const [topupsError, setTopupsError] = useState(null)
   // loading / busy states for actions
   const [isCreatingBook, setIsCreatingBook] = useState(false)
   const [isCreatingBanner, setIsCreatingBanner] = useState(false)
+  const [ads, setAds] = useState([])
+  const [adForm, setAdForm] = useState({ title: '', link: '', placement: 'interstitial', enabled: true })
+  const [adFile, setAdFile] = useState(null)
+  const [editAdModal, setEditAdModal] = useState(null)
+  const [isCreatingAd, setIsCreatingAd] = useState(false)
   const [isCreatingChapter, setIsCreatingChapter] = useState(false)
   const [deletingBookId, setDeletingBookId] = useState(null)
   const [deletingChapterId, setDeletingChapterId] = useState(null)
   const [savingChapter, setSavingChapter] = useState(false)
   const [isLoggingIn, setIsLoggingIn] = useState(false)
   const [savingBook, setSavingBook] = useState(false)
+  const [adsError, setAdsError] = useState(null)
+
+  const fmtAmount = (v) => {
+    if (v === null || v === undefined || v === '') return '-'
+    const num = Number(v)
+    if (Number.isNaN(num)) return v
+    return new Intl.NumberFormat('vi-VN').format(num)
+  }
+
+  const fmtDate = (s) => s ? new Date(s).toLocaleString('vi-VN') : ''
+
+  const fmtRef = (ref) => {
+    if (ref === null || ref === undefined || ref === '') return '-'
+    if (typeof ref === 'object') {
+      return Object.entries(ref).map(([k,v])=>`${k}: ${v}`).join(', ')
+    }
+    const str = String(ref)
+    if (str.toLowerCase() === 'null') return '-'
+    try {
+      const obj = JSON.parse(str)
+      if (obj && typeof obj === 'object') {
+        return Object.entries(obj).map(([k,v])=>`${k}: ${v}`).join(', ')
+      }
+    } catch (e) {}
+    return str
+  }
+
+  const explainRef = (ref) => {
+    const raw = fmtRef(ref)
+    if (!raw || raw === '-') return '-'
+    const lower = raw.toLowerCase()
+    if (lower.startsWith('donation_id')) {
+      const num = raw.split(':')[1]?.trim()
+      return `Gắn với donate #${num || ''}`.trim()
+    }
+    if (lower.startsWith('topup#')) {
+      const num = raw.replace(/[^0-9]/g,'')
+      return `Mã nạp top-up #${num || ''}`.trim()
+    }
+    if (lower === 'buy-author') return 'Thanh toán mua tác giả'
+    if (lower === 'admin-topup') return 'Admin nạp thủ công'
+    return raw
+  }
+
+  const providerBadge = (p) => {
+    const map = {
+      donation: { label: 'Donate', color: '#e879f9' },
+      bank: { label: 'Ngân hàng', color: '#38bdf8' },
+      coin: { label: 'Xu', color: '#22c55e' },
+      admin: { label: 'Admin', color: '#f97316' }
+    }
+    return map[p] || { label: p || '-', color: '#a8a29e' }
+  }
 
   // navigation helper to integrate with browser history (so Back button works)
   async function navigate(to, opts) {
     if (to === 'book' && opts && opts.bookId) {
-      setSelectedBookLoading(true)
+        setSelectedBookLoading(true)
       try {
         const b = await getBookById(opts.bookId)
         setSelectedBook(b)
@@ -127,6 +195,71 @@ export default function App() {
 
   useEffect(() => { load() }, [route])
 
+  async function loadAds() {
+    try {
+      const list = await fetchAdsAdmin()
+      if (list && list.error) {
+        setAds([])
+        setAdsError(list.error || 'Không thể tải danh sách video ads')
+      } else {
+        setAds(Array.isArray(list) ? list : [])
+        setAdsError(null)
+      }
+    } catch (err) {
+      console.error('load ads err', err)
+      setAds([])
+      setAdsError('Không thể tải danh sách video ads')
+    }
+  }
+
+  async function onCreateAd(e) {
+    if (e && e.preventDefault) e.preventDefault()
+    setIsCreatingAd(true)
+    try {
+      const res = await createAd({ ...adForm, videoFile: adFile })
+      if (res && res.error) {
+        alert(res.error || 'Create ad failed')
+      } else {
+        setAdForm({ title: '', link: '', placement: 'interstitial', enabled: true })
+        setAdFile(null)
+        await loadAds()
+      }
+    } catch (err) {
+      console.error('create ad err', err)
+      alert('Không thể tạo quảng cáo video')
+    } finally {
+      setIsCreatingAd(false)
+    }
+  }
+
+  async function handleDeleteAd(a) {
+    if (!a) return
+    if (!confirm(`Delete ad ${a.id}?`)) return
+    try {
+      const res = await deleteAd(a.id)
+      if (res && res.error) alert(res.error || 'Delete failed')
+      await loadAds()
+    } catch (err) {
+      console.error('delete ad err', err)
+      alert('Không thể xóa quảng cáo')
+    }
+  }
+
+  async function handleEditAdSubmit(payload) {
+    try {
+      const res = await updateAd(payload.id, { ...payload, videoFile: payload.videoFile || null })
+      if (res && res.error) {
+        alert(res.error || 'Update failed')
+        return
+      }
+      setEditAdModal(null)
+      await loadAds()
+    } catch (err) {
+      console.error('update ad err', err)
+      alert('Không thể cập nhật quảng cáo')
+    }
+  }
+
   useEffect(() => {
     if (route === 'book' && selectedBook && selectedBook.id) {
       // nothing - already loaded
@@ -135,6 +268,10 @@ export default function App() {
 
   async function load() {
     setLoading(true)
+    setUsersError(null)
+    setTopupsError(null)
+    setCommentsError(null)
+    setAdsError(null)
     try {
       const b = await fetchBooks()
       setBooks(b)
@@ -142,6 +279,15 @@ export default function App() {
       if (route === 'banners') {
         const bs = await fetchBanners()
         setBanners(Array.isArray(bs) ? bs : [])
+      }
+      if (route === 'ads') {
+        const list = await fetchAdsAdmin()
+        if (list && list.error) {
+          setAds([])
+          setAdsError(list.error || 'Không thể tải danh sách video ads')
+        } else {
+          setAds(Array.isArray(list) ? list : [])
+        }
       }
       if (route === 'genres') {
         const gs = await fetchGenres()
@@ -158,13 +304,64 @@ export default function App() {
           if (s) setStats(s)
         } catch (e) { console.error('fetchStats err', e) }
       }
+      if (route === 'transactions') {
+        try {
+          const [p, d] = await Promise.all([fetchPayments(), fetchDonations()])
+          setPayments(Array.isArray(p) ? p : [])
+          setDonations(Array.isArray(d) ? d : [])
+          setTransactionsError(null)
+        } catch (e) {
+          setTransactionsError('Không thể tải giao dịch')
+        }
+      }
+      if (route === 'comments') {
+        await loadComments()
+      }
       if (route === 'users') {
-        const u = await fetchUsers()
-        setUsers(Array.isArray(u) ? u : [])
+        if (!token) {
+          setUsers([])
+          setUsersError('Bạn cần đăng nhập bằng tài khoản admin để xem danh sách người dùng.')
+        } else {
+          const u = await fetchUsers()
+          if (u && (u.error === 'unauthorized' || u.status === 401 || u.status === 403)) {
+            handleUnauthorized(u)
+            setUsers([])
+            setUsersError('Phiên đăng nhập hết hạn hoặc không hợp lệ. Vui lòng đăng nhập lại.')
+          } else if (u && u.error) {
+            setUsers([])
+            setUsersError(u.error || u.message || 'Không thể tải danh sách người dùng')
+          } else if (Array.isArray(u)) {
+            setUsers(u)
+          } else if (u && Array.isArray(u.data)) {
+            setUsers(u.data)
+          } else {
+            setUsers([])
+            setUsersError('Phản hồi không hợp lệ từ máy chủ người dùng')
+          }
+        }
       }
       if (route === 'coins') {
-        const t = await fetchTopupRequests()
-        setTopups(Array.isArray(t) ? t : [])
+        if (!token) {
+          setTopups([])
+          setTopupsError('Bạn cần đăng nhập để xem yêu cầu nạp xu.')
+        } else {
+          const t = await fetchTopupRequests()
+          if (t && (t.error === 'unauthorized' || t.status === 401 || t.status === 403)) {
+            handleUnauthorized(t)
+            setTopups([])
+            setTopupsError('Phiên đăng nhập hết hạn hoặc không hợp lệ. Vui lòng đăng nhập lại.')
+          } else if (t && t.error) {
+            setTopups([])
+            setTopupsError(t.error || t.message || 'Không thể tải yêu cầu nạp xu')
+          } else if (Array.isArray(t)) {
+            setTopups(t)
+          } else if (t && Array.isArray(t.data)) {
+            setTopups(t.data)
+          } else {
+            setTopups([])
+            setTopupsError('Phản hồi không hợp lệ từ máy chủ top-up')
+          }
+        }
       }
     } catch (err) {
       console.error(err)
@@ -176,10 +373,99 @@ export default function App() {
 
   async function reloadTopups() {
     try {
+      setTopupsError(null)
       const t = await fetchTopupRequests()
-      setTopups(Array.isArray(t) ? t : [])
+      if (t && (t.error === 'unauthorized' || t.status === 401 || t.status === 403)) {
+        handleUnauthorized(t)
+        setTopups([])
+        setTopupsError('Phiên đăng nhập hết hạn hoặc không hợp lệ. Vui lòng đăng nhập lại.')
+      } else if (t && t.error) {
+        setTopups([])
+        setTopupsError(t.error || t.message || 'Không thể tải yêu cầu nạp xu')
+      } else if (Array.isArray(t)) {
+        setTopups(t)
+      } else if (t && Array.isArray(t.data)) {
+        setTopups(t.data)
+      } else {
+        setTopups([])
+        setTopupsError('Phản hồi không hợp lệ từ máy chủ top-up')
+      }
     } catch (err) {
       console.error('reloadTopups err', err)
+      setTopupsError('Không thể tải yêu cầu nạp xu')
+    }
+  }
+
+  async function loadComments(overrides = {}) {
+    try {
+      setCommentsLoading(true)
+      setCommentsError(null)
+      const filters = { ...commentFilters, ...overrides }
+      // Resolve story title to bookId if provided
+      let resolvedBookId = filters.bookId
+      const title = (filters.storyTitle || '').trim().toLowerCase()
+      if (!resolvedBookId && title) {
+        const match = books.find(b => (b.title || '').toLowerCase().includes(title))
+        if (match) resolvedBookId = match.id
+      }
+      const res = await fetchComments({ bookId: resolvedBookId || undefined, status: filters.status || undefined, limit: 300 })
+      if (res && res.error) {
+        setComments([])
+        setCommentsError(res.error || 'Không thể tải bình luận')
+      } else if (Array.isArray(res)) {
+        setComments(res)
+      } else {
+        setComments([])
+        setCommentsError('Phản hồi không hợp lệ từ server bình luận')
+      }
+    } catch (err) {
+      console.error('loadComments err', err)
+      setCommentsError('Không thể tải bình luận')
+      setComments([])
+    } finally {
+      setCommentsLoading(false)
+    }
+  }
+
+  const storySuggestions = (() => {
+    const q = (commentFilters.storyTitle || '').trim().toLowerCase()
+    if (!q) return []
+    return books
+      .filter(b => (b.title || '').toLowerCase().includes(q))
+      .slice(0, maxStorySuggestions)
+  })()
+
+  async function handleApproveComment(c) {
+    try {
+      const res = await adminUpdateComment(c.id, { status: 'approved' })
+      if (res && res.error) return alert(res.error || 'Không thể duyệt')
+      await loadComments()
+    } catch (err) {
+      console.error('approve comment err', err)
+      alert('Không thể duyệt bình luận')
+    }
+  }
+
+  async function handleRejectComment(c) {
+    try {
+      const res = await adminUpdateComment(c.id, { status: 'rejected' })
+      if (res && res.error) return alert(res.error || 'Không thể từ chối')
+      await loadComments()
+    } catch (err) {
+      console.error('reject comment err', err)
+      alert('Không thể từ chối bình luận')
+    }
+  }
+
+  async function handleDeleteComment(c) {
+    if (!confirm('Gỡ bình luận này?')) return
+    try {
+      const res = await adminDeleteComment(c.id)
+      if (res && res.error) return alert(res.error || 'Không thể gỡ')
+      await loadComments()
+    } catch (err) {
+      console.error('delete comment err', err)
+      alert('Không thể gỡ bình luận')
     }
   }
 
@@ -335,6 +621,12 @@ export default function App() {
     setTokenState(null)
   }
 
+  function handleUnauthorized(reason) {
+    console.warn('Auth expired or invalid token', reason)
+    removeToken()
+    setTokenState(null)
+  }
+
   async function onCreateChapter(e) {
     e.preventDefault()
     if (!chapterForm.bookId) return alert('Select book')
@@ -475,6 +767,7 @@ export default function App() {
     load()
   }
 
+
   async function handleAdminTopupUser(u) {
     const coinsStr = window.prompt(`Nạp xu cho ${u.email}`, '100')
     if (coinsStr === null) return
@@ -505,10 +798,13 @@ export default function App() {
             <a href="#" onClick={e=>{e.preventDefault(); setRoute('books')}} className={route==='books'? 'active':''}>Books</a>
             <a href="#" onClick={e=>{e.preventDefault(); setRoute('chapters')}}>Chapters</a>
             <a href="#" onClick={e=>{e.preventDefault(); setRoute('banners')}} className={route==='banners'? 'active':''}>Banners</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('ads')}} className={route==='ads'? 'active':''}>Video Ads</a>
             <a href="#" onClick={e=>{e.preventDefault(); setRoute('genres')}} className={route==='genres'? 'active':''}>Genres</a>
             {/* New Book moved into Books page */}
             <a href="#" onClick={e=>{e.preventDefault(); setRoute('users')}} className={route==='users'? 'active':''}>Users</a>
             <a href="#" onClick={e=>{e.preventDefault(); setRoute('coins')}} className={route==='coins'? 'active':''}>Coins</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('transactions')}} className={route==='transactions'? 'active':''}>Transactions</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('comments')}} className={route==='comments'? 'active':''}>Comments</a>
             <a href="#" onClick={e=>{e.preventDefault(); setRoute('settings')}}>Settings</a>
           </nav>
 
@@ -621,6 +917,97 @@ export default function App() {
             </>
           )}
 
+          {route === 'comments' && (
+            <section className="panel">
+              <h3>Quản lý bình luận</h3>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <label className="small muted">Trạng thái</label>
+                  <select value={commentFilters.status} onChange={(e)=>{ const v=e.target.value; const next={...commentFilters,status:v}; setCommentFilters(next); loadComments(next); }}>
+                    <option value="">Tất cả</option>
+                    <option value="pending">Chờ duyệt</option>
+                    <option value="approved">Đã duyệt</option>
+                    <option value="rejected">Từ chối</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="small muted">Tên truyện</label>
+                  <div style={{ position:'relative' }}>
+                    <input
+                      value={commentFilters.storyTitle}
+                      placeholder="Nhập tên truyện"
+                      onChange={(e)=>{ const next={...commentFilters, storyTitle: e.target.value, bookId: ''}; setCommentFilters(next); }}
+                      onKeyDown={(e)=>{ if (e.key === 'Enter') loadComments(); }}
+                      onBlur={()=>setTimeout(()=>loadComments(), 150)}
+                    />
+                    {storySuggestions.length > 0 && (
+                      <div style={{ position:'absolute', top:'100%', left:0, right:0, background:'#0f0a07', border:'1px solid #3c2a1a', zIndex:10, maxHeight:220, overflowY:'auto', borderRadius:6 }}>
+                        {storySuggestions.map(s => (
+                          <div
+                            key={s.id}
+                            style={{ padding:'6px 10px', cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center' }}
+                            onMouseDown={(e)=>e.preventDefault()}
+                            onClick={()=>{
+                              const next = { ...commentFilters, storyTitle: s.title || '', bookId: s.id }
+                              setCommentFilters(next)
+                              loadComments(next)
+                            }}
+                          >
+                            <span>{s.title}</span>
+                            <span className="small muted">#{s.id}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display:'flex', alignItems:'flex-end', gap:8 }}>
+                  <button className="btn btn-primary" onClick={()=>loadComments()} disabled={commentsLoading}>{commentsLoading ? 'Đang tải...' : 'Tải lại'}</button>
+                </div>
+                <div style={{ display:'flex', alignItems:'flex-end', gap:8 }}>
+                  <div className="muted small">Tổng: {comments.length}</div>
+                </div>
+              </div>
+
+              {commentsError && (<div className="alert error">{commentsError}</div>)}
+
+              <div className="table" style={{ overflowX:'auto' }}>
+                <table style={{ tableLayout:'auto', width:'100%', minWidth:0, borderCollapse:'separate', borderSpacing:0 }}>
+                  <thead>
+                    <tr style={{background:'#1c140e'}}>
+                      <th style={{whiteSpace:'nowrap', padding:'8px 10px', textAlign:'left'}}>ID</th>
+                      <th style={{padding:'8px 10px', textAlign:'left'}}>Story</th>
+                      <th style={{padding:'8px 10px', textAlign:'left'}}>User</th>
+                      <th style={{padding:'8px 10px', textAlign:'left'}}>Nội dung</th>
+                      <th style={{whiteSpace:'nowrap', padding:'8px 10px', textAlign:'left'}}>Ngày</th>
+                      <th style={{textAlign:'center', whiteSpace:'nowrap', padding:'8px 10px'}}>Hành động</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comments.length === 0 && (
+                      <tr><td colSpan={7} style={{ textAlign:'center', padding:12 }} className="muted">Không có bình luận</td></tr>
+                    )}
+                    {comments.map(c => (
+                      <tr key={c.id} style={{borderBottom:'1px solid #2b1c12'}}>
+                        <td className="small muted" style={{verticalAlign:'top', padding:'12px'}}>{c.id}</td>
+                        <td className="small" style={{verticalAlign:'top', wordBreak:'break-word', padding:'12px'}}>
+                          <div style={{fontWeight:700, lineHeight:1.4}}>{c.story_title || c.story_name || c.story || c.story_id}</div>
+                          {(c.story_id && (c.story_title || c.story_name)) && <div className="small muted">#{c.story_id}</div>}
+                        </td>
+                        <td className="small" style={{verticalAlign:'top', wordBreak:'break-word', padding:'12px'}}>{c.user_name || c.user_id || '—'}</td>
+                        <td style={{verticalAlign:'top', wordBreak:'break-word', lineHeight:1.5, padding:'12px', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden'}}>{c.content}</td>
+                        <td className="small muted" style={{verticalAlign:'top', padding:'12px', whiteSpace:'nowrap'}}>{c.created_at ? new Date(c.created_at).toLocaleString('vi-VN') : ''}</td>
+                        <td style={{ textAlign:'center', verticalAlign:'top', padding:'12px' }}>
+                          <button className="btn btn-small" style={{background:'#ef4444', minWidth:72}} onClick={()=>handleDeleteComment(c)}>Gỡ</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
           {route === 'banners' && (
             <section className="panel">
               <h3>Banners</h3>
@@ -670,6 +1057,82 @@ export default function App() {
             </section>
           )}
 
+          {route === 'ads' && (
+            <section className="panel">
+              <h3>Quảng cáo video (Video Ads)</h3>
+              <div className="muted" style={{ marginBottom: 10 }}>
+                Upload video ngắn (mp4) và bật/tắt theo nhu cầu. Ứng dụng sẽ lấy danh sách từ API <code>/ads</code>.
+              </div>
+
+              {adsError ? (
+                <div className="muted" style={{padding:12, background:'#22190f', borderRadius:6, marginBottom: 12}}>
+                  {adsError}
+                </div>
+              ) : null}
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+                <div>
+                  <form onSubmit={onCreateAd}>
+                    <label>Title</label>
+                    <input value={adForm.title} onChange={e=>setAdForm({...adForm,title:e.target.value})} />
+                    <label>Link (optional)</label>
+                    <input value={adForm.link} onChange={e=>setAdForm({...adForm,link:e.target.value})} placeholder="https://..." />
+                    <label>Placement</label>
+                    <select value={adForm.placement} onChange={e=>setAdForm({...adForm,placement:e.target.value})}>
+                      <option value="interstitial">Interstitial</option>
+                      <option value="banner">Banner</option>
+                      <option value="reader">Reader</option>
+                      <option value="home">Home</option>
+                    </select>
+                    <label>Enabled</label>
+                    <select value={adForm.enabled ? '1' : '0'} onChange={e=>setAdForm({...adForm,enabled: e.target.value === '1'})}>
+                      <option value="1">Enabled</option>
+                      <option value="0">Disabled</option>
+                    </select>
+                    <label>Video</label>
+                    <input type="file" accept="video/*" onChange={e=>setAdFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)} />
+                    {adFile && (
+                      <div style={{ marginTop: 8 }}>
+                        <video src={URL.createObjectURL(adFile)} controls style={{ maxWidth: '100%', borderRadius: 8 }} />
+                      </div>
+                    )}
+                    <div style={{display:'flex',justifyContent:'flex-end'}}>
+                      <button type="submit" disabled={isCreatingAd} className={isCreatingAd ? 'btn btn-primary disabled' : 'btn btn-primary'}>
+                        {isCreatingAd ? 'Creating...' : 'Create Video Ad'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                <div>
+                  <h4>Existing Video Ads</h4>
+                  {ads.length === 0 ? <p>No ads</p> : (
+                    <div style={{display:'grid',gap:12}}>
+                      {ads.map(a => (
+                        <div key={a.id} style={{display:'flex',gap:12,alignItems:'center',background:'#fffefc',padding:8,borderRadius:8}}>
+                          <div style={{width:160,height:90,background:'#f2f0ec',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:8,overflow:'hidden'}}>
+                            {a.video_url ? (
+                              <video src={a.video_url} style={{width:'100%',height:'100%',objectFit:'cover'}} muted />
+                            ) : 'No video'}
+                          </div>
+                          <div style={{flex:1}}>
+                            <div style={{fontWeight:700}}>{a.title || '(no title)'}</div>
+                            <div className="small muted">placement: {a.placement || 'interstitial'} • {a.enabled ? 'enabled' : 'disabled'}</div>
+                            <div className="small muted" style={{wordBreak:'break-all'}}>{a.link || ''}</div>
+                          </div>
+                          <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                            <button className="btn btn-edit btn-small" onClick={()=>setEditAdModal({ ...a, videoFile: null })}>Edit</button>
+                            <button onClick={()=>handleDeleteAd(a)} style={{background:'#ff6b6b'}} disabled={false}>Delete</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
+
           {route === 'coins' && (
             <section className="panel">
               <h3>Yêu cầu nạp xu</h3>
@@ -677,7 +1140,9 @@ export default function App() {
                 <div className="muted">Người dùng tạo lệnh nạp, admin duyệt để cộng xu.</div>
                 <button className="btn" onClick={reloadTopups}>Refresh</button>
               </div>
-              {topups.length === 0 ? (
+              {topupsError ? (
+                <div className="muted" style={{padding:12,background:'#22190f',borderRadius:6}}>{topupsError}</div>
+              ) : topups.length === 0 ? (
                 <div className="muted" style={{padding:12}}>Chưa có yêu cầu.</div>
               ) : (
                 <div style={{overflowX:'auto'}}>
@@ -696,8 +1161,8 @@ export default function App() {
                     </thead>
                     <tbody>
                       {topups.map(t => (
-                        <tr key={t.request_id}>
-                          <td>{t.request_id}</td>
+                        <tr key={t.request_id || t.id}>
+                          <td>{t.request_id || t.id}</td>
                           <td>{t.user_id}</td>
                           <td>{t.coins}</td>
                           <td>{t.amount || '-'}</td>
@@ -718,6 +1183,114 @@ export default function App() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+            </section>
+          )}
+
+          {route === 'transactions' && (
+            <section className="panel">
+              <h3>Transactions</h3>
+              {transactionsError ? (
+                <div className="muted" style={{ padding: 10, background: '#22190f', borderRadius: 6 }}>{transactionsError}</div>
+              ) : (
+                <div style={{display:'grid', gap:16}}>
+                  <div>
+                    <h4>Payments (mua VIP / nạp xu)</h4>
+                    {(() => {
+                      const filteredPayments = payments.filter(p => {
+                        const coinsNum = Number(p.coins)
+                        const hasVipDuration = (p.months && Number(p.months) > 0) || (p.days && Number(p.days) > 0)
+                        const isTopup = !Number.isNaN(coinsNum) && coinsNum > 0
+                        return hasVipDuration || isTopup
+                      })
+                      if (filteredPayments.length === 0) return <div className="muted" style={{padding:8}}>Chưa có giao dịch.</div>
+                      return (
+                      <div style={{overflowX:'auto'}}>
+                        <table className="table" style={{minWidth:1024}}>
+                          <thead>
+                            <tr>
+                              <th style={{width:72}}>ID</th>
+                              <th style={{width:200}}>User</th>
+                              <th style={{width:140}}>Số tiền</th>
+                              <th style={{width:130}}>Xu</th>
+                              <th style={{width:130}}>Phương thức</th>
+                              <th style={{width:220}}>Tham chiếu (mã giao dịch / ghi chú)</th>
+                              <th style={{width:140}}>Thời hạn</th>
+                              <th style={{width:180}}>Ngày tạo</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredPayments.map(p => {
+                              const prov = providerBadge(p.provider)
+                              const ref = fmtRef(p.provider_ref)
+                              const duration = p.months ? `${p.months} tháng` : p.days ? `${p.days} ngày` : '-'
+                              return (
+                                <tr key={p.payment_id || p.id}>
+                                  <td style={{whiteSpace:'nowrap'}}>{p.payment_id || p.id}</td>
+                                  <td>
+                                      <div style={{fontWeight:600}}>{p.fullname || p.email || p.user_id}</div>
+                                      {p.email && <div className="small muted">{p.email}</div>}
+                                    </td>
+                                    <td style={{fontWeight:700,whiteSpace:'nowrap'}}>{fmtAmount(p.amount)}</td>
+                                    <td style={{fontWeight:700,whiteSpace:'nowrap'}}>{p.coins !== undefined && p.coins !== null ? fmtAmount(p.coins) : '-'}</td>
+                                    <td>
+                                      <span style={{background:prov.color,color:'#0b0b0b',padding:'2px 10px',borderRadius:999,fontSize:12,fontWeight:700}}>{prov.label}</span>
+                                    </td>
+                                    <td style={{maxWidth:320,wordBreak:'break-word',lineHeight:1.4}}>
+                                      <div style={{fontWeight:600}}>{explainRef(p.provider_ref)}</div>
+                                      {ref && ref !== explainRef(p.provider_ref) && <div className="small muted">{ref}</div>}
+                                    </td>
+                                    <td style={{whiteSpace:'nowrap'}}>{duration}</td>
+                                    <td style={{whiteSpace:'nowrap'}}>{fmtDate(p.created_at)}</td>
+                                  </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )})()}
+                  </div>
+
+                  <div>
+                    <h4>Donations (user → author)</h4>
+                    {donations.length === 0 ? <div className="muted" style={{padding:8}}>Chưa có donate.</div> : (
+                      <div style={{overflowX:'auto'}}>
+                        <table className="table" style={{minWidth:960}}>
+                          <thead>
+                            <tr>
+                              <th style={{width:72}}>ID</th>
+                              <th style={{width:200}}>Người tặng</th>
+                              <th style={{width:200}}>Tác giả</th>
+                              <th style={{width:90}}>Truyện</th>
+                              <th style={{width:120}}>Xu</th>
+                              <th style={{width:260}}>Lời nhắn</th>
+                              <th style={{width:180}}>Thời gian</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {donations.map(d => (
+                              <tr key={d.donation_id || d.id}>
+                                <td style={{whiteSpace:'nowrap'}}>{d.donation_id || d.id}</td>
+                                <td>
+                                  <div style={{fontWeight:600}}>{d.donor_name || d.donor_email || d.donor_id}</div>
+                                  {d.donor_email && <div className="small muted">{d.donor_email}</div>}
+                                </td>
+                                <td>
+                                  <div style={{fontWeight:600}}>{d.author_display || d.author_name || d.author_pen_name || d.author_email || d.author_id}</div>
+                                  {(d.author_email || d.author_user_id) && <div className="small muted">{d.author_email || d.author_user_id}</div>}
+                                </td>
+                                <td style={{whiteSpace:'nowrap'}}>{d.story_title || d.story_name || d.story || d.story_id}</td>
+                                <td style={{fontWeight:700,whiteSpace:'nowrap'}}>{fmtAmount(d.coins)}</td>
+                                <td style={{maxWidth:340,wordBreak:'break-word',lineHeight:1.4}}>{d.message && d.message.trim() ? d.message : '-'}</td>
+                                <td style={{whiteSpace:'nowrap'}}>{fmtDate(d.created_at)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </section>
@@ -937,35 +1510,45 @@ export default function App() {
               <div style={{ marginBottom: 12 }}>
                 <button onClick={() => setCreateUserModal({ fullname: '', email: '', password: '', role: 'user' })} style={{ background: '#8b5e34', color: '#fff', padding: '6px 10px', borderRadius: 6 }}>Add User</button>
               </div>
-              {loading ? <p>Loading...</p> : (
-                <table style={{width:'100%',borderCollapse:'collapse'}}>
-                  <thead>
-                    <tr style={{textAlign:'left',borderBottom:'1px solid #eee'}}>
-                      <th style={{padding:'8px'}}>ID</th>
-                      <th style={{padding:'8px'}}>Name</th>
-                      <th style={{padding:'8px'}}>Email</th>
-                      <th style={{padding:'8px'}}>Role</th>
-                      <th style={{padding:'8px'}}>Created</th>
-                      <th style={{padding:'8px'}}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {users.map(u => (
-                      <tr key={u.id} style={{borderBottom:'1px solid #f2f2f2'}}>
-                        <td style={{padding:8}}>{u.id}</td>
-                        <td style={{padding:8}}>{u.fullname}</td>
-                        <td style={{padding:8}}>{u.email}</td>
-                        <td style={{padding:8}}>{u.role}</td>
-                        <td style={{padding:8}}>{new Date(u.created_at).toLocaleString()}</td>
-                        <td style={{padding:8,display:'flex',gap:6,flexWrap:'wrap'}}>
-                          <button className="btn btn-edit btn-small" onClick={() => handleEditUser(u)}>Edit</button>
-                          <button className="btn btn-delete btn-small" onClick={() => handleDeleteUser(u)} style={{opacity: u.role === 'admin' ? 0.7 : 1, cursor: 'pointer'}} title={u.role === 'admin' ? 'Không thể xóa tài khoản admin' : ''} disabled={false}>Delete</button>
-                          <button className="btn btn-small" onClick={() => handleAdminTopupUser(u)}>Nạp xu</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              {loading ? <p>Loading...</p> : usersError ? (
+                <div className="muted" style={{ padding: 10, background: '#22190f', borderRadius: 6 }}>{usersError}</div>
+              ) : (
+                <>
+                  {users.length === 0 ? (
+                    <div className="muted" style={{ padding: 10 }}>Không có người dùng hoặc bạn không có quyền xem.</div>
+                  ) : (
+                    <table style={{width:'100%',borderCollapse:'collapse'}}>
+                      <thead>
+                        <tr style={{textAlign:'left',borderBottom:'1px solid #eee'}}>
+                          <th style={{padding:'8px'}}>ID</th>
+                          <th style={{padding:'8px'}}>Name</th>
+                          <th style={{padding:'8px'}}>Email</th>
+                          <th style={{padding:'8px'}}>Role</th>
+                          <th style={{padding:'8px'}}>Coins</th>
+                          <th style={{padding:'8px'}}>Created</th>
+                          <th style={{padding:'8px'}}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {users.map(u => (
+                          <tr key={u.id} style={{borderBottom:'1px solid #f2f2f2'}}>
+                            <td style={{padding:8}}>{u.id}</td>
+                            <td style={{padding:8}}>{u.fullname}</td>
+                            <td style={{padding:8}}>{u.email}</td>
+                            <td style={{padding:8}}>{u.role}</td>
+                            <td style={{padding:8,fontWeight:700}}>{typeof u.coins === 'number' ? u.coins : (u.coins ?? 0)}</td>
+                            <td style={{padding:8}}>{u.created_at ? new Date(u.created_at).toLocaleString() : ''}</td>
+                            <td style={{padding:8,display:'flex',gap:6,flexWrap:'wrap'}}>
+                              <button className="btn btn-edit btn-small" onClick={() => handleEditUser(u)}>Edit</button>
+                              <button className="btn btn-delete btn-small" onClick={() => handleDeleteUser(u)} style={{opacity: u.role === 'admin' ? 0.7 : 1, cursor: 'pointer'}} title={u.role === 'admin' ? 'Không thể xóa tài khoản admin' : ''} disabled={false}>Delete</button>
+                              <button className="btn btn-small" onClick={() => handleAdminTopupUser(u)}>Nạp xu</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
               )}
             </section>
           )}
@@ -1060,6 +1643,40 @@ export default function App() {
                     <button onClick={()=>setEditBannerModal(null)} style={{background:'#eee'}}>Cancel</button>
                     <button onClick={()=>handleEditBannerSubmit(editBannerModal)}>Save</button>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {editAdModal && (
+            <div className="modal">
+              <div className="modal-content" style={{ maxWidth: 720 }}>
+                <h3>Edit Video Ad</h3>
+                <label>Title</label>
+                <input value={editAdModal.title || ''} onChange={e=>setEditAdModal({...editAdModal,title:e.target.value})} />
+                <label>Link</label>
+                <input value={editAdModal.link || ''} onChange={e=>setEditAdModal({...editAdModal,link:e.target.value})} />
+                <label>Placement</label>
+                <select value={editAdModal.placement || 'interstitial'} onChange={e=>setEditAdModal({...editAdModal,placement:e.target.value})}>
+                  <option value="interstitial">Interstitial</option>
+                  <option value="reader">Reader</option>
+                  <option value="home">Home</option>
+                </select>
+                <label>Enabled</label>
+                <select value={editAdModal.enabled ? '1' : '0'} onChange={e=>setEditAdModal({...editAdModal,enabled: e.target.value === '1'})}>
+                  <option value="1">Enabled</option>
+                  <option value="0">Disabled</option>
+                </select>
+                <label>Replace video (optional)</label>
+                <input type="file" accept="video/*" onChange={e=>setEditAdModal({...editAdModal, videoFile: (e.target.files && e.target.files[0]) ? e.target.files[0] : null })} />
+                {(editAdModal.videoFile || editAdModal.video_url) && (
+                  <div style={{ marginTop: 8 }}>
+                    <video src={editAdModal.videoFile ? URL.createObjectURL(editAdModal.videoFile) : editAdModal.video_url} controls style={{ width: '100%', borderRadius: 8 }} />
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+                  <button className="btn btn-ghost" onClick={()=>setEditAdModal(null)}>Cancel</button>
+                  <button className="btn btn-primary" onClick={()=>handleEditAdSubmit(editAdModal)}>Save</button>
                 </div>
               </div>
             </div>
