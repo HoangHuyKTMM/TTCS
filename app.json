@@ -14,6 +14,8 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.dinhhung1508.readerapp",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#ffffff"
       },
@@ -25,17 +27,34 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font"
+      "expo-font",
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth",
+      "@react-native-google-signin/google-signin",
+      [
+        "react-native-fbsdk-next",
+        {
+          "appID": "839158852294313",
+          "clientToken": "5ad9da7855d33289fec2b5c14f5304c1",
+          "displayName": "Reader_app",
+          "scheme": "fb839158852294313"
+        }
+      ]
     ],
     "scheme": "readerapp",
     "experiments": {
       "typedRoutes": true
     },
     "extra": {
+      "apiBase": "http://192.168.2.9:4000",
       "googleExpoClientId": "",
       "googleAndroidClientId": "",
       "googleWebClientId": "",
-      "facebookAppId": ""
+      "facebookAppId": "839158852294313",
+      "router": {},
+      "eas": {
+        "projectId": "4009c1a7-1787-4753-9490-717bd2b5df73"
+      }
     }
   }
 }

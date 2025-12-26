@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Stack, Link, useRouter } from "expo-router";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView, ScrollView } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView, ScrollView, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import * as WebBrowser from "expo-web-browser";
 import * as Google from "expo-auth-session/providers/google";
 import * as Facebook from "expo-auth-session/providers/facebook";
 import * as Auth from '../../lib/auth'
+import { GOOGLE_WEB_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID } from '../../lib/firebase'
 import CustomAlert from '../../components/CustomAlert'
 
 WebBrowser.maybeCompleteAuthSession();
@@ -19,65 +20,147 @@ export default function RegisterScreen() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [fbLoading, setFbLoading] = useState(false);
   const [alertVisible, setAlertVisible] = useState(false);
   const [alertConfig, setAlertConfig] = useState<any>({ type: 'info', title: '', message: '' });
   const extra = (Constants.expoConfig?.extra || {}) as any;
 
-  const googleClientId = Platform.OS === "android" ? extra.googleAndroidClientId : extra.googleWebClientId;
-
+  // Google Auth - use Firebase client IDs
   const [googleRequest, googleResponse, googlePromptAsync] = Google.useAuthRequest({
-    clientId: googleClientId,
+    clientId: GOOGLE_WEB_CLIENT_ID,
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
+    webClientId: GOOGLE_WEB_CLIENT_ID,
   });
 
+  // Facebook Auth
   const [fbRequest, fbResponse, fbPromptAsync] = Facebook.useAuthRequest({
     clientId: extra.facebookAppId,
   });
 
   async function handleRegister() {
+    if (!name || !email || !password) {
+      setAlertConfig({ type: 'error', title: 'Lỗi', message: 'Vui lòng điền đầy đủ thông tin' });
+      setAlertVisible(true);
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setAlertConfig({ type: 'error', title: 'Lỗi', message: 'Mật khẩu nhập lại không khớp' });
+      setAlertVisible(true);
+      return;
+    }
+
+    if (password.length < 6) {
+      setAlertConfig({ type: 'error', title: 'Lỗi', message: 'Mật khẩu phải có ít nhất 6 ký tự' });
+      setAlertVisible(true);
+      return;
+    }
+
+    setLoading(true);
     try {
-      if (password !== confirmPassword) {
-        setAlertConfig({ type: 'error', title: 'Lỗi', message: 'Mật khẩu nhập lại không khớp' });
-        setAlertVisible(true);
-        return
-      }
-      if (!password || password.length < 6) {
-        setAlertConfig({ type: 'error', title: 'Lỗi', message: 'Mật khẩu phải có ít nhất 6 ký tự' });
-        setAlertVisible(true);
-        return
-      }
-      const res: any = await Auth.register(name, email, password)
-      if (res && res.error) {
-        setAlertConfig({ type: 'error', title: 'Lỗi', message: res.error });
-        setAlertVisible(true);
-      } else if (res && res.id) {
-        setAlertConfig({
-          type: 'success',
-          title: 'Thành công',
-          message: 'Đăng ký thành công! Vui lòng đăng nhập lại.',
-          buttons: [{ text: 'OK', onPress: () => router.replace('/(auth)/login') }]
-        });
-        setAlertVisible(true);
-      } else {
-        setAlertConfig({ type: 'error', title: 'Lỗi', message: 'Đăng ký thất bại' });
-        setAlertVisible(true);
+      // Try Firebase registration first
+      try {
+        const res = await Auth.registerWithFirebase(name, email, password);
+        if (res && res.token) {
+          setAlertConfig({
+            type: 'success',
+            title: 'Thành công',
+            message: 'Đăng ký thành công!',
+            buttons: [{ text: 'OK', onPress: () => router.replace('/(tabs)/explore') }]
+          });
+          setAlertVisible(true);
+          return;
+        }
+      } catch (firebaseErr: any) {
+        // If Firebase fails, try backend registration
+        const res: any = await Auth.register(name, email, password);
+        if (res && res.error) {
+          throw new Error(res.error);
+        } else if (res && res.id) {
+          setAlertConfig({
+            type: 'success',
+            title: 'Thành công',
+            message: 'Đăng ký thành công! Vui lòng đăng nhập.',
+            buttons: [{ text: 'OK', onPress: () => router.replace('/(auth)/login') }]
+          });
+          setAlertVisible(true);
+          return;
+        }
+        throw firebaseErr;
       }
     } catch (err: any) {
       setAlertConfig({ type: 'error', title: 'Lỗi', message: err.message || 'Đăng ký thất bại' });
       setAlertVisible(true);
+    } finally {
+      setLoading(false);
     }
   }
 
+  // Handle Google sign in response
   useEffect(() => {
-    if (googleResponse?.type === "success") {
-      router.replace("/");
+    async function handleGoogleResponse() {
+      if (googleResponse?.type === "success") {
+        setGoogleLoading(true);
+        try {
+          const { authentication } = googleResponse;
+          if (authentication?.idToken) {
+            await Auth.loginWithGoogle(authentication.idToken);
+            router.replace('/(tabs)/explore');
+          }
+        } catch (err: any) {
+          setAlertConfig({ type: 'error', title: 'Lỗi Google', message: err.message || 'Đăng ký Google thất bại' });
+          setAlertVisible(true);
+        } finally {
+          setGoogleLoading(false);
+        }
+      }
     }
+    handleGoogleResponse();
   }, [googleResponse]);
 
+  // Handle Facebook sign in response
   useEffect(() => {
-    if (fbResponse?.type === "success") {
-      router.replace("/");
+    async function handleFacebookResponse() {
+      if (fbResponse?.type === "success") {
+        setFbLoading(true);
+        try {
+          const { authentication } = fbResponse;
+          if (authentication?.accessToken) {
+            await Auth.loginWithFacebook(authentication.accessToken);
+            router.replace('/(tabs)/explore');
+          }
+        } catch (err: any) {
+          setAlertConfig({ type: 'error', title: 'Lỗi Facebook', message: err.message || 'Đăng ký Facebook thất bại' });
+          setAlertVisible(true);
+        } finally {
+          setFbLoading(false);
+        }
+      }
     }
+    handleFacebookResponse();
   }, [fbResponse]);
+
+  const handleGoogleLogin = async () => {
+    if (googleLoading) return;
+    try {
+      await googlePromptAsync();
+    } catch (err: any) {
+      setAlertConfig({ type: 'error', title: 'Lỗi', message: 'Không thể mở Google Sign In' });
+      setAlertVisible(true);
+    }
+  };
+
+  const handleFacebookLogin = async () => {
+    if (fbLoading) return;
+    try {
+      await fbPromptAsync();
+    } catch (err: any) {
+      setAlertConfig({ type: 'error', title: 'Lỗi', message: 'Không thể mở Facebook Login' });
+      setAlertVisible(true);
+    }
+  };
 
   return (
     <KeyboardAvoidingView
@@ -117,6 +200,7 @@ export default function RegisterScreen() {
               placeholderTextColor="#9ca3af"
               value={name}
               onChangeText={setName}
+              editable={!loading}
             />
           </View>
 
@@ -131,6 +215,7 @@ export default function RegisterScreen() {
               autoCapitalize="none"
               value={email}
               onChangeText={setEmail}
+              editable={!loading}
             />
           </View>
 
@@ -144,6 +229,7 @@ export default function RegisterScreen() {
               secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
+              editable={!loading}
             />
             <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}>
               <Ionicons name={showPassword ? "eye-outline" : "eye-off-outline"} size={20} color="#6b7280" />
@@ -160,6 +246,7 @@ export default function RegisterScreen() {
               secureTextEntry={!showConfirmPassword}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
+              editable={!loading}
             />
             <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={styles.eyeButton}>
               <Ionicons name={showConfirmPassword ? "eye-outline" : "eye-off-outline"} size={20} color="#6b7280" />
@@ -167,37 +254,53 @@ export default function RegisterScreen() {
           </View>
 
           {/* Register Button */}
-          <TouchableOpacity style={styles.primaryButton} onPress={handleRegister}>
-            <Text style={styles.primaryButtonText}>Đăng ký</Text>
+          <TouchableOpacity
+            style={[styles.primaryButton, loading && styles.buttonDisabled]}
+            onPress={handleRegister}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.primaryButtonText}>Đăng ký</Text>
+            )}
           </TouchableOpacity>
 
           {/* Divider */}
           <View style={styles.dividerContainer}>
             <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>hoặc</Text>
+            <Text style={styles.dividerText}>hoặc đăng ký với</Text>
             <View style={styles.dividerLine} />
           </View>
 
           {/* Social Buttons */}
           <View style={styles.socialContainer}>
             <TouchableOpacity
-              style={styles.socialButton}
-              disabled={!googleRequest}
-              onPress={() => googlePromptAsync()}
+              style={[styles.socialButton, googleLoading && styles.socialButtonLoading]}
+              disabled={!googleRequest || googleLoading}
+              onPress={handleGoogleLogin}
             >
-              <Ionicons name="logo-google" size={22} color="#111827" />
+              {googleLoading ? (
+                <ActivityIndicator color="#111827" size="small" />
+              ) : (
+                <Ionicons name="logo-google" size={22} color="#111827" />
+              )}
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.socialButton}
-              disabled={!fbRequest}
-              onPress={() => fbPromptAsync()}
+              style={[styles.socialButton, fbLoading && styles.socialButtonLoading]}
+              disabled={!fbRequest || fbLoading}
+              onPress={handleFacebookLogin}
             >
-              <Ionicons name="logo-facebook" size={22} color="#1877F2" />
+              {fbLoading ? (
+                <ActivityIndicator color="#1877F2" size="small" />
+              ) : (
+                <Ionicons name="logo-facebook" size={22} color="#1877F2" />
+              )}
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.socialButton}>
-              <Ionicons name="logo-apple" size={22} color="#111827" />
+            <TouchableOpacity style={[styles.socialButton, styles.socialButtonDisabled]} disabled>
+              <Ionicons name="logo-apple" size={22} color="#999" />
             </TouchableOpacity>
           </View>
         </View>
@@ -289,6 +392,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 8,
   },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
   primaryButtonText: {
     color: "#fff",
     fontSize: 16,
@@ -321,6 +427,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
+  },
+  socialButtonLoading: {
+    opacity: 0.7,
+  },
+  socialButtonDisabled: {
+    opacity: 0.5,
   },
   footer: {
     flexDirection: "row",

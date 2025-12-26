@@ -5,6 +5,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import * as Auth from "../lib/auth";
 import * as ImagePicker from "expo-image-picker";
+import { Ionicons } from "@expo/vector-icons";
+import QRPaymentModal from "../components/QRPaymentModal";
 import {
   apiGetMe,
   apiGetWallet,
@@ -44,6 +46,7 @@ export default function ProfileScreen() {
   const [activeChapterBookId, setActiveChapterBookId] = useState<string | null>(null);
   const [chapterInputs, setChapterInputs] = useState<Record<string, ChapterInput>>({});
   const [refreshing, setRefreshing] = useState(false);
+  const [showQRPayment, setShowQRPayment] = useState(false);
 
   const myAuthoredBooks = useMemo(() => {
     const uid = user?.id || user?.user_id || null;
@@ -96,6 +99,7 @@ export default function ProfileScreen() {
     const vipActive = vip_days_left !== null ? vip_days_left > 0 : !!vipUntil;
     const normalized = {
       ...u,
+      name: u.name || u.fullname || u.display_name || "",
       role,
       vip_until: vipUntil,
       vip_days_left,
@@ -181,6 +185,14 @@ export default function ProfileScreen() {
     router.replace("/");
   };
 
+  const handleShowQRPayment = () => {
+    const coins = Number(topupCoins || 0);
+    const amount = Number(topupAmount || 0);
+    if (!coins || coins <= 0) return Alert.alert("Lỗi", "Vui lòng nhập số xu hợp lệ.");
+    if (!token) return Alert.alert("Lỗi", "Bạn cần đăng nhập.");
+    setShowQRPayment(true);
+  };
+
   const handleCreateTopupRequest = async () => {
     const coins = Number(topupCoins || 0);
     const amount = Number(topupAmount || 0);
@@ -190,7 +202,8 @@ export default function ProfileScreen() {
     const payload: any = { coins, amount: amount || computePriceForCoins(coins), method: "bank", note: "Top-up mobile" };
     const res: any = await apiCreateTopupRequest(payload, token);
     if (res && res.error) return Alert.alert("Lỗi", res.message || "Tạo yêu cầu thất bại");
-    Alert.alert("Thành công", "Đã tạo yêu cầu nạp.");
+    setShowQRPayment(false);
+    Alert.alert("Thành công", "Đã tạo yêu cầu nạp. Vui lòng đợi admin xác nhận.");
     setTopupCoins("100");
     setTopupAmount(String(computePriceForCoins(100)));
     loadTopupRequests(token);
@@ -201,7 +214,12 @@ export default function ProfileScreen() {
     if (!token || !user) return Alert.alert("Lỗi", "Bạn cần đăng nhập.");
     if (isVip || isAuthor) return Alert.alert("Thông báo", "Bạn đã có quyền VIP.");
     const res: any = await apiBuyVipWithCoins(VIP_COST, { months: 1 }, token);
-    if (res && res.error) return Alert.alert("Lỗi", res.message || "Không thể mua VIP");
+    if (res && res.error) {
+      if (res.error === 'insufficient_funds') {
+        return Alert.alert("Lỗi", "Bạn không đủ xu. Vui lòng nạp thêm xu để mua VIP.");
+      }
+      return Alert.alert("Lỗi", res.message || res.error || "Không thể mua VIP");
+    }
     Alert.alert("Thành công", "Bạn đã mua VIP.");
     if (res.wallet) updateWalletState(res.wallet);
     if (res.user) updateUserState(res.user);
@@ -245,7 +263,12 @@ export default function ProfileScreen() {
     if (isAuthor) return Alert.alert("Thông báo", "Bạn đã là tác giả.");
     const cost = isVip ? AUTHOR_COST_VIP : AUTHOR_COST_BASE;
     const res: any = await apiBuyAuthorWithCoins(cost, token);
-    if (res && res.error) return Alert.alert("Lỗi", res.message || "Không thể mở quyền tác giả");
+    if (res && res.error) {
+      if (res.error === 'insufficient_funds') {
+        return Alert.alert("Lỗi", "Bạn không đủ xu. Vui lòng nạp thêm xu để mở quyền tác giả.");
+      }
+      return Alert.alert("Lỗi", res.message || res.error || "Không thể mở quyền tác giả");
+    }
     Alert.alert("Thành công", "Bạn đã mở quyền tác giả.");
     if (res.wallet) updateWalletState(res.wallet);
     if (res.user) updateUserState(res.user);
@@ -296,46 +319,46 @@ export default function ProfileScreen() {
                 const initial = user?.name?.[0]?.toUpperCase() || "🙂";
                 return (
                   <View style={[styles.avatarImg, { justifyContent: "center", alignItems: "center" }]}>
-                    <Text style={{ fontSize: 22 }}>{initial}</Text>
+                    <Text style={{ fontSize: 22, color: '#fff', fontWeight: '800' }}>{initial}</Text>
                   </View>
                 );
               })()}
             </Pressable>
             <View style={{ flex: 1 }}>
               {token && user ? (
-                <View style={{ gap: 4 }}>
-                  <Text style={styles.loginPrompt}>{user.name || ""}</Text>
-                  <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
-                    <View style={styles.badgePrimary}><Text style={styles.badgePrimaryText}>{roleLabelWithDays}</Text></View>
-                  </View>
+                <View style={{ gap: 2 }}>
+                  <Text style={styles.loginPrompt}>
+                    {user.fullname || user.name || (user.email ? user.email.split('@')[0] : "Thành viên")}
+                  </Text>
+                  <Text style={{ fontSize: 13, color: '#64748b' }}>Hội viên từ {user.created_at ? new Date(user.created_at).toLocaleDateString('vi-VN') : '2025'}</Text>
                 </View>
               ) : (
-                <Text style={styles.loginPrompt}>Bạn chưa đăng nhập</Text>
-              )}
-            </View>
-            <View style={styles.headerActionsRow}>
-              {!token && (
-                <Link href="/(auth)/login" asChild>
-                  <Pressable style={styles.headerIcon}><Text style={{ textAlign: "center", paddingTop: 4 }}>🔑</Text></Pressable>
-                </Link>
-              )}
-              {token && (
-                <Pressable style={[styles.headerIcon, { paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 6 }]} onPress={handleLogout}>
-                  <Text style={{ textAlign: "center", paddingTop: 4 }}>🚪</Text>
-                  <Text style={{ color: "#0f172a", fontWeight: "700" }}>Đăng xuất</Text>
-                </Pressable>
+                <View>
+                  <Text style={styles.loginPrompt}>Khách</Text>
+                  <Link href="/(auth)/login" asChild>
+                    <Pressable><Text style={{ color: '#1088ff', fontWeight: '600' }}>Đăng nhập ngay</Text></Pressable>
+                  </Link>
+                </View>
               )}
             </View>
           </View>
-          <Text style={{ fontSize: 12, color: "#475569", marginTop: 6 }}>Nhấn vào avatar để thay đổi.</Text>
-          <View style={{ flexDirection: "row", marginTop: 12, justifyContent: "space-between", alignItems: "center" }}>
-            <View>
-              <Text style={styles.statLabel}>Số dư</Text>
-              <Text style={styles.statValue}>{wallet ? (wallet.coins ?? wallet.balance ?? wallet.coin_balance ?? 0) : 0} xu</Text>
+
+          {/* Stats Row */}
+          <View style={styles.statsRow}>
+            <View style={styles.statItem}>
+              <View style={styles.statIconWrap}><Ionicons name="wallet-outline" size={18} color="#1088ff" /></View>
+              <View style={{ marginLeft: 10 }}>
+                <Text style={styles.statLabel}>Số dư</Text>
+                <Text style={styles.statValue}>{wallet ? (wallet.coins ?? 0) : 0} xu</Text>
+              </View>
             </View>
-            <View>
-              <Text style={styles.statLabel}>Cấp bậc</Text>
-              <Text style={styles.statValue}>{roleLabelWithDays}</Text>
+            <View style={styles.statDivider} />
+            <View style={styles.statItem}>
+              <View style={styles.statIconWrap}><Ionicons name="medal-outline" size={18} color="#f59e0b" /></View>
+              <View style={{ marginLeft: 10 }}>
+                <Text style={styles.statLabel}>Hạng</Text>
+                <Text style={styles.statValue}>{roleLabelBase}</Text>
+              </View>
             </View>
           </View>
         </View>
@@ -381,8 +404,8 @@ export default function ProfileScreen() {
               keyboardType="numeric"
               style={styles.input}
             />
-            <Pressable style={styles.topupButton} onPress={handleCreateTopupRequest}>
-              <Text style={styles.topupButtonText}>Tạo yêu cầu nạp</Text>
+            <Pressable style={styles.topupButton} onPress={handleShowQRPayment}>
+              <Text style={styles.topupButtonText}>Thanh toán ngay</Text>
             </Pressable>
             <View style={{ marginTop: 12 }}>
               <Text style={styles.inputLabel}>Yêu cầu gần đây</Text>
@@ -478,6 +501,7 @@ export default function ProfileScreen() {
         )}
 
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>⚙️ Cài đặt</Text>
           {LIST_ITEMS.map((it, idx) => (
             <Pressable
               key={it.key}
@@ -487,48 +511,67 @@ export default function ProfileScreen() {
               }}
               style={({ pressed }) => [styles.listItem, idx !== 0 && styles.listItemDivider, pressed && { opacity: 0.7 }]}
             >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Text style={styles.listItemLeft}>{it.icon}  {it.label}</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <View style={styles.menuIconWrap}><Text style={{ fontSize: 16 }}>{it.icon}</Text></View>
+                <Text style={styles.listItemLeft}>{it.label}</Text>
                 {it.key === "notifications" && token && hasUnreadNotifs ? <View style={styles.unreadDot} /> : null}
               </View>
-              {it.badge ? <Text style={styles.listBadge}>{it.badge}</Text> : <Text style={{ color: "#94a3b8", fontWeight: "800" }}>›</Text>}
+              <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
             </Pressable>
           ))}
         </View>
+
+        {token && (
+          <Pressable style={styles.logoutFooterBtn} onPress={handleLogout}>
+            <Ionicons name="log-out-outline" size={20} color="#ef4444" />
+            <Text style={styles.logoutFooterText}>Đăng xuất tài khoản</Text>
+          </Pressable>
+        )}
       </ScrollView>
 
-      {token && (
-        <Pressable style={styles.fab}>
-          <Text style={styles.fabText}>✎</Text>
-        </Pressable>
-      )}
+      <QRPaymentModal
+        visible={showQRPayment}
+        onClose={() => {
+          setShowQRPayment(false);
+          handleCreateTopupRequest();
+        }}
+        amount={Number(topupAmount || 0)}
+        coins={Number(topupCoins || 0)}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f7f9fc" },
-  scroll: { padding: 16, paddingBottom: 48 },
+  container: { flex: 1, backgroundColor: "#f8fafc" },
+  scroll: { padding: 16, paddingBottom: 120 },
 
   headerCard: {
-    backgroundColor: "#e9f2ff",
-    borderRadius: 16,
-    padding: 16,
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  headerRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  avatarPress: { width: 56, height: 56 },
-  avatarImg: { width: 56, height: 56, borderRadius: 28, backgroundColor: "#b3d7ff", overflow: "hidden" },
-  loginPrompt: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
-  headerActionsRow: { flexDirection: "row", gap: 8, marginTop: 6 },
-  headerIcon: { width: 24, height: 24, borderRadius: 12, backgroundColor: "#d0e6ff", marginLeft: 8 },
+  headerRow: { flexDirection: "row", alignItems: "center", gap: 16 },
+  avatarPress: { width: 64, height: 64 },
+  avatarImg: { width: 64, height: 64, borderRadius: 32, backgroundColor: "#10b981", overflow: "hidden" },
+  loginPrompt: { fontSize: 18, fontWeight: "800", color: "#111827" },
+  statsRow: { flexDirection: "row", marginTop: 24, backgroundColor: "#f8fafc", borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#f1f5f9' },
+  statItem: { flex: 1, flexDirection: "row", alignItems: "center" },
+  statIconWrap: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 },
+  statDivider: { width: 1, height: 32, backgroundColor: "#e2e8f0", marginHorizontal: 12 },
 
   badgePrimary: { backgroundColor: "#1088ff", borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 },
   badgePrimaryText: { color: "#fff", fontWeight: "700", fontSize: 12 },
   badgeSecondary: { backgroundColor: "#e0f2f1", borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 },
   badgeSecondaryText: { color: "#0a9396", fontWeight: "700", fontSize: 12 },
 
-  statLabel: { color: "#475569", fontSize: 13 },
-  statValue: { color: "#0f172a", fontWeight: "800", fontSize: 20 },
+  statLabel: { color: "#64748b", fontSize: 12, fontWeight: "500" },
+  statValue: { color: "#111827", fontWeight: "700", fontSize: 16, marginTop: 2 },
 
   section: {
     marginTop: 14,
@@ -552,12 +595,17 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: "#e0f2f1", borderWidth: 1, borderColor: "#0a9396" },
   chipTextActive: { color: "#0a9396" },
 
-  inputLabel: { color: "#475569", marginTop: 8, marginBottom: 4, fontWeight: "600" },
-  input: { borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 10, padding: 10, backgroundColor: "#f8fafc" },
-  textArea: { minHeight: 100, borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 10, padding: 10, backgroundColor: "#f8fafc", textAlignVertical: "top" },
+  inputLabel: { color: "#1f2937", marginTop: 8, marginBottom: 4, fontWeight: "600", fontSize: 14 },
+  input: { borderWidth: 1, borderColor: "#f3f4f6", borderRadius: 12, padding: 12, backgroundColor: "#f9fafb" },
+  textArea: { minHeight: 100, borderWidth: 1, borderColor: "#f3f4f6", borderRadius: 12, padding: 12, backgroundColor: "#f9fafb", textAlignVertical: "top" },
 
-  topupButton: { backgroundColor: "#1088ff", paddingVertical: 12, borderRadius: 12, alignItems: "center", marginTop: 10 },
-  topupButtonText: { color: "#fff", fontWeight: "800", fontSize: 15 },
+  menuIconWrap: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center' },
+
+  logoutFooterBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 32, marginBottom: 16, paddingVertical: 12 },
+  logoutFooterText: { color: '#ef4444', fontWeight: '700', fontSize: 15 },
+
+  topupButton: { backgroundColor: "#111827", paddingVertical: 14, borderRadius: 14, alignItems: "center", marginTop: 10 },
+  topupButtonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
 
   topupRowItem: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#f1f5f9" },
 
@@ -575,6 +623,6 @@ const styles = StyleSheet.create({
   listBadge: { backgroundColor: "#f97316", color: "#fff", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, fontWeight: "700" },
   unreadDot: { width: 9, height: 9, borderRadius: 9, backgroundColor: "#ef4444" },
 
-  fab: { position: "absolute", right: 18, bottom: 18, width: 54, height: 54, borderRadius: 27, backgroundColor: "#1088ff", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 6, elevation: 4 },
+  fab: { position: "absolute", right: 20, bottom: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: "#111827", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.15, shadowRadius: 10, elevation: 5 },
   fabText: { color: "#fff", fontSize: 20, fontWeight: "800" },
 });

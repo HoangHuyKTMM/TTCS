@@ -1,5 +1,5 @@
 import React, { useMemo, useEffect, useState, useCallback } from "react";
-import { StyleSheet, Text, View, ScrollView, Pressable, ActivityIndicator, Image, Alert, TextInput } from "react-native";
+import { StyleSheet, Text, View, ScrollView, Pressable, ActivityIndicator, Image, Alert, TextInput, KeyboardAvoidingView, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from '@react-navigation/native'
@@ -29,6 +29,7 @@ export default function BookDetailScreen() {
   const [revealedNegative, setRevealedNegative] = useState<Set<string>>(new Set())
   const [wallet, setWallet] = useState<any | null>(null)
   const [walletLoading, setWalletLoading] = useState<boolean>(false)
+  const [commentBusy, setCommentBusy] = useState<boolean>(false)
 
   const [authorId, setAuthorId] = useState<string | null>(null)
   const [authorName, setAuthorName] = useState<string>('')
@@ -195,11 +196,11 @@ export default function BookDetailScreen() {
 
   useEffect(() => {
     let active = true
-    ;(async () => {
-      if (!id) return
-      const ok = await isBookDownloaded(String(id))
-      if (active) setOfflineDownloaded(ok)
-    })()
+      ; (async () => {
+        if (!id) return
+        const ok = await isBookDownloaded(String(id))
+        if (active) setOfflineDownloaded(ok)
+      })()
     return () => { active = false }
   }, [id])
 
@@ -340,7 +341,9 @@ export default function BookDetailScreen() {
       return
     }
     if (!id) return
-    if (!commentText.trim()) return
+    if (!commentText.trim() || commentBusy) return
+
+    setCommentBusy(true)
     try {
       const res: any = await apiPostComment(String(id), commentText.trim(), null, token)
       if (res && !res.error) {
@@ -354,6 +357,8 @@ export default function BookDetailScreen() {
       }
     } catch (e: any) {
       Alert.alert('Lỗi', e?.message ? e.message : String(e))
+    } finally {
+      setCommentBusy(false)
     }
   }
 
@@ -401,158 +406,178 @@ export default function BookDetailScreen() {
   }
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={styles.headerRow}>
-          {book.cover ? (
-            <Image source={{ uri: book.cover }} style={styles.coverLg} />
-          ) : (
-            <View style={styles.coverLg} />
-          )}
-          <View style={{ flex: 1 }}>
-            <Text style={styles.title} numberOfLines={2}>{book ? book.title : '...'}</Text>
-            <Text style={styles.meta} numberOfLines={1}>{book ? book.tags.join(" / ") : ''}</Text>
-            <Text style={styles.meta2}>{`${(book?.chapters || []).length} chương · ${likesCount} yêu thích`}</Text>
-
-            {!!authorId && (
-              <View style={styles.authorRow}>
-                <Pressable
-                  onPress={() => router.push({ pathname: '/author/[id]', params: { id: authorId, name: authorName || undefined } } as any)}
-                  style={({ pressed }) => [styles.authorLeft, pressed && { opacity: 0.75 }]}
-                >
-                  <View style={styles.authorAvatar}>
-                    {authorAvatarUrl ? (
-                      <Image source={{ uri: authorAvatarUrl }} style={styles.authorAvatarImg} />
-                    ) : (
-                      <Text style={styles.authorAvatarText}>{(authorName || 'T').trim().slice(0, 1).toUpperCase()}</Text>
-                    )}
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.authorName} numberOfLines={1}>{authorName || 'Tác giả'}</Text>
-                    <Text style={styles.authorMeta} numberOfLines={1}>{authorFollowers} người theo dõi</Text>
-                  </View>
-                </Pressable>
-
-                <Pressable
-                  onPress={handleToggleAuthorFollow}
-                  disabled={isSelfAuthor}
-                  style={[styles.authorFollowBtn, authorFollowing ? styles.authorFollowingBtn : styles.authorFollowBtnOn, isSelfAuthor && { opacity: 0.6 }]}
-                >
-                  <Text style={[styles.authorFollowText, authorFollowing ? styles.authorFollowingText : styles.authorFollowTextOn]}>
-                    {isSelfAuthor ? 'Bạn' : (authorFollowing ? 'Đang theo dõi' : 'Theo dõi')}
-                  </Text>
-                </Pressable>
-              </View>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+        style={{ flex: 1 }}
+      >
+        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+          <View style={styles.headerRow}>
+            {book.cover ? (
+              <Image source={{ uri: book.cover }} style={styles.coverLg} />
+            ) : (
+              <View style={styles.coverLg} />
             )}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.title} numberOfLines={2}>{book ? book.title : '...'}</Text>
+              <Text style={styles.meta} numberOfLines={1}>{book ? book.tags.join(" / ") : ''}</Text>
+              <Text style={styles.meta2}>{`${(book?.chapters || []).length} chương · ${likesCount} yêu thích`}</Text>
 
-            <View style={styles.actionRow}>
-              {offlineDownloaded ? (
-                <Pressable disabled={offlineBusy} onPress={handleRemoveOffline} style={[styles.btnSecondary, { paddingHorizontal: 10 }]}>
-                  <Text style={styles.btnSecondaryText}>{offlineBusy ? '...' : 'Đã tải'}</Text>
-                </Pressable>
-              ) : (
-                <Pressable disabled={offlineBusy} onPress={handleDownloadOffline} style={[styles.btnSecondary, { paddingHorizontal: 10 }]}>
-                  <Text style={styles.btnSecondaryText}>{offlineBusy ? `Tải (${offlineProgress?.done || 0}/${offlineProgress?.total || 0})` : 'Tải về'}</Text>
-                </Pressable>
+              {!!authorId && (
+                <View style={styles.authorRow}>
+                  <Pressable
+                    onPress={() => router.push({ pathname: '/author/[id]', params: { id: authorId, name: authorName || undefined } } as any)}
+                    style={({ pressed }) => [styles.authorLeft, pressed && { opacity: 0.75 }]}
+                  >
+                    <View style={styles.authorAvatar}>
+                      {authorAvatarUrl ? (
+                        <Image source={{ uri: authorAvatarUrl }} style={styles.authorAvatarImg} />
+                      ) : (
+                        <Text style={styles.authorAvatarText}>{(authorName || 'T').trim().slice(0, 1).toUpperCase()}</Text>
+                      )}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.authorName} numberOfLines={1}>{authorName || 'Tác giả'}</Text>
+                      <Text style={styles.authorMeta} numberOfLines={1}>{authorFollowers} người theo dõi</Text>
+                    </View>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={handleToggleAuthorFollow}
+                    disabled={isSelfAuthor}
+                    style={[styles.authorFollowBtn, authorFollowing ? styles.authorFollowingBtn : styles.authorFollowBtnOn, isSelfAuthor && { opacity: 0.6 }]}
+                  >
+                    <Text style={[styles.authorFollowText, authorFollowing ? styles.authorFollowingText : styles.authorFollowTextOn]}>
+                      {isSelfAuthor ? 'Bạn' : (authorFollowing ? 'Đang theo dõi' : 'Theo dõi')}
+                    </Text>
+                  </Pressable>
+                </View>
               )}
 
-              <Link href={{ pathname: "/reader/[id]", params: { id: id || (book ? book.id : ''), ch: "1" } } as any} asChild>
-                <Pressable style={styles.btnPrimary}><Text style={styles.btnPrimaryText}>Đọc từ đầu</Text></Pressable>
-              </Link>
-              <Pressable onPress={handleToggleLike} style={[styles.btnSecondary, liked && styles.btnSecondaryActive, { paddingHorizontal: 10 }]}>
-                <Text style={[styles.btnSecondaryText, liked && styles.btnSecondaryTextActive]}>{liked ? 'Đã thích' : 'Yêu thích'}</Text>
+              <View style={styles.actionRow}>
+                {offlineDownloaded ? (
+                  <Pressable disabled={offlineBusy} onPress={handleRemoveOffline} style={[styles.btnSecondary, { paddingHorizontal: 10 }]}>
+                    <Text style={styles.btnSecondaryText}>{offlineBusy ? '...' : 'Đã tải'}</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable disabled={offlineBusy} onPress={handleDownloadOffline} style={[styles.btnSecondary, { paddingHorizontal: 10 }]}>
+                    <Text style={styles.btnSecondaryText}>{offlineBusy ? `Tải (${offlineProgress?.done || 0}/${offlineProgress?.total || 0})` : 'Tải về'}</Text>
+                  </Pressable>
+                )}
+
+                <Link href={{ pathname: "/reader/[id]", params: { id: id || (book ? book.id : ''), ch: "1" } } as any} asChild>
+                  <Pressable style={styles.btnPrimary}><Text style={styles.btnPrimaryText}>Đọc từ đầu</Text></Pressable>
+                </Link>
+                <Pressable onPress={handleToggleLike} style={[styles.btnSecondary, liked && styles.btnSecondaryActive, { paddingHorizontal: 10 }]}>
+                  <Text style={[styles.btnSecondaryText, liked && styles.btnSecondaryTextActive]}>{liked ? 'Đã thích' : 'Yêu thích'}</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Giới thiệu</Text>
+            <Text style={styles.desc}>{book ? book.desc : ''}</Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Ủng hộ tác giả</Text>
+            <Text style={styles.meta}>Dùng xu để động viên tác giả tiếp tục ra chương mới.</Text>
+            <View style={styles.donateRow}>
+              {[50, 100, 200].map((amt) => (
+                <Pressable key={amt} onPress={() => handleSelectDonate(amt)} style={[styles.donateBtn, donateAmount === amt && styles.donateBtnActive]}>
+                  <Text style={[styles.donateText, donateAmount === amt && styles.donateTextActive]}>{amt} xu</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.donateActionRow}>
+              <Text style={styles.meta}>
+                {walletLoading ? 'Đang lấy số dư...' : `Đang chọn: ${donateAmount} xu${wallet ? ` · Số dư: ${walletCoins} xu` : ''}`}
+              </Text>
+              <Pressable onPress={handleConfirmDonate} style={[styles.btnPrimary, styles.donateConfirmBtn]}>
+                <Text style={styles.btnPrimaryText}>Tặng quà</Text>
               </Pressable>
             </View>
           </View>
-        </View>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Giới thiệu</Text>
-          <Text style={styles.desc}>{book ? book.desc : ''}</Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Ủng hộ tác giả</Text>
-          <Text style={styles.meta}>Dùng xu để động viên tác giả tiếp tục ra chương mới.</Text>
-          <View style={styles.donateRow}>
-            {[50, 100, 200].map((amt) => (
-              <Pressable key={amt} onPress={() => handleSelectDonate(amt)} style={[styles.donateBtn, donateAmount === amt && styles.donateBtnActive]}>
-                <Text style={[styles.donateText, donateAmount === amt && styles.donateTextActive]}>{amt} xu</Text>
-              </Pressable>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Danh sách chương</Text>
+            {(book ? book.chapters : []).map((ch, idx) => (
+              <Link key={ch.id} href={{ pathname: "/reader/[id]", params: { id: id || (book ? book.id : ''), ch: String(idx + 1) } } as any} asChild>
+                <Pressable style={[styles.chapterRow, idx !== 0 && styles.rowDivider]}>
+                  <Text style={styles.chapterText} numberOfLines={1}>Ch. {idx + 1} · {ch.title}</Text>
+                </Pressable>
+              </Link>
             ))}
           </View>
-          <View style={styles.donateActionRow}>
-            <Text style={styles.meta}>
-              {walletLoading ? 'Đang lấy số dư...' : `Đang chọn: ${donateAmount} xu${wallet ? ` · Số dư: ${walletCoins} xu` : ''}`}
-            </Text>
-            <Pressable onPress={handleConfirmDonate} style={[styles.btnPrimary, styles.donateConfirmBtn]}>
-              <Text style={styles.btnPrimaryText}>Tặng quà</Text>
-            </Pressable>
-          </View>
-        </View>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Danh sách chương</Text>
-          {(book ? book.chapters : []).map((ch, idx) => (
-            <Link key={ch.id} href={{ pathname: "/reader/[id]", params: { id: id || (book ? book.id : ''), ch: String(idx + 1) } } as any} asChild>
-              <Pressable style={[styles.chapterRow, idx !== 0 && styles.rowDivider]}>
-                <Text style={styles.chapterText} numberOfLines={1}>Ch. {idx + 1} · {ch.title}</Text>
-              </Pressable>
-            </Link>
-          ))}
-        </View>
-
-        <View style={[styles.card, { marginBottom: 24 }]}>
-          <Text style={styles.cardTitle}>Bình luận</Text>
-          <View style={styles.commentInputRow}>
-            <TextInput
-              style={styles.commentInput}
-              placeholder="Viết bình luận..."
-              value={commentText}
-              onChangeText={setCommentText}
-              multiline
-            />
-            <Pressable onPress={handleSubmitComment} style={styles.sendBtn}><Text style={styles.sendBtnText}>Gửi</Text></Pressable>
-          </View>
-          {comments.length === 0 ? (
-            <View style={styles.emptyBox}><Text style={styles.meta}>Chưa có bình luận</Text></View>
-          ) : (
-            comments.map((c, idx) => {
-              const isHidden = c.is_negative && !revealedNegative.has(c.id)
-              const myId = user ? String(user.id || user.user_id) : null
-              const isMine = !!(myId && c && c.user_id && String(c.user_id) === String(myId))
-              return (
-                <View key={c.id || idx} style={[styles.commentRow, idx !== 0 && styles.rowDivider]}>
-                  {c.user_avatar ? (
-                    <Image source={{ uri: c.user_avatar.startsWith('http') ? c.user_avatar : `${API_BASE}${c.user_avatar}` }} style={styles.avatarStub} />
+          <View style={[styles.card, { marginBottom: 24 }]}>
+            <View id="comment-section">
+              <Text style={styles.cardTitle}>Bình luận</Text>
+              <View style={styles.commentInputRow}>
+                <TextInput
+                  style={styles.commentInput}
+                  placeholder="Viết bình luận..."
+                  value={commentText}
+                  onChangeText={setCommentText}
+                  multiline
+                />
+                <Pressable
+                  onPress={handleSubmitComment}
+                  disabled={commentBusy}
+                  style={[styles.sendBtn, commentBusy && { opacity: 0.7 }]}
+                >
+                  {commentBusy ? (
+                    <ActivityIndicator size="small" color="#fff" />
                   ) : (
-                    <View style={styles.avatarStub} />
+                    <Text style={styles.sendBtnText}>Gửi</Text>
                   )}
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.commentHeaderRow}>
-                      <Text style={styles.commentAuthor}>{c.user_name || `Người dùng ${c.user_id}`}</Text>
-                      {isMine && c.id ? (
-                        <Pressable onPress={() => handleDeleteComment(String(c.id))} style={({ pressed }) => [styles.commentDeleteBtn, pressed && { opacity: 0.7 }]}
-                        >
-                          <Text style={styles.commentDeleteText}>Xóa</Text>
-                        </Pressable>
-                      ) : null}
-                    </View>
-                    {isHidden ? (
-                      <Pressable onPress={() => setRevealedNegative(prev => new Set(prev).add(c.id))}>
-                        <View style={styles.hiddenComment}>
-                          <Text style={styles.hiddenCommentText}>⚠️ Bình luận tiêu cực - Nhấn để xem</Text>
-                        </View>
-                      </Pressable>
+                </Pressable>
+              </View>
+            </View>
+            {comments.length === 0 ? (
+              <View style={styles.emptyBox}><Text style={styles.meta}>Chưa có bình luận</Text></View>
+            ) : (
+              comments.map((c, idx) => {
+                // IMPORTANT: Ensure we handle both boolean and truthy/falsy values from API
+                const isNegative = c.is_negative === true || c.is_negative === 1 || String(c.is_negative) === 'true'
+                const isHidden = isNegative && !revealedNegative.has(c.id)
+                const myId = user ? String(user.id || user.user_id) : null
+                const isMine = !!(myId && c && c.user_id && String(c.user_id) === String(myId))
+                return (
+                  <View key={c.id || idx} style={[styles.commentRow, idx !== 0 && styles.rowDivider]}>
+                    {c.user_avatar ? (
+                      <Image source={{ uri: c.user_avatar.startsWith('http') ? c.user_avatar : `${API_BASE}${c.user_avatar}` }} style={styles.avatarStub} />
                     ) : (
-                      <Text style={[styles.commentText, c.is_negative && styles.negativeComment]}>{c.content}</Text>
+                      <View style={styles.avatarStub} />
                     )}
+                    <View style={{ flex: 1 }}>
+                      <View style={styles.commentHeaderRow}>
+                        <Text style={styles.commentAuthor}>{c.user_name || `Người dùng ${c.user_id}`}</Text>
+                        {isMine && c.id ? (
+                          <Pressable onPress={() => handleDeleteComment(String(c.id))} style={({ pressed }) => [styles.commentDeleteBtn, pressed && { opacity: 0.7 }]}
+                          >
+                            <Text style={styles.commentDeleteText}>Xóa</Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                      {isHidden ? (
+                        <Pressable onPress={() => setRevealedNegative(prev => new Set(prev).add(c.id))}>
+                          <View style={styles.hiddenComment}>
+                            <Text style={styles.hiddenCommentText}>Tin nhắn bị ẩn vì nội dung tiêu cực. Nhấn để xem.</Text>
+                          </View>
+                        </Pressable>
+                      ) : (
+                        <Text style={[styles.commentText, isNegative && styles.negativeComment]}>{c.content}</Text>
+                      )}
+                    </View>
                   </View>
-                </View>
-              )
-            })
-          )}
-        </View>
-      </ScrollView>
+                )
+              })
+            )}
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       <AdInterstitial
         visible={entryAdVisible}
@@ -669,7 +694,7 @@ const styles = StyleSheet.create({
   commentDeleteBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#fef2f2', borderWidth: StyleSheet.hairlineWidth, borderColor: '#fecaca' },
   commentDeleteText: { color: '#dc2626', fontWeight: '800', fontSize: 12 },
   commentText: { color: '#111827', marginTop: 2 },
-  hiddenComment: { backgroundColor: '#fef2f2', borderRadius: 8, padding: 10, marginTop: 4 },
-  hiddenCommentText: { color: '#dc2626', fontSize: 13 },
-  negativeComment: { color: '#6b7280', fontStyle: 'italic' },
+  hiddenComment: { backgroundColor: '#f1f5f9', borderRadius: 8, padding: 12, marginTop: 4, borderStyle: 'dashed', borderWidth: 1, borderColor: '#cbd5e1' },
+  hiddenCommentText: { color: '#64748b', fontSize: 13, fontStyle: 'italic' },
+  negativeComment: { color: '#6b7280', fontStyle: 'italic', backgroundColor: '#fff7ed', padding: 8, borderRadius: 6 },
 });

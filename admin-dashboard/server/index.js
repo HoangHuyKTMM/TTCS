@@ -1008,6 +1008,139 @@ app.post('/auth/register', async (req, res) => {
   }
 })
 
+// Firebase Authentication endpoint - handles Google, Facebook, Email login from Firebase
+app.post('/auth/firebase', async (req, res) => {
+  try {
+    const { idToken, email, name, avatar_url, firebase_uid, auth_method } = req.body
+
+    if (!idToken || !firebase_uid) {
+      return res.status(400).json({ error: 'idToken and firebase_uid required' })
+    }
+
+    if (!useMysql) {
+      return res.status(400).json({ error: 'Firebase auth requires MySQL mode' })
+    }
+
+    console.log(`[Firebase Auth] ${auth_method || 'unknown'} login for ${email}`)
+
+    // Check if user already exists by firebase_uid or email
+    let user = null
+
+    // First try to find by firebase_uid
+    try {
+      const [rows] = await db.initPool().then(p => p.execute(
+        'SELECT * FROM users WHERE firebase_uid = ? LIMIT 1',
+        [firebase_uid]
+      ))
+      if (rows && rows.length > 0) {
+        user = rows[0]
+      }
+    } catch (e) {
+      console.log('[Firebase Auth] firebase_uid lookup failed, trying email')
+    }
+
+    // If not found by firebase_uid, try email
+    if (!user && email) {
+      user = await db.getUserByEmail(email)
+    }
+
+    if (user) {
+      // User exists - update firebase_uid if not set
+      if (!user.firebase_uid) {
+        try {
+          const pool = await db.initPool()
+          await pool.execute(
+            'UPDATE users SET firebase_uid = ?, auth_method = ? WHERE user_id = ?',
+            [firebase_uid, auth_method || 'firebase', user.user_id || user.id]
+          )
+        } catch (e) {
+          console.log('[Firebase Auth] Could not update firebase_uid:', e.message)
+        }
+      }
+
+      // Update avatar if provided and user doesn't have one
+      if (avatar_url && !user.avatar_url) {
+        try {
+          const pool = await db.initPool()
+          await pool.execute(
+            'UPDATE users SET avatar_url = ? WHERE user_id = ?',
+            [avatar_url, user.user_id || user.id]
+          )
+          user.avatar_url = avatar_url
+        } catch (e) {
+          console.log('[Firebase Auth] Could not update avatar:', e.message)
+        }
+      }
+
+      // Generate JWT token
+      const token = jwt.sign(
+        { id: user.user_id || user.id, email: user.email, role: user.role },
+        JWT_SECRET,
+        { expiresIn: '30d' }
+      )
+
+      return res.json({
+        token,
+        user: {
+          id: user.user_id || user.id,
+          email: user.email,
+          name: user.fullname || user.name,
+          role: user.role,
+          avatar_url: user.avatar_url
+        }
+      })
+    }
+
+    // Create new user
+    console.log('[Firebase Auth] Creating new user for', email)
+
+    // Generate a random password hash for Firebase users (they won't use password login)
+    const randomPassword = Math.random().toString(36).slice(-12) + Math.random().toString(36).slice(-12)
+    const hash = await bcrypt.hash(randomPassword, 10)
+
+    const newUser = await db.createUser({
+      email: email || `firebase_${firebase_uid}@noemail.local`,
+      password_hash: hash,
+      name: name || email?.split('@')[0] || 'User',
+      role: 'user',
+      avatar_url: avatar_url || null
+    })
+
+    // Update firebase_uid
+    try {
+      const pool = await db.initPool()
+      await pool.execute(
+        'UPDATE users SET firebase_uid = ?, auth_method = ? WHERE user_id = ?',
+        [firebase_uid, auth_method || 'firebase', newUser.id || newUser.user_id]
+      )
+    } catch (e) {
+      console.log('[Firebase Auth] Could not set firebase_uid:', e.message)
+    }
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { id: newUser.id || newUser.user_id, email: newUser.email, role: newUser.role },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    )
+
+    return res.status(201).json({
+      token,
+      user: {
+        id: newUser.id || newUser.user_id,
+        email: newUser.email,
+        name: newUser.fullname || newUser.name || name,
+        role: newUser.role,
+        avatar_url: avatar_url || null
+      }
+    })
+
+  } catch (err) {
+    console.error('[Firebase Auth] Error:', err)
+    res.status(500).json({ error: 'internal', message: err.message })
+  }
+})
+
 // PUT /books/:bookId/chapters/:chapterId - admin edit chapter
 app.put('/books/:bookId/chapters/:chapterId', authMiddleware, async (req, res) => {
   try {
@@ -1069,18 +1202,76 @@ app.delete('/books/:bookId/chapters/:chapterId', authMiddleware, async (req, res
 })
 
 // Comments
-// POST /books/:id/comments - authenticated users
+// POST /books/:id/comments - create a new comment (requires auth)
 app.post('/books/:id/comments', authMiddleware, async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     const userId = req.user.id
     const bookId = req.params.id
-    const { content, parent_id } = req.body
-    if (!content) return res.status(400).json({ error: 'content required' })
-    const comment = await db.createComment(bookId, { user_id: userId, content, parent_id })
+    const { content, parent_id } = req.body || {}
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'content required' })
+    }
+
+    // Check content for negativity using Grok API (xAI)
+    let isNegative = false
+    let negativeProbability = 0
+    const GROK_KEY = process.env.GROK_API_KEY
+    if (GROK_KEY) {
+      console.log(`\n--- [Grok Check Start] ---`);
+      console.log(`[Grok] Input Content: "${content.trim()}"`);
+      try {
+        const grokRes = await fetch('https://api.x.ai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${GROK_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: "grok-4-1-fast-non-reasoning",
+            messages: [
+              { role: "system", content: "Bạn là robot kiểm duyệt bình luận thô tục cực kỳ khắt khe cho ứng dụng đọc truyện. Nếu bình luận chứa từ bậy, tiếng lóng thô lỗ, xúc phạm, toxic (ví dụ: lol, cút, xàm, ngu, đm, vcl, ...) hãy trả về duy nhất từ 'tieu cuc'. Nếu nội dung lịch sự hoặc bình thường, hãy trả về 'binh thuong'. KHÔNG giải thích gì thêm, chỉ trả về 1 trong 2 cụm từ trên." },
+              { role: "user", content: content.trim() }
+            ],
+            temperature: 0
+          })
+        })
+        const grokData = await grokRes.json()
+        console.log(`[Grok] Raw Response Data:`, JSON.stringify(grokData, null, 2));
+
+        if (grokData && grokData.choices && grokData.choices[0]) {
+          const answer = (grokData.choices[0].message.content || '').toLowerCase().trim()
+          console.log(`[Grok] Extracted Answer: "${answer}"`);
+
+          if (answer.includes('tieu cuc') || answer.includes('tiêu cực') || answer.includes('toxic')) {
+            isNegative = true
+            negativeProbability = 99
+          } else if (answer.includes('binh thuong') || answer.includes('bình thường')) {
+            isNegative = false
+          } else {
+            isNegative = !answer.includes('binh thuong');
+          }
+          console.log(`[Grok] Final Decision: ${isNegative ? 'NEGATIVE (Tieu cuc)' : 'POSITIVE (Binh thuong)'}`);
+        } else {
+          console.warn('[Grok] Unexpected response format or empty choices.');
+        }
+      } catch (e) {
+        console.error('[Grok] Fetch failed:', e.message)
+      }
+      console.log(`--- [Grok Check End] ---\n`);
+    }
+
+    const comment = await db.createComment(bookId, {
+      user_id: userId,
+      content: content.trim(),
+      parent_id: parent_id || null,
+      is_negative: isNegative ? 1 : 0,
+      negative_probability: negativeProbability
+    })
     res.status(201).json(comment)
   } catch (err) {
-    console.error(err)
+    console.error('POST /books/:id/comments err', err)
     res.status(500).json({ error: 'internal' })
   }
 })
@@ -2523,182 +2714,206 @@ app.post('/users/:id/avatar', authMiddleware, async (req, res) => {
     res.status(500).json({ error: 'internal' })
   }
 })
-// Debug: dump chapters for a book (dev only)
-if (process.env.ALLOW_DEV_TOKENS === 'true') {
-  app.get('/debug/books/:id/chapters', async (req, res) => {
-    try {
-      const id = req.params.id
-      const chapters = await db.getChaptersByBook(id)
-      return res.json({ book_id: id, count: (chapters || []).length, chapters })
-    } catch (e) {
-      console.error('debug chapters err', e)
-      return res.status(500).json({ error: 'internal', detail: String(e && (e.stack || e.message || e)) })
-    }
-  })
-  console.log('Debug chapters endpoint enabled at GET /debug/books/:id/chapters (ALLOW_DEV_TOKENS=true)')
-}
 
-// ==================== COMMENTS API ====================
-// GET /books/:id/comments - public list of comments for a book
-app.get('/books/:id/comments', async (req, res) => {
+// ==================== AI CHATBOT ====================
+// POST /chat - Chat with AI for book recommendations
+app.post('/chat', async (req, res) => {
   try {
-    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-    const bookId = req.params.id
-    const comments = await db.getComments(bookId, { status: 'approved' })
-    res.json(comments || [])
-  } catch (err) {
-    console.error('GET /books/:id/comments err', err)
-    res.status(500).json({ error: 'internal', message: err.message })
-  }
-})
-
-// POST /books/:id/comments - create a new comment (requires auth)
-app.post('/books/:id/comments', async (req, res) => {
-  try {
-    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-
-    // Parse auth token
-    let userId = null
-    const auth = req.headers.authorization
-    if (auth) {
-      const parts = auth.split(' ')
-      if (parts.length === 2 && parts[0] === 'Bearer') {
-        try {
-          const payload = jwt.verify(parts[1], JWT_SECRET)
-          userId = payload && payload.id ? payload.id : null
-        } catch (e) {
-          return res.status(401).json({ error: 'invalid token' })
-        }
-      }
+    const { message } = req.body || {}
+    if (!message || !message.trim()) {
+      return res.status(400).json({ error: 'message required' })
     }
 
-    if (!userId) {
-      return res.status(401).json({ error: 'missing authorization' })
-    }
-
-    const bookId = req.params.id
-    const { content, parent_id } = req.body || {}
-
-    if (!content || !content.trim()) {
-      return res.status(400).json({ error: 'content required' })
-    }
-
-    // Check content for negativity using Grok API (xAI)
-    let isNegative = false
-    let negativeProbability = 0
     const GROK_KEY = process.env.GROK_API_KEY
-    if (GROK_KEY) {
-      console.log(`[Grok] Checking: "${content.trim()}"`);
+    if (!GROK_KEY) {
+      return res.status(500).json({ error: 'AI service not configured' })
+    }
+
+    // Get available books for context
+    let booksContext = ''
+    let allBooks = []
+    if (useMysql) {
       try {
-        const grokRes = await fetch('https://api.x.ai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${GROK_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: "grok-4-1-fast-non-reasoning",
-            messages: [
-              { role: "system", content: "Bạn là robot kiểm duyệt bình luận thô tục cực kỳ khắt khe. Nếu bình luận chứa từ bậy, tiếng lóng thô lỗ (lol, cút, xàm, ngu, đm, vcl, ...) hoặc xúc phạm người khác, hãy trả về 'tieu cuc'. Ngược lại trả về 'binh thuong'. Chỉ trả về 1 từ duy nhất." },
-              { role: "user", content: content.trim() }
-            ],
-            temperature: 0
-          })
-        })
-        const grokData = await grokRes.json()
-        if (grokData && grokData.choices && grokData.choices[0]) {
-          const answer = (grokData.choices[0].message.content || '').toLowerCase().trim()
-          console.log(`[Grok] Raw Answer: "${answer}"`);
-          if (answer.includes('tieu cuc') || answer.includes('tiêu cực') || answer.includes('toxic')) {
-            isNegative = true
-            negativeProbability = 99
-          } else if (answer.includes('binh thuong') || answer.includes('bình thường')) {
-            isNegative = false
-          } else {
-            // Nếu Grok trả về lạ, mặc định coi là tiêu cực nếu không phải 'binh thuong'
-            isNegative = !answer.includes('binh thuong');
-          }
-        } else {
-          console.log('[Grok] Error response:', JSON.stringify(grokData));
-        }
+        allBooks = await db.getBooks({}) || []
+        const booksList = allBooks.slice(0, 50).map(b =>
+          `- "${b.title}" (${b.genre || 'Không rõ thể loại'}, ${b.chapters_count || 0} chương)`
+        ).join('\n')
+        booksContext = `\n\nDanh sách truyện hiện có:\n${booksList}`
       } catch (e) {
-        console.error('[Grok] Fetch failed:', e.message)
+        console.log('[Chat] Could not load books for context')
       }
+    }
+
+    console.log(`\n--- [Chat] User: "${message.trim()}" ---`)
+
+    const systemPrompt = `Bạn là AI tư vấn truyện cho ứng dụng đọc truyện Reader App. Nhiệm vụ của bạn:
+1. Gợi ý truyện phù hợp với sở thích người dùng
+2. Giới thiệu tóm tắt nội dung truyện
+3. Phân loại truyện theo thể loại (Ngôn tình, Hiện đại, Cổ đại, Huyền huyễn, Xuyên không, Đam mỹ, etc.)
+4. Trả lời câu hỏi về truyện một cách thân thiện
+
+Bạn có thể sử dụng markdown để format text:
+- Dùng **text** để in đậm tên truyện
+- Dùng danh sách có dấu - để liệt kê
+- Dùng emoji phù hợp để tạo cảm xúc
+
+Khi gợi ý truyện, hãy đề cập TÊN TRUYỆN CHÍNH XÁC từ danh sách có sẵn.
+Trả lời ngắn gọn, thân thiện bằng tiếng Việt.
+Nếu không tìm thấy truyện phù hợp, hãy gợi ý người dùng thử thể loại khác.
+${booksContext}`
+
+    const grokRes = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROK_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: "grok-4-1-fast-non-reasoning",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: message.trim() }
+        ],
+        temperature: 0.7
+      })
+    })
+
+    const grokData = await grokRes.json()
+    let reply = 'Xin lỗi, tôi không thể trả lời lúc này.'
+
+    if (grokData && grokData.choices && grokData.choices[0]) {
+      reply = grokData.choices[0].message.content || reply
+      console.log(`[Chat] AI Reply: "${reply.substring(0, 100)}..."`)
     } else {
-      console.warn('[Grok] Missing GROK_API_KEY');
+      console.log('[Chat] Grok error:', JSON.stringify(grokData))
     }
 
-
-    const comment = await db.createComment(bookId, {
-      user_id: userId,
-      content: content.trim(),
-      parent_id: parent_id || null,
-      is_negative: isNegative ? 1 : 0,
-      negative_probability: negativeProbability
-    })
-
-    res.status(201).json(comment)
-  } catch (err) {
-    console.error('POST /books/:id/comments err', err)
-    res.status(500).json({ error: 'internal', message: err.message })
-  }
-})
-
-// GET /comments - admin: list all comments with optional filters
-app.get('/comments', authMiddleware, async (req, res) => {
-  try {
-    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
-    const { status, limit } = req.query || {}
-    const comments = await db.getComments(null, { status, limit: limit ? parseInt(limit) : 100 })
-    res.json(comments || [])
-  } catch (err) {
-    console.error('GET /comments err', err)
-    res.status(500).json({ error: 'internal', message: err.message })
-  }
-})
-
-// PUT /comments/:id - admin: update comment (approve/reject)
-app.put('/comments/:id', authMiddleware, async (req, res) => {
-  try {
-    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
-    const id = req.params.id
-    const { content, enabled, status } = req.body || {}
-    const updated = await db.updateComment(id, {
-      content,
-      enabled,
-      status,
-      reviewed_by: req.user.email || req.user.id
-    })
-    if (!updated) return res.status(404).json({ error: 'not found' })
-    res.json(updated)
-  } catch (err) {
-    console.error('PUT /comments/:id err', err)
-    res.status(500).json({ error: 'internal', message: err.message })
-  }
-})
-
-// DELETE /comments/:id - admin: delete comment
-app.delete('/comments/:id', authMiddleware, async (req, res) => {
-  try {
-    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-    const id = req.params.id
-    if (!req.user) return res.status(401).json({ error: 'missing authorization' })
-
-    if (req.user.role === 'admin') {
-      const result = await db.deleteComment(id)
-      return res.json(result)
+    // Try to extract mentioned book titles and match with database
+    const mentionedBooks = []
+    if (allBooks.length > 0) {
+      for (const book of allBooks) {
+        if (reply.toLowerCase().includes(book.title.toLowerCase())) {
+          mentionedBooks.push({
+            id: String(book.id || book.story_id),
+            title: book.title,
+            genre: book.genre,
+            cover_url: book.cover_url,
+            chapters_count: book.chapters_count || 0
+          })
+        }
+      }
     }
 
-    const c = await db.getCommentById(id)
-    if (!c) return res.status(404).json({ error: 'not found' })
-    if (String(c.user_id) !== String(req.user.id)) return res.status(403).json({ error: 'forbidden' })
+    // If AI mentioned genres but no specific books, search by genre
+    if (mentionedBooks.length === 0) {
+      const genres = ['ngôn tình', 'hiện đại', 'cổ đại', 'huyền huyễn', 'xuyên không', 'đam mỹ']
+      const messageLower = message.toLowerCase()
+      const replyLower = reply.toLowerCase()
 
-    const result = await db.deleteCommentByUser(id, req.user.id)
-    return res.json(result)
+      for (const genre of genres) {
+        if (messageLower.includes(genre) || replyLower.includes(genre)) {
+          const matched = allBooks.filter(b =>
+            b.genre && b.genre.toLowerCase().includes(genre)
+          ).slice(0, 5)
+
+          for (const book of matched) {
+            if (!mentionedBooks.find(mb => mb.id === String(book.id || book.story_id))) {
+              mentionedBooks.push({
+                id: String(book.id || book.story_id),
+                title: book.title,
+                genre: book.genre,
+                cover_url: book.cover_url,
+                chapters_count: book.chapters_count || 0
+              })
+            }
+          }
+          break
+        }
+      }
+    }
+
+    res.json({
+      reply,
+      books: mentionedBooks.slice(0, 5)
+    })
   } catch (err) {
-    console.error('DELETE /comments/:id err', err)
+    console.error('POST /chat err', err)
+    res.status(500).json({ error: 'internal', message: err.message })
+  }
+})
+
+// ==================== ADVANCED SEARCH ====================
+// GET /books/search - Search books with SQL LIKE
+app.get('/books/search', async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+
+    const { q, genre, author, sort, limit = 20, offset = 0 } = req.query
+
+    const pool = await db.initPool()
+    const params = []
+    const where = []
+
+    // Search by title or description
+    if (q && q.trim()) {
+      const searchTerm = `%${q.trim()}%`
+      where.push('(s.title LIKE ? OR s.description LIKE ?)')
+      params.push(searchTerm, searchTerm)
+    }
+
+    // Filter by genre
+    if (genre && genre.trim() && genre !== 'Tất cả') {
+      where.push('s.genre LIKE ?')
+      params.push(`%${genre.trim()}%`)
+    }
+
+    // Filter by author
+    if (author && author.trim()) {
+      where.push('(a.pen_name LIKE ? OR a.author_name LIKE ?)')
+      params.push(`%${author.trim()}%`, `%${author.trim()}%`)
+    }
+
+    const whereSql = where.length > 0 ? 'WHERE ' + where.join(' AND ') : ''
+
+    // Sorting
+    let orderBy = 'ORDER BY s.created_at DESC'
+    if (sort === 'views') orderBy = 'ORDER BY s.views DESC'
+    else if (sort === 'likes') orderBy = 'ORDER BY s.likes_count DESC'
+    else if (sort === 'chapters') orderBy = 'ORDER BY s.chapters_count DESC'
+    else if (sort === 'title') orderBy = 'ORDER BY s.title ASC'
+
+    const sql = `
+      SELECT s.story_id as id, s.title, s.description, s.genre, s.cover_url, 
+             s.chapters_count, s.views, s.likes_count, s.created_at,
+             a.pen_name as author, a.author_id
+      FROM stories s
+      LEFT JOIN authors a ON s.author_id = a.author_id
+      ${whereSql}
+      ${orderBy}
+      LIMIT ? OFFSET ?
+    `
+    params.push(parseInt(limit), parseInt(offset))
+
+    const [rows] = await pool.execute(sql, params)
+
+    // Also get total count
+    const countSql = `
+      SELECT COUNT(*) as total
+      FROM stories s
+      LEFT JOIN authors a ON s.author_id = a.author_id
+      ${whereSql}
+    `
+    const [countRows] = await pool.execute(countSql, params.slice(0, -2))
+    const total = countRows[0]?.total || 0
+
+    res.json({
+      books: rows,
+      total,
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    })
+  } catch (err) {
+    console.error('GET /books/search err', err)
     res.status(500).json({ error: 'internal', message: err.message })
   }
 })

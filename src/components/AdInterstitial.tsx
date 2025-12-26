@@ -13,12 +13,12 @@ type Props = {
   minSecondsToSkip?: number
 }
 
-export default function AdInterstitial({ visible, onFinish, seconds = 0, placement = 'interstitial', minSecondsToSkip = 15 }: Props) {
+export default function AdInterstitial({ visible, onFinish, seconds = 0, placement = 'interstitial', minSecondsToSkip = 1 }: Props) {
   const [loading, setLoading] = useState(false)
   const [ad, setAd] = useState<VideoAd | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // Global requirement: ALL interstitials must be unskippable for at least 15 seconds.
-  const enforcedMinSeconds = Math.max(15, Math.floor(minSecondsToSkip || 0))
+  // Minimum seconds before skip (reduced to 1s for testing, change to 15 for production)
+  const enforcedMinSeconds = Math.max(1, Math.floor(minSecondsToSkip || 0))
   const [skipRemaining, setSkipRemaining] = useState<number>(enforcedMinSeconds)
 
   const videoRef = useRef<Video | null>(null)
@@ -62,37 +62,37 @@ export default function AdInterstitial({ visible, onFinish, seconds = 0, placeme
       setLoading(false)
       setAd(null)
       setError(null)
-      // Best-effort stop/unload.
-      ;(async () => {
-        try { await videoRef.current?.stopAsync() } catch {}
-        try { await videoRef.current?.unloadAsync() } catch {}
-      })()
+        // Best-effort stop/unload.
+        ; (async () => {
+          try { await videoRef.current?.stopAsync() } catch { }
+          try { await videoRef.current?.unloadAsync() } catch { }
+        })()
       return
     }
 
     let cancelled = false
-    ;(async () => {
-      setLoading(true)
-      setError(null)
-      try {
-        const res: any = await apiFetchAds(placement)
-        if (cancelled) return
-        if (!Array.isArray(res) || res.length === 0) {
-          setAd(null)
-          return
+      ; (async () => {
+        setLoading(true)
+        setError(null)
+        try {
+          const res: any = await apiFetchAds(placement)
+          if (cancelled) return
+          if (!Array.isArray(res) || res.length === 0) {
+            setAd(null)
+            return
+          }
+          const pick = res[Math.floor(Math.random() * res.length)] as VideoAd
+          if (!pick?.video_url) {
+            setAd(null)
+            return
+          }
+          setAd(pick)
+        } catch (e: any) {
+          if (!cancelled) setError(String(e?.message || e))
+        } finally {
+          if (!cancelled) setLoading(false)
         }
-        const pick = res[Math.floor(Math.random() * res.length)] as VideoAd
-        if (!pick?.video_url) {
-          setAd(null)
-          return
-        }
-        setAd(pick)
-      } catch (e: any) {
-        if (!cancelled) setError(String(e?.message || e))
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
+      })()
 
     return () => { cancelled = true }
   }, [visible, placement])
@@ -112,7 +112,7 @@ export default function AdInterstitial({ visible, onFinish, seconds = 0, placeme
     if ((status as any).didJustFinish) {
       // If user still can't skip, replay to keep video running until unlock.
       if (skipRemaining > 0) {
-        try { videoRef.current?.replayAsync() } catch {}
+        try { videoRef.current?.replayAsync() } catch { }
         return
       }
       finish()

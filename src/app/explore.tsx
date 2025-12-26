@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Link } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 type RankItem = {
   id: string;
@@ -240,27 +241,33 @@ export default function ExplorePage() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadBooks} />}
       >
-        <View style={styles.tabsRow}>
-          {TABS.map((t) => {
-            const active = tab === t;
-            return (
-              <Pressable key={t} onPress={() => setTab(t)} style={[styles.tabItem]}>
-                <Text style={[styles.tabText, active && styles.tabTextActive]}>{t}</Text>
-                {active ? <View style={styles.tabIndicator} /> : <View style={styles.tabIndicatorHidden} />}
-              </Pressable>
-            );
-          })}
+        {/* Header */}
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.headerTitle}>Xin chào! 👋</Text>
+            <Text style={styles.headerSubtitle}>Khám phá thế giới truyện hôm nay</Text>
+          </View>
+          <Link href="/(tabs)/profile" asChild>
+            <Pressable style={styles.avatarBtn}>
+              <Ionicons name="person-circle-outline" size={36} color="#1088ff" />
+            </Pressable>
+          </Link>
         </View>
 
-        {tab === TABS[0] && (
-          <View style={styles.searchRow}>
-            <Link href={"/search"} asChild>
-              <Pressable style={styles.searchBox}>
-                <Text style={styles.searchPlaceholder}>Tìm kiếm tiểu thuyết, tác giả…</Text>
-              </Pressable>
-            </Link>
-          </View>
-        )}
+        {/* Search Box */}
+        <View style={styles.searchRow}>
+          <Link href="/search" asChild>
+            <Pressable style={styles.searchBox}>
+              <Ionicons name="search-outline" size={20} color="#9ca3af" />
+              <Text style={styles.searchPlaceholder}>Tìm kiếm tiểu thuyết, tác giả…</Text>
+            </Pressable>
+          </Link>
+          <Link href="/chatbot" asChild>
+            <Pressable style={styles.aiBtn}>
+              <Ionicons name="sparkles" size={20} color="#fff" />
+            </Pressable>
+          </Link>
+        </View>
 
         <View style={styles.sectionHeader}>
           <Link href={"/(tabs)/rank"} asChild>
@@ -268,7 +275,7 @@ export default function ExplorePage() {
               <Text style={styles.sectionTitle}>BXH Tháng Này</Text>
             </Pressable>
           </Link>
-          <Text style={styles.sectionAction}>BXH Hoàn Chính</Text>
+          <Text style={styles.sectionAction}>BXH Hoàn Chỉnh</Text>
         </View>
         {error ? (
           <View style={{ padding: 12, backgroundColor: '#fee2e2', borderRadius: 8, marginTop: 8 }}>
@@ -279,19 +286,12 @@ export default function ExplorePage() {
           </View>
         ) : null}
 
-        {banners.length > 0 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 12 }}>
-            {banners.map(b => (
-              <TouchableOpacity key={b.id} activeOpacity={0.8} onPress={() => handleBannerPress(b.link)} disabled={!b.link}>
-                <Image source={{ uri: b.image_url }} style={{ width: 320, height: 120, borderRadius: 8, marginRight: 12, opacity: b.link ? 1 : 0.9 }} />
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        )}
+        {/* Banner removed */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.colList}
+          style={{ marginHorizontal: -16 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}
         >
           {rankColumns.map((col, colIdx) => (
             <View key={colIdx} style={styles.col}>
@@ -349,51 +349,76 @@ export default function ExplorePage() {
         <AdInterstitial visible={interstitialVisible} placement="interstitial" onFinish={() => { setInterstitialVisible(false); if (targetBookId) openBookNow(targetBookId); setTargetBookId(null) }} />
       </ScrollView>
 
-      <AdInterstitial
+      {/* <AdInterstitial
         visible={entryAdVisible}
         placement="home"
         onFinish={() => setEntryAdVisible(false)}
-      />
+      /> */}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
-  scroll: { paddingHorizontal: 16, paddingBottom: 24 },
-  tabsRow: {
+  container: { flex: 1, backgroundColor: "#f8fafc" },
+  scroll: { paddingHorizontal: 16, paddingBottom: 100 },
+  header: {
     flexDirection: "row",
-    gap: 16,
-    paddingTop: 8,
-    paddingBottom: 8,
-    alignItems: "flex-end",
-  },
-  tabItem: { alignItems: "center" },
-  tabText: { fontSize: 18, color: "#111" },
-  tabTextActive: { color: "#1088ff", fontWeight: "700" },
-  tabIndicator: {
-    width: 24,
-    height: 3,
-    backgroundColor: "#1088ff",
-    borderRadius: 2,
-    marginTop: 4,
-  },
-  tabIndicatorHidden: { width: 24, height: 3, backgroundColor: "transparent", marginTop: 4 },
-  searchRow: {
-    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    gap: 8,
-    marginTop: 12,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#111827",
+  },
+  headerSubtitle: {
+    fontSize: 14,
+    color: "#6b7280",
+    marginTop: 2,
+  },
+  avatarBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#e0f2fe",
+    justifyContent: "center",
+    alignItems: "center",
   },
   searchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    height: 48,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    marginBottom: 0,
     flex: 1,
-    height: 40,
-    backgroundColor: "#f2f4f7",
-    borderRadius: 12,
-    justifyContent: "center",
-    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  searchPlaceholder: { color: "#9aa3af", fontSize: 14 },
+  searchPlaceholder: { color: "#9ca3af", fontSize: 15 },
+  searchRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 16 },
+  aiBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: "#1088ff",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#1088ff",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+  },
   iconBtn: { width: 36, height: 36, borderRadius: 8, backgroundColor: "#f2f4f7" },
   sectionHeader: {
     marginTop: 16,
@@ -425,7 +450,7 @@ const styles = StyleSheet.create({
   rankTitle: { fontSize: 15, fontWeight: "700" },
   rankSubtitle: { fontSize: 12, color: "#6b7280", marginTop: 2 },
   rankStats: { fontSize: 12, color: "#6b7280", marginTop: 6 },
-  colList: { paddingTop: 8, paddingBottom: 4 },
+  colList: { paddingTop: 8, paddingBottom: 4, paddingRight: 16 },
   col: { width: 280, marginRight: 12 },
   recItem: { flexDirection: "row", gap: 12, marginTop: 12 },
   recCover: { width: 64, height: 64, borderRadius: 12, backgroundColor: "#fee2e2" },

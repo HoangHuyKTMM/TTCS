@@ -1,63 +1,76 @@
 import { useEffect, useState } from "react";
 import { Stack, Link, useRouter } from "expo-router";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView, ScrollView } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView, ScrollView, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import Constants from "expo-constants";
-import * as WebBrowser from "expo-web-browser";
-import * as Google from "expo-auth-session/providers/google";
-import * as Facebook from "expo-auth-session/providers/facebook";
 import * as Auth from '../../lib/auth'
 import CustomAlert from '../../components/CustomAlert'
-
-WebBrowser.maybeCompleteAuthSession();
 
 export default function LoginScreen() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [fbLoading, setFbLoading] = useState(false);
   const [alertVisible, setAlertVisible] = useState(false);
   const [alertConfig, setAlertConfig] = useState<any>({ type: 'info', title: '', message: '' });
-  const extra = (Constants.expoConfig?.extra || {}) as any;
 
-  const googleClientId = Platform.OS === "android" ? extra.googleAndroidClientId : extra.googleWebClientId;
-
-  const [googleRequest, googleResponse, googlePromptAsync] = Google.useAuthRequest({
-    clientId: googleClientId,
-  });
-
-  const [fbRequest, fbResponse, fbPromptAsync] = Facebook.useAuthRequest({
-    clientId: extra.facebookAppId,
-  });
-
+  // Handle email/password login
   async function handleLogin() {
     if (!email || !password) {
       setAlertConfig({ type: 'error', title: 'Lỗi', message: 'Vui lòng nhập email và mật khẩu' });
       setAlertVisible(true);
       return;
     }
+
+    setLoading(true);
     try {
-      const res: any = await Auth.login(email, password)
+      const res: any = await Auth.login(email, password);
       if (res && res.token) {
-        router.replace('/(tabs)/explore')
+        router.replace('/(tabs)/explore');
       }
     } catch (err: any) {
       setAlertConfig({ type: 'error', title: 'Lỗi đăng nhập', message: err.message || 'Đăng nhập thất bại' });
       setAlertVisible(true);
+    } finally {
+      setLoading(false);
     }
   }
 
-  useEffect(() => {
-    if (googleResponse?.type === "success") {
-      router.replace('/(tabs)/explore')
+  // Handle Google Sign In
+  const handleGoogleLogin = async () => {
+    if (googleLoading) return;
+    setGoogleLoading(true);
+    try {
+      const res = await Auth.loginWithGoogle();
+      if (res && res.token) {
+        router.replace('/(tabs)/explore');
+      }
+    } catch (err: any) {
+      setAlertConfig({ type: 'error', title: 'Lỗi Google', message: err.message || 'Đăng nhập Google thất bại' });
+      setAlertVisible(true);
+    } finally {
+      setGoogleLoading(false);
     }
-  }, [googleResponse]);
+  };
 
-  useEffect(() => {
-    if (fbResponse?.type === "success") {
-      router.replace('/(tabs)/explore')
+  // Handle Facebook Login  
+  const handleFacebookLogin = async () => {
+    if (fbLoading) return;
+    setFbLoading(true);
+    try {
+      const res = await Auth.loginWithFacebook();
+      if (res && res.token) {
+        router.replace('/(tabs)/explore');
+      }
+    } catch (err: any) {
+      setAlertConfig({ type: 'error', title: 'Lỗi Facebook', message: err.message || 'Đăng nhập Facebook thất bại' });
+      setAlertVisible(true);
+    } finally {
+      setFbLoading(false);
     }
-  }, [fbResponse]);
+  };
 
   return (
     <KeyboardAvoidingView
@@ -99,6 +112,7 @@ export default function LoginScreen() {
               autoCapitalize="none"
               value={email}
               onChangeText={setEmail}
+              editable={!loading}
             />
           </View>
 
@@ -112,6 +126,7 @@ export default function LoginScreen() {
               secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
+              editable={!loading}
             />
             <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}>
               <Ionicons name={showPassword ? "eye-outline" : "eye-off-outline"} size={20} color="#6b7280" />
@@ -124,37 +139,53 @@ export default function LoginScreen() {
           </TouchableOpacity>
 
           {/* Login Button */}
-          <TouchableOpacity style={styles.primaryButton} onPress={handleLogin}>
-            <Text style={styles.primaryButtonText}>Đăng nhập</Text>
+          <TouchableOpacity
+            style={[styles.primaryButton, loading && styles.buttonDisabled]}
+            onPress={handleLogin}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.primaryButtonText}>Đăng nhập</Text>
+            )}
           </TouchableOpacity>
 
           {/* Divider */}
           <View style={styles.dividerContainer}>
             <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>hoặc</Text>
+            <Text style={styles.dividerText}>hoặc tiếp tục với</Text>
             <View style={styles.dividerLine} />
           </View>
 
           {/* Social Buttons */}
           <View style={styles.socialContainer}>
             <TouchableOpacity
-              style={styles.socialButton}
-              disabled={!googleRequest}
-              onPress={() => googlePromptAsync()}
+              style={[styles.socialButton, googleLoading && styles.socialButtonLoading]}
+              disabled={googleLoading}
+              onPress={handleGoogleLogin}
             >
-              <Ionicons name="logo-google" size={22} color="#111827" />
+              {googleLoading ? (
+                <ActivityIndicator color="#111827" size="small" />
+              ) : (
+                <Ionicons name="logo-google" size={22} color="#111827" />
+              )}
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.socialButton}
-              disabled={!fbRequest}
-              onPress={() => fbPromptAsync()}
+              style={[styles.socialButton, fbLoading && styles.socialButtonLoading]}
+              disabled={fbLoading}
+              onPress={handleFacebookLogin}
             >
-              <Ionicons name="logo-facebook" size={22} color="#1877F2" />
+              {fbLoading ? (
+                <ActivityIndicator color="#1877F2" size="small" />
+              ) : (
+                <Ionicons name="logo-facebook" size={22} color="#1877F2" />
+              )}
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.socialButton}>
-              <Ionicons name="logo-apple" size={22} color="#111827" />
+            <TouchableOpacity style={[styles.socialButton, styles.socialButtonDisabled]} disabled>
+              <Ionicons name="logo-apple" size={22} color="#999" />
             </TouchableOpacity>
           </View>
         </View>
@@ -255,6 +286,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 8,
   },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
   primaryButtonText: {
     color: "#fff",
     fontSize: 16,
@@ -287,6 +321,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
+  },
+  socialButtonLoading: {
+    opacity: 0.7,
+  },
+  socialButtonDisabled: {
+    opacity: 0.5,
   },
   footer: {
     flexDirection: "row",

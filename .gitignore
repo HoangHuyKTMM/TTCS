@@ -33,10 +33,17 @@ yarn-error.*
 # local env files
 .env
 .env*.local
+admin-dashboard/server/.env
+
+# Firebase config (iOS only - Android is needed for build)
+# google-services.json  # Commented out for EAS Build
+GoogleService-Info.plist
 
 # typescript
 *.tsbuildinfo
 
-# generated native folders
+# Android local properties (contains SDK path)
+android/local.properties
+
+# generated native folders (keep android for EAS build)
 /ios
-/android
