@@ -3,14 +3,20 @@ import Constants from 'expo-constants'
 const extra = (Constants.expoConfig?.extra || {}) as any
 export const API_BASE = extra.apiBase || process.env.EXPO_PUBLIC_API_BASE || 'http://10.0.2.2:4000' // use EXPO_PUBLIC_API_BASE or extra.apiBase; default to Android emulator loopback
 
+console.log('[API] API_BASE:', API_BASE)
+console.log('[API] process.env.EXPO_PUBLIC_API_BASE:', process.env.EXPO_PUBLIC_API_BASE)
+console.log('[API] extra.apiBase:', extra.apiBase)
+
 async function request(path: string, opts: RequestInit = {}) {
   const url = `${API_BASE}${path}`
+  console.log('[API] Fetching:', url)
   try {
     const res = await fetch(url, opts)
     const text = await res.text()
     try { return JSON.parse(text) } catch (e) { return text }
   } catch (err: any) {
     // network error (DNS, refused, offline)
+    console.error('[API] Fetch error:', url, err)
     return { error: 'network', message: String(err && err.message ? err.message : err) }
   }
 }

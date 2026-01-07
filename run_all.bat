@@ -103,11 +103,17 @@ echo.
 echo ==========================================
 echo.
 
+echo [LUU Y] Mobile App dang dung expo-dev-client.
+echo        Vi vay 'npx expo start' se mac dinh chay bang Development Build (KHONG phai Expo Go).
+echo        Neu ban gap loi "No development build is installed", hay chay: npm run android
+echo        (hoac build APK bang EAS: eas build --platform android --profile development) roi cai len may.
+echo.
+
 :: Mo trang Admin Dashboard tren trinh duyet
 start http://localhost:5173
 
-:: Chay Expo
+:: Chay Mobile tren Android Studio Emulator (build + install neu can)
 cd /d "%ROOT_DIR%"
-call npx expo start
+call npx expo run:android
 
 pause

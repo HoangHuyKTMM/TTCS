@@ -52,4 +52,9 @@ export async function clearReadingFor(bookId: string) {
   await writeRaw(map)
 }
 
-export default { saveReadingProgress, getReadingList, clearReadingFor }
+export async function getReadingProgress(bookId: string): Promise<ReadingItem | null> {
+  const map = await readRaw()
+  return map[String(bookId)] || null
+}
+
+export default { saveReadingProgress, getReadingList, clearReadingFor, getReadingProgress }

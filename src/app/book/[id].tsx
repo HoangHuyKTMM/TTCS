@@ -6,9 +6,10 @@ import { useFocusEffect } from '@react-navigation/native'
 
 import { apiFetchBook, API_BASE, apiDonateCoins, apiLikeBook, apiUnlikeBook, apiFetchAuthors, apiFollowAuthor, apiUnfollowAuthor, apiFetchComments, apiPostComment, apiDeleteComment, apiGetWallet } from '../../lib/api'
 import * as Auth from '../../lib/auth'
-import { shouldShowAds } from '../../lib/ads'
+import { shouldShowPlacement } from '../../lib/ads'
 import AdInterstitial from '../../components/AdInterstitial'
 import { downloadBookOffline, isBookDownloaded, removeOfflineBook } from '../../lib/offline'
+import { getReadingProgress } from '../../lib/reading'
 
 export default function BookDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -37,6 +38,9 @@ export default function BookDetailScreen() {
   const [authorAvatarUrl, setAuthorAvatarUrl] = useState<string | null>(null)
   const [authorFollowers, setAuthorFollowers] = useState<number>(0)
   const [authorFollowing, setAuthorFollowing] = useState<boolean>(false)
+
+  const [lastReadChapter, setLastReadChapter] = useState<number | null>(null)
+  const [visibleComments, setVisibleComments] = useState<number>(5)
 
   const loadAuthorMeta = useCallback(async (aId: string) => {
     try {
@@ -96,11 +100,11 @@ export default function BookDetailScreen() {
     return () => { active = false }
   }, [refreshWallet]))
 
-  // Full-screen ad when entering book detail page.
+  // Full-screen ad only once per session when opening any book.
   useEffect(() => {
     if (!id) return
     if (!userLoaded) return
-    if (shouldShowAds(user)) setEntryAdVisible(true)
+    if (shouldShowPlacement('book-open-once', user)) setEntryAdVisible(true)
   }, [id, user, userLoaded])
 
   useEffect(() => {
@@ -134,6 +138,12 @@ export default function BookDetailScreen() {
           setLikesCount(Number(res.likes_count || 0))
           setLiked(!!res.liked)
           refreshComments(String(res.id || res.story_id || id))
+          
+          // Load reading progress
+          const progress = await getReadingProgress(String(res.id || res.story_id || id))
+          if (progress && progress.chapterNo) {
+            setLastReadChapter(Number(progress.chapterNo))
+          }
           return
         }
       } catch (e) {
@@ -465,9 +475,16 @@ export default function BookDetailScreen() {
                   </Pressable>
                 )}
 
-                <Link href={{ pathname: "/reader/[id]", params: { id: id || (book ? book.id : ''), ch: "1" } } as any} asChild>
-                  <Pressable style={styles.btnPrimary}><Text style={styles.btnPrimaryText}>Đọc từ đầu</Text></Pressable>
-                </Link>
+                {lastReadChapter ? (
+                  <Link href={{ pathname: "/reader/[id]", params: { id: id || (book ? book.id : ''), ch: String(lastReadChapter) } } as any} asChild>
+                    <Pressable style={styles.btnPrimary}><Text style={styles.btnPrimaryText}>Đọc tiếp chương {lastReadChapter}</Text></Pressable>
+                  </Link>
+                ) : (
+                  <Link href={{ pathname: "/reader/[id]", params: { id: id || (book ? book.id : ''), ch: "1" } } as any} asChild>
+                    <Pressable style={styles.btnPrimary}><Text style={styles.btnPrimaryText}>Đọc từ đầu</Text></Pressable>
+                  </Link>
+                )}
+                
                 <Pressable onPress={handleToggleLike} style={[styles.btnSecondary, liked && styles.btnSecondaryActive, { paddingHorizontal: 10 }]}>
                   <Text style={[styles.btnSecondaryText, liked && styles.btnSecondaryTextActive]}>{liked ? 'Đã thích' : 'Yêu thích'}</Text>
                 </Pressable>
@@ -502,13 +519,20 @@ export default function BookDetailScreen() {
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Danh sách chương</Text>
-            {(book ? book.chapters : []).map((ch, idx) => (
-              <Link key={ch.id} href={{ pathname: "/reader/[id]", params: { id: id || (book ? book.id : ''), ch: String(idx + 1) } } as any} asChild>
-                <Pressable style={[styles.chapterRow, idx !== 0 && styles.rowDivider]}>
-                  <Text style={styles.chapterText} numberOfLines={1}>Ch. {idx + 1} · {ch.title}</Text>
-                </Pressable>
-              </Link>
-            ))}
+            {(book ? book.chapters : []).map((ch, idx) => {
+              const chapterNum = idx + 1
+              const isLastRead = lastReadChapter === chapterNum
+              return (
+                <Link key={ch.id} href={{ pathname: "/reader/[id]", params: { id: id || (book ? book.id : ''), ch: String(chapterNum) } } as any} asChild>
+                  <Pressable style={[styles.chapterRow, idx !== 0 && styles.rowDivider, isLastRead && styles.lastReadChapter]}>
+                    <Text style={[styles.chapterText, isLastRead && styles.lastReadText]} numberOfLines={1}>
+                      Ch. {chapterNum} · {ch.title}
+                      {isLastRead && ' 📖'}
+                    </Text>
+                  </Pressable>
+                </Link>
+              )
+            })}
           </View>
 
           <View style={[styles.card, { marginBottom: 24 }]}>
@@ -538,42 +562,49 @@ export default function BookDetailScreen() {
             {comments.length === 0 ? (
               <View style={styles.emptyBox}><Text style={styles.meta}>Chưa có bình luận</Text></View>
             ) : (
-              comments.map((c, idx) => {
-                // IMPORTANT: Ensure we handle both boolean and truthy/falsy values from API
-                const isNegative = c.is_negative === true || c.is_negative === 1 || String(c.is_negative) === 'true'
-                const isHidden = isNegative && !revealedNegative.has(c.id)
-                const myId = user ? String(user.id || user.user_id) : null
-                const isMine = !!(myId && c && c.user_id && String(c.user_id) === String(myId))
-                return (
-                  <View key={c.id || idx} style={[styles.commentRow, idx !== 0 && styles.rowDivider]}>
-                    {c.user_avatar ? (
-                      <Image source={{ uri: c.user_avatar.startsWith('http') ? c.user_avatar : `${API_BASE}${c.user_avatar}` }} style={styles.avatarStub} />
-                    ) : (
-                      <View style={styles.avatarStub} />
-                    )}
-                    <View style={{ flex: 1 }}>
-                      <View style={styles.commentHeaderRow}>
-                        <Text style={styles.commentAuthor}>{c.user_name || `Người dùng ${c.user_id}`}</Text>
-                        {isMine && c.id ? (
-                          <Pressable onPress={() => handleDeleteComment(String(c.id))} style={({ pressed }) => [styles.commentDeleteBtn, pressed && { opacity: 0.7 }]}
-                          >
-                            <Text style={styles.commentDeleteText}>Xóa</Text>
-                          </Pressable>
-                        ) : null}
-                      </View>
-                      {isHidden ? (
-                        <Pressable onPress={() => setRevealedNegative(prev => new Set(prev).add(c.id))}>
-                          <View style={styles.hiddenComment}>
-                            <Text style={styles.hiddenCommentText}>Tin nhắn bị ẩn vì nội dung tiêu cực. Nhấn để xem.</Text>
-                          </View>
-                        </Pressable>
+              <>
+                {comments.slice(0, visibleComments).map((c, idx) => {
+                  // IMPORTANT: Ensure we handle both boolean and truthy/falsy values from API
+                  const isNegative = c.is_negative === true || c.is_negative === 1 || String(c.is_negative) === 'true'
+                  const isHidden = isNegative && !revealedNegative.has(c.id)
+                  const myId = user ? String(user.id || user.user_id) : null
+                  const isMine = !!(myId && c && c.user_id && String(c.user_id) === String(myId))
+                  return (
+                    <View key={c.id || idx} style={[styles.commentRow, idx !== 0 && styles.rowDivider]}>
+                      {c.user_avatar ? (
+                        <Image source={{ uri: c.user_avatar.startsWith('http') ? c.user_avatar : `${API_BASE}${c.user_avatar}` }} style={styles.avatarStub} />
                       ) : (
-                        <Text style={[styles.commentText, isNegative && styles.negativeComment]}>{c.content}</Text>
+                        <View style={styles.avatarStub} />
                       )}
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.commentHeaderRow}>
+                          <Text style={styles.commentAuthor}>{c.user_name || `Người dùng ${c.user_id}`}</Text>
+                          {isMine && c.id ? (
+                            <Pressable onPress={() => handleDeleteComment(String(c.id))} style={({ pressed }) => [styles.commentDeleteBtn, pressed && { opacity: 0.7 }]}
+                            >
+                              <Text style={styles.commentDeleteText}>Xóa</Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                        {isHidden ? (
+                          <Pressable onPress={() => setRevealedNegative(prev => new Set(prev).add(c.id))}>
+                            <View style={styles.hiddenComment}>
+                              <Text style={styles.hiddenCommentText}>Tin nhắn bị ẩn vì nội dung tiêu cực. Nhấn để xem.</Text>
+                            </View>
+                          </Pressable>
+                        ) : (
+                          <Text style={[styles.commentText, isNegative && styles.negativeComment]}>{c.content}</Text>
+                        )}
+                      </View>
                     </View>
-                  </View>
-                )
-              })
+                  )
+                })}
+                {visibleComments < comments.length && (
+                  <Pressable onPress={() => setVisibleComments(prev => prev + 5)} style={styles.loadMoreBtn}>
+                    <Text style={styles.loadMoreText}>Xem thêm bình luận ({comments.length - visibleComments} còn lại)</Text>
+                  </Pressable>
+                )}
+              </>
             )}
           </View>
         </ScrollView>
@@ -581,7 +612,7 @@ export default function BookDetailScreen() {
 
       <AdInterstitial
         visible={entryAdVisible}
-        placement="interstitial"
+        placement="book-open"
         onFinish={() => setEntryAdVisible(false)}
       />
     </SafeAreaView>
@@ -679,6 +710,8 @@ const styles = StyleSheet.create({
 
   chapterRow: { paddingVertical: 12 },
   chapterText: { fontSize: 14, color: "#0f172a" },
+  lastReadChapter: { backgroundColor: '#e9f2ff', borderRadius: 8, paddingHorizontal: 8 },
+  lastReadText: { color: '#1088ff', fontWeight: '700' },
   rowDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#eef2f7" },
 
   emptyBox: { backgroundColor: "#f8fafc", borderRadius: 10, padding: 16, alignItems: "center" },
@@ -691,6 +724,8 @@ const styles = StyleSheet.create({
   avatarStub: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#e5e7eb' },
   commentHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   commentAuthor: { fontWeight: '700', color: '#0f172a' },
+  loadMoreBtn: { marginTop: 12, padding: 12, backgroundColor: '#f2f4f7', borderRadius: 10, alignItems: 'center' },
+  loadMoreText: { color: '#1088ff', fontWeight: '700', fontSize: 14 },
   commentDeleteBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#fef2f2', borderWidth: StyleSheet.hairlineWidth, borderColor: '#fecaca' },
   commentDeleteText: { color: '#dc2626', fontWeight: '800', fontSize: 12 },
   commentText: { color: '#111827', marginTop: 2 },

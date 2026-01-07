@@ -1,0 +1,51 @@
+{
+  "id": "802a4e0e-fb50-4a72-9a18-d50c964b93a2",
+  "status": "ERRORED",
+  "platform": "ANDROID",
+  "error": {
+    "errorCode": "EAS_BUILD_UNKNOWN_GRADLE_ERROR",
+    "message": "Gradle build failed with unknown error. See logs for the \"Run gradlew\" phase for more information."
+  },
+  "artifacts": {},
+  "fingerprint": {
+    "id": "6fb38ccc-901f-4749-97f5-aa8f4248eddf",
+    "hash": "368f7f5646680095c8026c5fd2457e64b8e07a7c"
+  },
+  "initiatingActor": {
+    "id": "2b302f76-1dbe-4fd9-b153-9c47975aaa0c",
+    "displayName": "dinhhung1508"
+  },
+  "logFiles": [
+    "https://job-logs.eascdn.net/production/802a4e0e-fb50-4a72-9a18-d50c964b93a2/1766775432267-ebd16773-e352-42fc-8504-1bdc877e143e.txt?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=www-production%40exponentjs.iam.gserviceaccount.com%2F20251226%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20251226T190249Z&X-Goog-Expires=900&X-Goog-SignedHeaders=host&X-Goog-Signature=62903c3231b71794d49e42cf9ddfd330895940fba5e0482f707764ad595c40ae16e9a93d6af83f6877afd23a2c244519e55f99c1965ba66e666a2ae884288f857ebf3fee8ac65dff42bbc152f08ca072164609e34e32bd2d941de65a4fb35acb3fd3563fb2cde61e3b99212c98fa7dcc1ce5e514fc20eca795d1684cdb425f0ea905756ee61cfdf26a632cca8f2b8805c8349fdec2eba3a3a13111dab012ae08f8519c6738b958b3d8bb3789fd9e59c3cdae858c36aebd01f658c289cec86c285cede2a8058d42bcf3a176525a6bdb135beddfdfb58d2be478342cf6e8070575affcff207ec9ed4f73ef124799d43d46e7216060260c68524e7b7e563aa071b0",
+    "https://job-logs.eascdn.net/production/802a4e0e-fb50-4a72-9a18-d50c964b93a2/1766775438167-6808b300-0afc-43a6-8f42-c5fa4e1086c3.txt?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=www-production%40exponentjs.iam.gserviceaccount.com%2F20251226%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20251226T190249Z&X-Goog-Expires=900&X-Goog-SignedHeaders=host&X-Goog-Signature=60b7eb65cca900b0ac5a95e1f566ecff3d31fa9a65b2166678d5ac799b74f0749d1afbd33ecd40010ba7d9821e8a7f5804c8557401158ba479d67a144d67422b805b43dfa72fe96f6f07078352332c97ec54cf7a84effd008669306ef73cc0fa5963f67bf10b82f9a663da169afe3780e33a729c76a29dbea7ba4b25846b7f7e1bae600da859f538ffa4136134aa089e40eee0b985d8f3bfecc52a42e2aa9b4bd818ed53fd0df1fb6f0832ca03e5d1db5dbe6f5da012afe6aadcf7562a7ba7dbc1d871588983e3a3c53876c5ad824e681c3eb5ea771879cec44ffcbd6a93337c1e0001276480cf054741b1f7361e10fefd0767a70cba8dee2613e9c516d19a50",
+    "https://job-logs.eascdn.net/production/802a4e0e-fb50-4a72-9a18-d50c964b93a2/1766775438379-daa6bf3f-d789-4029-925e-a62b27df9505.txt?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=www-production%40exponentjs.iam.gserviceaccount.com%2F20251226%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20251226T190249Z&X-Goog-Expires=900&X-Goog-SignedHeaders=host&X-Goog-Signature=1ab67c959b6c809174225d013670507053c7bb90c448eecd09e5f723214edf3d3d710edd050a8b5c6e64038d953f5f5c14f6be0fd666e9b860ee2d4442d762c82cc2944b56862200c825e9a3d5ad613520f9e61b0a1783ad4066d728637fc7a22181313ecedab9d65e09f446cf03df3b4ae0846b0c6ca9b60d02f83ccabdc89f74fc831f656eeafc813471ce2824aaaff351e4fd38bc0d60174c3d3aafecba0e13462543e6b42ca8f5c7d3fa5c6bc4c7b75b9aa8ae93522bb172e7b3576fc875e5fa0446ce05ed61e2580761bea386505395d75d19bc2d046ed6802a66cc20895ff2848139bbdb7f71b7df931328ac84621b13b8cac879e5f591996724410ef0",
+    "https://job-logs.eascdn.net/production/802a4e0e-fb50-4a72-9a18-d50c964b93a2/1766775438594-535e61a5-4922-4388-8ce5-323695358697.txt?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=www-production%40exponentjs.iam.gserviceaccount.com%2F20251226%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20251226T190249Z&X-Goog-Expires=900&X-Goog-SignedHeaders=host&X-Goog-Signature=b70f95e1da1e1c9bcf9b07382249a27831d7fb4d671dc107d662a4ea129a94e9da21131dad27ba354a2676ebcc48262f0056a785f8d369fc150c7144d94008ace82d887bc4d4f4858246e900bda2bd57280f8da3aa25388ff8612f4253f7755361c5e7551b6a9748c530c46c87b4830f4dc3140bc4c73d3a459a7e714e0e8f96ef51a44a4831d30229e78deaed721ffccd70f3da21eba628d7fe8f9255ddefeeadf2403f23605f458deeeabe3deca21b773239f5afe58c28e9b665bc1e4ff32d03021b8b32525b8c170d30fbabf4c09fe5bb3916a4fd236e644acea3cd1237446efe08a3a59bf36e8d625ac363c4758e20f574128ff05cc2a381e78b1e032b23"
+  ],
+  "project": {
+    "id": "4009c1a7-1787-4753-9490-717bd2b5df73",
+    "name": "Reader_app",
+    "slug": "Reader_app",
+    "ownerAccount": {
+      "id": "cb442ba6-3f31-4271-b2d0-d1ca35bbe5cc",
+      "name": "dinhhung1508"
+    }
+  },
+  "distribution": "INTERNAL",
+  "buildProfile": "development",
+  "sdkVersion": "54.0.0",
+  "appVersion": "1.0.0",
+  "appBuildVersion": "1",
+  "gitCommitHash": "10cb6391927135a29d4c31391ae03f5b9d95b82d",
+  "gitCommitMessage": "feat: Add AI Chatbot, Facebook Login, improved search and run_all.bat\n\n- Add AI Chatbot with Grok API for book recommendations\n- Add /chat and /books/search API endpoints\n- Integrate Facebook Login with react-native-fbsdk-next\n- Add markdown rendering in chat messages\n- Improve run_all.bat with auto port cleanup and dependency check\n- Add comprehensive README.md with setup instructions\n- Update .gitignore for sensitive files",
+  "priority": "NORMAL",
+  "createdAt": "2025-12-26T18:57:11.726Z",
+  "updatedAt": "2025-12-26T19:00:34.431Z",
+  "completedAt": "2025-12-26T19:00:19.990Z",
+  "expirationDate": "2026-01-09T18:57:11.805Z",
+  "isForIosSimulator": false,
+  "metrics": {
+    "buildWaitTime": 413,
+    "buildQueueTime": 42576,
+    "buildDuration": 145025
+  }
+}

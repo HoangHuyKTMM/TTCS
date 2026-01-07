@@ -726,6 +726,13 @@ async function getStats() {
     // if payments table doesn't exist, fallback to 0
     stats.income = 0
   }
+  // income this month
+  try {
+    const [payMonth] = await p.execute("SELECT COALESCE(SUM(amount),0) as income FROM payments WHERE YEAR(created_at) = YEAR(NOW()) AND MONTH(created_at) = MONTH(NOW())")
+    stats.income_this_month = payMonth && payMonth[0] ? Number(payMonth[0].income) : 0
+  } catch (e) {
+    stats.income_this_month = 0
+  }
   // active users: in last 24 hours and last 15 minutes (using reading_history.last_read_at)
   try {
     const [a24] = await p.execute("SELECT COUNT(DISTINCT user_id) as cnt FROM reading_history WHERE last_read_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)")

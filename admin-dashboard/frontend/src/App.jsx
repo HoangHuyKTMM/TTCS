@@ -112,10 +112,10 @@ export default function App() {
 
   const providerBadge = (p) => {
     const map = {
-      donation: { label: 'Donate', color: '#e879f9' },
+      donation: { label: 'Ủng hộ', color: '#e879f9' },
       bank: { label: 'Ngân hàng', color: '#38bdf8' },
       coin: { label: 'Xu', color: '#22c55e' },
-      admin: { label: 'Admin', color: '#f97316' }
+      admin: { label: 'Quản trị', color: '#f97316' }
     }
     return map[p] || { label: p || '-', color: '#a8a29e' }
   }
@@ -146,7 +146,7 @@ export default function App() {
         history.pushState({ route: 'chapters', bookId: opts.bookId }, '', `#chapters:${opts.bookId}`)
       } catch (err) {
         console.error('navigate chapters err', err)
-        alert('Could not load chapters')
+        alert('Không thể tải danh sách chương')
       } finally {
         setSelectedBookLoading(false)
       }
@@ -218,7 +218,7 @@ export default function App() {
     try {
       const res = await createAd({ ...adForm, videoFile: adFile })
       if (res && res.error) {
-        alert(res.error || 'Create ad failed')
+        alert(res.error || 'Tạo quảng cáo thất bại')
       } else {
         setAdForm({ title: '', link: '', placement: 'interstitial', enabled: true })
         setAdFile(null)
@@ -234,10 +234,10 @@ export default function App() {
 
   async function handleDeleteAd(a) {
     if (!a) return
-    if (!confirm(`Delete ad ${a.id}?`)) return
+    if (!confirm(`Xóa quảng cáo ${a.id}?`)) return
     try {
       const res = await deleteAd(a.id)
-      if (res && res.error) alert(res.error || 'Delete failed')
+      if (res && res.error) alert(res.error || 'Xóa thất bại')
       await loadAds()
     } catch (err) {
       console.error('delete ad err', err)
@@ -249,7 +249,7 @@ export default function App() {
     try {
       const res = await updateAd(payload.id, { ...payload, videoFile: payload.videoFile || null })
       if (res && res.error) {
-        alert(res.error || 'Update failed')
+        alert(res.error || 'Cập nhật thất bại')
         return
       }
       setEditAdModal(null)
@@ -509,7 +509,7 @@ export default function App() {
 
   async function onCreateBook(e) {
     e.preventDefault()
-    if (!bookForm.title) return alert('Title required')
+    if (!bookForm.title) return alert('Tiêu đề là bắt buộc')
     // attach coverFile if selected
     const payload = { ...bookForm }
     if (coverFile) payload.coverFile = coverFile
@@ -544,23 +544,23 @@ export default function App() {
 
   async function onCreateBanner(e) {
     e.preventDefault()
-    if (!bannerForm.title) return alert('Title required')
+    if (!bannerForm.title) return alert('Tiêu đề là bắt buộc')
     const payload = { ...bannerForm }
     if (bannerFile) payload.bannerFile = bannerFile
     setIsCreatingBanner(true)
     try {
       const res = await createBanner(payload)
       if (res && res.id) {
-        alert('Banner created')
+        alert('Tạo banner thành công')
         setBannerForm({ title: '', link: '', enabled: true })
         setBannerFile(null)
         loadBanners()
       } else {
-        alert(res.error || 'Create banner failed')
+        alert(res.error || 'Tạo banner thất bại')
       }
     } catch (err) {
       console.error('createBanner err', err)
-      alert('Create banner failed')
+      alert('Tạo banner thất bại')
     } finally {
       setIsCreatingBanner(false)
     }
@@ -573,26 +573,26 @@ export default function App() {
     try {
       const res = await updateBanner(id, data)
       if (res && res.id) {
-        alert('Banner updated')
+        alert('Cập nhật banner thành công')
         setEditBannerModal(null)
         loadBanners()
       } else {
-        alert(res.error || 'Update banner failed')
+        alert(res.error || 'Cập nhật banner thất bại')
       }
     } catch (err) {
       console.error('updateBanner err', err)
-      alert('Update banner failed')
+      alert('Cập nhật banner thất bại')
     }
   }
 
   async function handleDeleteBanner(b) {
-    if (!confirm(`Delete banner "${b.title}"?`)) return
+    if (!confirm(`Xóa banner "${b.title}"?`)) return
     const res = await deleteBanner(b.id)
     if (res && (res.affectedRows !== undefined ? res.affectedRows > 0 : true)) {
-      alert('Deleted')
+      alert('Đã xóa')
       loadBanners()
     } else {
-      alert(res.error || 'Delete failed')
+      alert(res.error || 'Xóa thất bại')
     }
   }
 
@@ -606,11 +606,11 @@ export default function App() {
         setTokenState(res.token)
         alert('Đăng nhập thành công')
       } else {
-        alert(res.error || 'Login failed')
+        alert(res.error || 'Đăng nhập thất bại')
       }
     } catch (err) {
       console.error(err)
-      alert('Login error')
+      alert('Lỗi đăng nhập')
     } finally {
       setIsLoggingIn(false)
     }
@@ -629,8 +629,8 @@ export default function App() {
 
   async function onCreateChapter(e) {
     e.preventDefault()
-    if (!chapterForm.bookId) return alert('Select book')
-    if (!chapterForm.title || !chapterForm.content) return alert('Title & content required')
+    if (!chapterForm.bookId) return alert('Vui lòng chọn sách')
+    if (!chapterForm.title || !chapterForm.content) return alert('Cần nhập tiêu đề và nội dung')
     setIsCreatingChapter(true)
     try {
       await createChapter(chapterForm.bookId, { title: chapterForm.title, content: chapterForm.content })
@@ -638,7 +638,7 @@ export default function App() {
       load()
     } catch (err) {
       console.error('createChapter err', err)
-      alert('Create chapter failed')
+      alert('Tạo chương thất bại')
     } finally {
       setIsCreatingChapter(false)
     }
@@ -658,7 +658,7 @@ export default function App() {
   }
 
   async function submitEditChapter(payload) {
-    if (!selectedBook || !selectedBook.id) return alert('No book selected')
+    if (!selectedBook || !selectedBook.id) return alert('Chưa chọn sách')
     try {
       setSavingChapter(true)
       await updateChapter(selectedBook.id, payload.id, { title: payload.title, content: payload.content })
@@ -666,27 +666,27 @@ export default function App() {
       const b = await getBookById(selectedBook.id)
       setSelectedBook(b)
       setEditChapterModal(null)
-      alert('Chapter updated')
+      alert('Đã cập nhật chương')
     } catch (err) {
       console.error('update chapter err', err)
-      alert('Could not update chapter')
+      alert('Không thể cập nhật chương')
     } finally {
       setSavingChapter(false)
     }
   }
 
   async function handleDeleteChapter(ch) {
-    if (!selectedBook || !selectedBook.id) return alert('No book selected')
-    if (!confirm(`Delete chapter "${ch.title}"? This cannot be undone.`)) return
+    if (!selectedBook || !selectedBook.id) return alert('Chưa chọn sách')
+    if (!confirm(`Xóa chương "${ch.title}"? Hành động này không thể hoàn tác.`)) return
     try {
       setDeletingChapterId(ch.id)
       await deleteChapter(selectedBook.id, ch.id)
       const b = await getBookById(selectedBook.id)
       setSelectedBook(b)
-      alert('Deleted')
+      alert('Đã xóa')
     } catch (err) {
       console.error('delete chapter err', err)
-      alert('Delete failed')
+      alert('Xóa thất bại')
     } finally {
       setDeletingChapterId(null)
     }
@@ -762,7 +762,7 @@ export default function App() {
 
   async function handleDeleteUser(u) {
     if (u.role === 'admin') { alert('Không thể xóa tài khoản admin.'); return }
-    if (!confirm(`Delete user ${u.email}? This cannot be undone.`)) return
+    if (!confirm(`Xóa người dùng ${u.email}? Hành động này không thể hoàn tác.`)) return
     await deleteUser(u.id)
     load()
   }
@@ -791,21 +791,21 @@ export default function App() {
     <div className="site">
       <div className="container">
         <aside className="sidebar">
-          <div className="logo">Reader Admin</div>
+          <div className="logo">Trang quản trị Reader</div>
           <div className="muted">Quản lý nội dung & chương</div>
           <nav className="nav">
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('dashboard')}} className={route==='dashboard'? 'active':''}>Dashboard</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('books')}} className={route==='books'? 'active':''}>Books</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('chapters')}}>Chapters</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('banners')}} className={route==='banners'? 'active':''}>Banners</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('ads')}} className={route==='ads'? 'active':''}>Video Ads</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('genres')}} className={route==='genres'? 'active':''}>Genres</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('dashboard')}} className={route==='dashboard'? 'active':''}>Tổng quan</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('books')}} className={route==='books'? 'active':''}>Sách</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('chapters')}}>Chương</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('banners')}} className={route==='banners'? 'active':''}>Banner</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('ads')}} className={route==='ads'? 'active':''}>Quảng cáo video</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('genres')}} className={route==='genres'? 'active':''}>Thể loại</a>
             {/* New Book moved into Books page */}
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('users')}} className={route==='users'? 'active':''}>Users</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('coins')}} className={route==='coins'? 'active':''}>Coins</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('transactions')}} className={route==='transactions'? 'active':''}>Transactions</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('comments')}} className={route==='comments'? 'active':''}>Comments</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('settings')}}>Settings</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('users')}} className={route==='users'? 'active':''}>Người dùng</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('coins')}} className={route==='coins'? 'active':''}>Nạp xu</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('transactions')}} className={route==='transactions'? 'active':''}>Giao dịch</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('comments')}} className={route==='comments'? 'active':''}>Bình luận</a>
+            <a href="#" onClick={e=>{e.preventDefault(); setRoute('settings')}}>Cài đặt</a>
           </nav>
 
           {!token && (
@@ -831,7 +831,7 @@ export default function App() {
           {route === 'dashboard' && (
             <>
               <section className="panel">
-                <h3>Statistics</h3>
+                <h3>Thống kê</h3>
                 <div style={{display:'flex',gap:18,alignItems:'stretch',flexWrap:'wrap'}}>
                   <div style={{flex:1,minWidth:300,background:'#fffefc',padding:12,borderRadius:8}}>
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
@@ -839,7 +839,7 @@ export default function App() {
                       <div className="small muted">Dựa trên số độc giả (reading_history)</div>
                     </div>
                     {stats.top_books && stats.top_books.length > 0 ? (
-                      <Bar data={{ labels: stats.top_books.map(b=>b.title), datasets: [{ label: 'Readers', backgroundColor: '#8b5e34', data: stats.top_books.map(b=>b.readers) }] }} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }} height={200} />
+                      <Bar data={{ labels: stats.top_books.map(b=>b.title), datasets: [{ label: 'Độc giả', backgroundColor: '#8b5e34', data: stats.top_books.map(b=>b.readers) }] }} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }} height={200} />
                     ) : (
                       <div style={{padding:18}} className="muted">Chưa có dữ liệu đọc (reading_history trống)</div>
                     )}
@@ -859,11 +859,11 @@ export default function App() {
                     <div style={{height:10}} />
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                       <div>
-                        <div className="small muted">Active (24h)</div>
+                        <div className="small muted">Hoạt động (24h)</div>
                         <div style={{fontSize:18,fontWeight:800}}>{stats.active_users_24h || 0}</div>
                       </div>
                       <div>
-                        <div className="small muted">Active (15m)</div>
+                        <div className="small muted">Hoạt động (15 phút)</div>
                         <div style={{fontSize:16,fontWeight:700}}>{stats.active_users_15m || 0}</div>
                       </div>
                     </div>
@@ -873,7 +873,7 @@ export default function App() {
                       <div style={{fontSize:18,fontWeight:800,color:'#d2691e'}}>{stats.vip_users || 0}</div>
                     </div>
                     <div>
-                      <div className="small muted">Authors</div>
+                      <div className="small muted">Tác giả</div>
                       <div style={{fontSize:16,fontWeight:700}}>{stats.authors || 0}</div>
                     </div>
                   </div>
@@ -881,16 +881,19 @@ export default function App() {
                   <div style={{width:240,minWidth:240,background:'#fffefc',padding:12,borderRadius:8,display:'flex',flexDirection:'column',justifyContent:'center',alignItems:'center'}}>
                     <div style={{fontSize:14,color:'#333',marginBottom:6,fontWeight:700}}>Thu nhập từ Mobile App</div>
                     <div style={{fontSize:20,fontWeight:800,color:'#8b5e34'}}>{typeof stats.income === 'number' ? new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND'}).format(stats.income) : (stats.income || '0')}</div>
-                    <div className="small muted" style={{marginTop:8,textAlign:'center'}}>Tổng thu nhập từ bảng payments (nếu có)</div>
+                    <div className="small muted" style={{marginTop:8,textAlign:'center'}}>Tổng thu nhập từ bảng payments</div>
+                    <div style={{height:1,background:'#efe6db',margin:'12px 0',width:'100%'}} />
+                    <div style={{fontSize:12,color:'#666',marginBottom:4}}>Thu nhập tháng này</div>
+                    <div style={{fontSize:16,fontWeight:700,color:'#d2691e'}}>{typeof stats.income_this_month === 'number' ? new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND'}).format(stats.income_this_month) : (stats.income_this_month || '0')}</div>
                   </div>
                 </div>
               </section>
               {/* Quick links and quick actions moved into Books page */}
 
               <section className="panel">
-                <h3>Recent Books</h3>
-                {loading ? <p>Loading...</p> : (
-                  <div className="books-grid">
+                <h3>Sách mới nhất</h3>
+                {loading ? <p>Đang tải...</p> : (
+                  <div className="books-grid" style={{maxHeight:'600px', overflowY:'auto', paddingRight:'8px'}}>
                     {books.map(b => (
                       <div key={b.id} className="book-card">
                         <div className="cover">
@@ -904,7 +907,7 @@ export default function App() {
                           <h3 style={{cursor:'pointer'}} onClick={()=>openBook(b.id)}>{b.title}</h3>
                           <div className="meta"><span className="small">{b.author || 'Không rõ tác giả'}</span></div>
                           <div className="muted">{b.description || <span className="small muted">(Chưa có mô tả)</span>}</div>
-                          <div style={{marginTop:8}} className="small">Chapters: {b.chapters ? b.chapters.length : 0}</div>
+                          <div style={{marginTop:8}} className="small">Số chương: {b.chapters ? b.chapters.length : 0}</div>
                           <div style={{marginTop:8}}>
                             {/* Open button removed - use Chapters button or click title to open */}
                           </div>
@@ -971,13 +974,13 @@ export default function App() {
 
               {commentsError && (<div className="alert error">{commentsError}</div>)}
 
-              <div className="table" style={{ overflowX:'auto' }}>
+              <div className="table" style={{ overflowX:'auto', maxHeight:'600px', overflowY:'auto' }}>
                 <table style={{ tableLayout:'auto', width:'100%', minWidth:0, borderCollapse:'separate', borderSpacing:0 }}>
-                  <thead>
+                  <thead style={{position:'sticky', top:0, zIndex:1}}>
                     <tr style={{background:'#1c140e'}}>
                       <th style={{whiteSpace:'nowrap', padding:'8px 10px', textAlign:'left'}}>ID</th>
-                      <th style={{padding:'8px 10px', textAlign:'left'}}>Story</th>
-                      <th style={{padding:'8px 10px', textAlign:'left'}}>User</th>
+                      <th style={{padding:'8px 10px', textAlign:'left'}}>Truyện</th>
+                      <th style={{padding:'8px 10px', textAlign:'left'}}>Người dùng</th>
                       <th style={{padding:'8px 10px', textAlign:'left'}}>Nội dung</th>
                       <th style={{whiteSpace:'nowrap', padding:'8px 10px', textAlign:'left'}}>Ngày</th>
                       <th style={{textAlign:'center', whiteSpace:'nowrap', padding:'8px 10px'}}>Hành động</th>
@@ -1010,43 +1013,43 @@ export default function App() {
 
           {route === 'banners' && (
             <section className="panel">
-              <h3>Banners</h3>
+              <h3>Banner</h3>
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
                 <div>
                   <form onSubmit={onCreateBanner}>
-                    <label>Title</label>
+                    <label>Tiêu đề</label>
                     <input value={bannerForm.title} onChange={e=>setBannerForm({...bannerForm,title:e.target.value})} />
-                    <label>Link</label>
+                    <label>Liên kết</label>
                     <input value={bannerForm.link} onChange={e=>setBannerForm({...bannerForm,link:e.target.value})} placeholder="https://..." />
-                    <label>Enabled</label>
+                    <label>Trạng thái</label>
                     <select value={bannerForm.enabled ? '1' : '0'} onChange={e=>setBannerForm({...bannerForm,enabled: e.target.value === '1'})}>
-                      <option value="1">Enabled</option>
-                      <option value="0">Disabled</option>
+                      <option value="1">Bật</option>
+                      <option value="0">Tắt</option>
                     </select>
-                    <label>Image</label>
+                    <label>Hình ảnh</label>
                     <input type="file" accept="image/*" onChange={e=>setBannerFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)} />
-                    {bannerFile && (<div style={{marginTop:8}}><img src={URL.createObjectURL(bannerFile)} alt="preview" style={{maxWidth:240}} /></div>)}
+                    {bannerFile && (<div style={{marginTop:8}}><img src={URL.createObjectURL(bannerFile)} alt="xem trước" style={{maxWidth:240}} /></div>)}
                     <div style={{display:'flex',justifyContent:'flex-end'}}>
-                      <button type="submit" disabled={isCreatingBanner} className={isCreatingBanner ? 'btn btn-primary disabled' : 'btn btn-primary'}>{isCreatingBanner ? 'Creating...' : 'Create Banner'}</button>
+                      <button type="submit" disabled={isCreatingBanner} className={isCreatingBanner ? 'btn btn-primary disabled' : 'btn btn-primary'}>{isCreatingBanner ? 'Đang tạo...' : 'Tạo banner'}</button>
                     </div>
                   </form>
                 </div>
                 <div>
-                  <h4>Existing Banners</h4>
-                  {banners.length === 0 ? <p>No banners</p> : (
+                  <h4>Banner hiện có</h4>
+                  {banners.length === 0 ? <p>Chưa có banner</p> : (
                     <div style={{display:'grid',gap:12}}>
                       {banners.map(b => (
                         <div key={b.id} style={{display:'flex',gap:12,alignItems:'center',background:'#fffefc',padding:8,borderRadius:8}}>
                           <div style={{width:120,height:60,background:'#f2f0ec',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                            {b.image_url ? <img src={b.image_url} style={{maxWidth:'100%',maxHeight:'100%'}} alt={b.title} /> : 'No image'}
+                            {b.image_url ? <img src={b.image_url} style={{maxWidth:'100%',maxHeight:'100%'}} alt={b.title} /> : 'Chưa có hình'}
                           </div>
                           <div style={{flex:1}}>
                             <div style={{fontWeight:700}}>{b.title}</div>
                             <div className="small muted">{b.link}</div>
                           </div>
                           <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                            <button className="btn btn-edit btn-small" onClick={()=>setEditBannerModal({...b, bannerFile: null})}>Edit</button>
-                            <button onClick={()=>handleDeleteBanner(b)} style={{background:'#ff6b6b'}} disabled={false}>Delete</button>
+                            <button className="btn btn-edit btn-small" onClick={()=>setEditBannerModal({...b, bannerFile: null})}>Sửa</button>
+                            <button onClick={()=>handleDeleteBanner(b)} style={{background:'#ff6b6b'}} disabled={false}>Xóa</button>
                           </div>
                         </div>
                       ))}
@@ -1059,7 +1062,7 @@ export default function App() {
 
           {route === 'ads' && (
             <section className="panel">
-              <h3>Quảng cáo video (Video Ads)</h3>
+              <h3>Quảng cáo video</h3>
               <div className="muted" style={{ marginBottom: 10 }}>
                 Upload video ngắn (mp4) và bật/tắt theo nhu cầu. Ứng dụng sẽ lấy danh sách từ API <code>/ads</code>.
               </div>
@@ -1073,21 +1076,21 @@ export default function App() {
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
                 <div>
                   <form onSubmit={onCreateAd}>
-                    <label>Title</label>
+                    <label>Tiêu đề</label>
                     <input value={adForm.title} onChange={e=>setAdForm({...adForm,title:e.target.value})} />
-                    <label>Link (optional)</label>
+                    <label>Liên kết (tùy chọn)</label>
                     <input value={adForm.link} onChange={e=>setAdForm({...adForm,link:e.target.value})} placeholder="https://..." />
-                    <label>Placement</label>
+                    <label>Vị trí hiển thị</label>
                     <select value={adForm.placement} onChange={e=>setAdForm({...adForm,placement:e.target.value})}>
-                      <option value="interstitial">Interstitial</option>
+                      <option value="interstitial">Toàn màn hình</option>
                       <option value="banner">Banner</option>
-                      <option value="reader">Reader</option>
-                      <option value="home">Home</option>
+                      <option value="reader">Khi đọc</option>
+                      <option value="home">Trang chủ</option>
                     </select>
-                    <label>Enabled</label>
+                    <label>Trạng thái</label>
                     <select value={adForm.enabled ? '1' : '0'} onChange={e=>setAdForm({...adForm,enabled: e.target.value === '1'})}>
-                      <option value="1">Enabled</option>
-                      <option value="0">Disabled</option>
+                      <option value="1">Bật</option>
+                      <option value="0">Tắt</option>
                     </select>
                     <label>Video</label>
                     <input type="file" accept="video/*" onChange={e=>setAdFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)} />
@@ -1098,31 +1101,31 @@ export default function App() {
                     )}
                     <div style={{display:'flex',justifyContent:'flex-end'}}>
                       <button type="submit" disabled={isCreatingAd} className={isCreatingAd ? 'btn btn-primary disabled' : 'btn btn-primary'}>
-                        {isCreatingAd ? 'Creating...' : 'Create Video Ad'}
+                        {isCreatingAd ? 'Đang tạo...' : 'Tạo quảng cáo video'}
                       </button>
                     </div>
                   </form>
                 </div>
 
                 <div>
-                  <h4>Existing Video Ads</h4>
-                  {ads.length === 0 ? <p>No ads</p> : (
+                  <h4>Video ads hiện có</h4>
+                  {ads.length === 0 ? <p>Chưa có quảng cáo</p> : (
                     <div style={{display:'grid',gap:12}}>
                       {ads.map(a => (
                         <div key={a.id} style={{display:'flex',gap:12,alignItems:'center',background:'#fffefc',padding:8,borderRadius:8}}>
                           <div style={{width:160,height:90,background:'#f2f0ec',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:8,overflow:'hidden'}}>
                             {a.video_url ? (
                               <video src={a.video_url} style={{width:'100%',height:'100%',objectFit:'cover'}} muted />
-                            ) : 'No video'}
+                            ) : 'Chưa có video'}
                           </div>
                           <div style={{flex:1}}>
-                            <div style={{fontWeight:700}}>{a.title || '(no title)'}</div>
-                            <div className="small muted">placement: {a.placement || 'interstitial'} • {a.enabled ? 'enabled' : 'disabled'}</div>
+                            <div style={{fontWeight:700}}>{a.title || '(chưa có tiêu đề)'}</div>
+                            <div className="small muted">vị trí: {a.placement || 'interstitial'} • {a.enabled ? 'đang bật' : 'đang tắt'}</div>
                             <div className="small muted" style={{wordBreak:'break-all'}}>{a.link || ''}</div>
                           </div>
                           <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                            <button className="btn btn-edit btn-small" onClick={()=>setEditAdModal({ ...a, videoFile: null })}>Edit</button>
-                            <button onClick={()=>handleDeleteAd(a)} style={{background:'#ff6b6b'}} disabled={false}>Delete</button>
+                            <button className="btn btn-edit btn-small" onClick={()=>setEditAdModal({ ...a, videoFile: null })}>Sửa</button>
+                            <button onClick={()=>handleDeleteAd(a)} style={{background:'#ff6b6b'}} disabled={false}>Xóa</button>
                           </div>
                         </div>
                       ))}
@@ -1138,19 +1141,19 @@ export default function App() {
               <h3>Yêu cầu nạp xu</h3>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
                 <div className="muted">Người dùng tạo lệnh nạp, admin duyệt để cộng xu.</div>
-                <button className="btn" onClick={reloadTopups}>Refresh</button>
+                <button className="btn" onClick={reloadTopups}>Tải lại</button>
               </div>
               {topupsError ? (
                 <div className="muted" style={{padding:12,background:'#22190f',borderRadius:6}}>{topupsError}</div>
               ) : topups.length === 0 ? (
                 <div className="muted" style={{padding:12}}>Chưa có yêu cầu.</div>
               ) : (
-                <div style={{overflowX:'auto'}}>
+                <div style={{overflowX:'auto', maxHeight:'500px', overflowY:'auto'}}>
                   <table className="table">
-                    <thead>
+                    <thead style={{position:'sticky', top:0, zIndex:1, background:'#1c140e'}}>
                       <tr>
                         <th>ID</th>
-                        <th>User</th>
+                        <th>Người dùng</th>
                         <th>Xu</th>
                         <th>Số tiền</th>
                         <th>Phương thức</th>
@@ -1190,13 +1193,13 @@ export default function App() {
 
           {route === 'transactions' && (
             <section className="panel">
-              <h3>Transactions</h3>
+              <h3>Giao dịch</h3>
               {transactionsError ? (
                 <div className="muted" style={{ padding: 10, background: '#22190f', borderRadius: 6 }}>{transactionsError}</div>
               ) : (
                 <div style={{display:'grid', gap:16}}>
                   <div>
-                    <h4>Payments (mua VIP / nạp xu)</h4>
+                    <h4>Thanh toán (mua VIP / nạp xu)</h4>
                     {(() => {
                       const filteredPayments = payments.filter(p => {
                         const coinsNum = Number(p.coins)
@@ -1206,12 +1209,12 @@ export default function App() {
                       })
                       if (filteredPayments.length === 0) return <div className="muted" style={{padding:8}}>Chưa có giao dịch.</div>
                       return (
-                      <div style={{overflowX:'auto'}}>
+                      <div style={{overflowX:'auto', maxHeight:'500px', overflowY:'auto'}}>
                         <table className="table" style={{minWidth:1024}}>
-                          <thead>
+                          <thead style={{position:'sticky', top:0, zIndex:1, background:'#1c140e'}}>
                             <tr>
                               <th style={{width:72}}>ID</th>
-                              <th style={{width:200}}>User</th>
+                              <th style={{width:200}}>Người dùng</th>
                               <th style={{width:140}}>Số tiền</th>
                               <th style={{width:130}}>Xu</th>
                               <th style={{width:130}}>Phương thức</th>
@@ -1253,11 +1256,11 @@ export default function App() {
                   </div>
 
                   <div>
-                    <h4>Donations (user → author)</h4>
-                    {donations.length === 0 ? <div className="muted" style={{padding:8}}>Chưa có donate.</div> : (
-                      <div style={{overflowX:'auto'}}>
+                    <h4>Ủng hộ (người dùng → tác giả)</h4>
+                    {donations.length === 0 ? <div className="muted" style={{padding:8}}>Chưa có ủng hộ.</div> : (
+                      <div style={{overflowX:'auto', maxHeight:'500px', overflowY:'auto'}}>
                         <table className="table" style={{minWidth:960}}>
-                          <thead>
+                          <thead style={{position:'sticky', top:0, zIndex:1, background:'#1c140e'}}>
                             <tr>
                               <th style={{width:72}}>ID</th>
                               <th style={{width:200}}>Người tặng</th>
@@ -1298,24 +1301,24 @@ export default function App() {
 
           {route === 'books' && (
             <section className="panel">
-              <h3>All Books</h3>
+              <h3>Tất cả sách</h3>
               <div style={{marginBottom:12}}>
                 <h4>Tạo sách mới</h4>
                 <form onSubmit={onCreateBook} style={{display:'grid',gap:8,maxWidth:720}}>
-                  <input placeholder="Title" value={bookForm.title} onChange={e=>setBookForm({...bookForm,title:e.target.value})} />
-                  <input placeholder="Author" value={bookForm.author} onChange={e=>setBookForm({...bookForm,author:e.target.value})} />
+                  <input placeholder="Tiêu đề" value={bookForm.title} onChange={e=>setBookForm({...bookForm,title:e.target.value})} />
+                  <input placeholder="Tác giả" value={bookForm.author} onChange={e=>setBookForm({...bookForm,author:e.target.value})} />
                   <select value={bookForm.genre} onChange={e=>setBookForm({...bookForm,genre:e.target.value})} style={{padding:'8px',border:'1px solid #ddd',borderRadius:'4px'}}>
                     <option value="">-- Chọn thể loại --</option>
                     {genres.map(g => <option key={g.genre_id} value={g.name}>{g.name}</option>)}
                   </select>
-                  <textarea placeholder="Description" value={bookForm.description} onChange={e=>setBookForm({...bookForm,description:e.target.value})} />
+                  <textarea placeholder="Mô tả" value={bookForm.description} onChange={e=>setBookForm({...bookForm,description:e.target.value})} />
                   <input type="file" accept="image/*" onChange={e=>setCoverFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)} />
                   <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
-                    <button type="submit" disabled={isCreatingBook} className={isCreatingBook ? 'btn btn-primary disabled' : 'btn btn-primary'}>{isCreatingBook ? 'Creating...' : 'Create Book'}</button>
+                    <button type="submit" disabled={isCreatingBook} className={isCreatingBook ? 'btn btn-primary disabled' : 'btn btn-primary'}>{isCreatingBook ? 'Đang tạo...' : 'Tạo sách'}</button>
                   </div>
                 </form>
               </div>
-              {loading ? <p>Loading...</p> : (
+              {loading ? <p>Đang tải...</p> : (
                 <div className="books-grid">
                   {books.map(b => (
                     <div key={b.id} className="book-card">
@@ -1326,11 +1329,11 @@ export default function App() {
                         {b.genre && <div style={{background:'#f0e6d2',color:'#8b5e34',padding:'4px 8px',borderRadius:'4px',fontSize:'13px',display:'inline-block',marginTop:6,marginBottom:6}}>🏷️ {b.genre}</div>}
                         {!b.genre && <div style={{color:'#999',fontSize:'13px',fontStyle:'italic',marginTop:6,marginBottom:6}}>Chưa có thể loại</div>}
                         <div className="muted">{b.description || <span className="small muted">(Chưa có mô tả)</span>}</div>
-                        <div style={{marginTop:8}} className="small">Chapters: {b.chapters ? b.chapters.length : 0}</div>
+                          <div style={{marginTop:8}} className="small">Chương: {b.chapters ? b.chapters.length : 0}</div>
                           <div style={{marginTop:8,display:'flex',gap:8,alignItems:'center'}}>
-                          <button className="btn btn-edit btn-small" onClick={() => handleEditBook(b)} style={{marginRight:8}}>Edit</button>
-                          <button className="btn btn-delete btn-small" onClick={() => handleDeleteBook(b)} style={{marginLeft:0}} disabled={deletingBookId === b.id}>{deletingBookId === b.id ? 'Deleting...' : 'Delete'}</button>
-                          <button className="btn btn-secondary btn-small" onClick={()=>openChaptersForBook(b.id)} style={{marginLeft:8}}>Chapters</button>
+                          <button className="btn btn-edit btn-small" onClick={() => handleEditBook(b)} style={{marginRight:8}}>Sửa</button>
+                          <button className="btn btn-delete btn-small" onClick={() => handleDeleteBook(b)} style={{marginLeft:0}} disabled={deletingBookId === b.id}>{deletingBookId === b.id ? 'Đang xóa...' : 'Xóa'}</button>
+                          <button className="btn btn-secondary btn-small" onClick={()=>openChaptersForBook(b.id)} style={{marginLeft:8}}>Chương</button>
                           {/* Open button removed - use Chapters button or click title to open */}
                         </div>
 
@@ -1347,13 +1350,13 @@ export default function App() {
 
           {route === 'book' && (
             <section className="panel">
-              <h3>Book Detail</h3>
-              {selectedBookLoading ? <p>Loading...</p> : selectedBook ? (
+              <h3>Chi tiết sách</h3>
+              {selectedBookLoading ? <p>Đang tải...</p> : selectedBook ? (
                 <div>
                   <h2>{selectedBook.title}</h2>
                   <div className="muted">{selectedBook.author}</div>
                   <p>{selectedBook.description}</p>
-                  <h4>Chapters</h4>
+                  <h4>Danh sách chương</h4>
                   <ol>
                     {(selectedBook.chapters || []).map(ch => (
                       <li key={ch.id} style={{marginBottom:8}}>
@@ -1363,19 +1366,19 @@ export default function App() {
                             <div className="small muted">{new Date(ch.created_at || ch.createdAt || '').toLocaleString()}</div>
                           </div>
                           <div style={{display:'flex',gap:8}}>
-                            <button className="btn btn-edit btn-small" onClick={()=>handleEditChapter(ch)}>Edit</button>
-                            <button className="btn btn-delete btn-small" onClick={()=>handleDeleteChapter(ch)} style={{marginLeft:8}} disabled={deletingChapterId === ch.id}>{deletingChapterId === ch.id ? 'Deleting...' : 'Delete'}</button>
+                            <button className="btn btn-edit btn-small" onClick={()=>handleEditChapter(ch)}>Sửa</button>
+                            <button className="btn btn-delete btn-small" onClick={()=>handleDeleteChapter(ch)} style={{marginLeft:8}} disabled={deletingChapterId === ch.id}>{deletingChapterId === ch.id ? 'Đang xóa...' : 'Xóa'}</button>
                           </div>
                         </div>
                       </li>
                     ))}
                   </ol>
                   <h4>Thêm chương cho sách này</h4>
-                  <form onSubmit={async (e)=>{ e.preventDefault(); if(!e.target.title.value||!e.target.content.value) return alert('Title & content required'); await createChapter(selectedBook.id, { title: e.target.title.value, content: e.target.content.value }); const b = await getBookById(selectedBook.id); setSelectedBook(b); alert('Added'); }}>
+                  <form onSubmit={async (e)=>{ e.preventDefault(); if(!e.target.title.value||!e.target.content.value) return alert('Cần nhập tiêu đề và nội dung'); await createChapter(selectedBook.id, { title: e.target.title.value, content: e.target.content.value }); const b = await getBookById(selectedBook.id); setSelectedBook(b); alert('Đã thêm'); }}>
                     <input name="title" placeholder="Tên chương" />
                     <textarea name="content" placeholder="Nội dung chương" />
                     <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
-                      <button type="submit" disabled={isCreatingChapter} className={isCreatingChapter ? 'btn btn-primary disabled' : 'btn btn-primary'}>{isCreatingChapter ? 'Adding...' : 'Add Chapter'}</button>
+                      <button type="submit" disabled={isCreatingChapter} className={isCreatingChapter ? 'btn btn-primary disabled' : 'btn btn-primary'}>{isCreatingChapter ? 'Đang thêm...' : 'Thêm chương'}</button>
                     </div>
                   </form>
                 </div>
@@ -1385,14 +1388,14 @@ export default function App() {
 
           {route === 'chapters' && (
             <section className="panel">
-              <h3>Chapters Management</h3>
+              <h3>Quản lý chương</h3>
               {selectedBook ? (
                 <div>
                   <h2>{selectedBook.title}</h2>
                   <div className="muted">{selectedBook.author}</div>
                   <p>{selectedBook.description}</p>
-                  <h4>Chapters</h4>
-                  <ol>
+                  <h4>Danh sách chương</h4>
+                  <ol style={{maxHeight:'400px', overflowY:'auto', paddingRight:'8px'}}>
                     {(selectedBook.chapters || []).map(ch => (
                       <li key={ch.id} style={{marginBottom:8}}>
                         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -1401,34 +1404,34 @@ export default function App() {
                             <div className="small muted">{new Date(ch.created_at || ch.createdAt || '').toLocaleString()}</div>
                           </div>
                           <div style={{display:'flex',gap:8}}>
-                            <button className="btn btn-edit btn-small" onClick={()=>handleEditChapter(ch)}>Edit</button>
-                            <button className="btn btn-delete btn-small" onClick={()=>handleDeleteChapter(ch)} style={{marginLeft:8}} disabled={deletingChapterId === ch.id}>{deletingChapterId === ch.id ? 'Deleting...' : 'Delete'}</button>
+                            <button className="btn btn-edit btn-small" onClick={()=>handleEditChapter(ch)}>Sửa</button>
+                            <button className="btn btn-delete btn-small" onClick={()=>handleDeleteChapter(ch)} style={{marginLeft:8}} disabled={deletingChapterId === ch.id}>{deletingChapterId === ch.id ? 'Đang xóa...' : 'Xóa'}</button>
                           </div>
                         </div>
                       </li>
                     ))}
                   </ol>
-                  <h4>Add Chapter</h4>
-                  <form onSubmit={async (e)=>{ e.preventDefault(); const title = e.target.title.value; const content = e.target.content.value; if(!title||!content) return alert('Title & content required'); await createChapter(selectedBook.id, { title, content }); const b = await getBookById(selectedBook.id); setSelectedBook(b); e.target.title.value=''; e.target.content.value=''; alert('Added'); }}>
-                    <input name="title" placeholder="Chapter title" />
-                    <textarea name="content" placeholder="Chapter content" />
+                  <h4>Thêm chương</h4>
+                  <form onSubmit={async (e)=>{ e.preventDefault(); const title = e.target.title.value; const content = e.target.content.value; if(!title||!content) return alert('Cần nhập tiêu đề và nội dung'); await createChapter(selectedBook.id, { title, content }); const b = await getBookById(selectedBook.id); setSelectedBook(b); e.target.title.value=''; e.target.content.value=''; alert('Đã thêm'); }}>
+                    <input name="title" placeholder="Tiêu đề chương" />
+                    <textarea name="content" placeholder="Nội dung chương" />
                     <div style={{display:'flex',justifyContent:'flex-end',marginTop:6}}>
-                      <button type="submit" disabled={isCreatingChapter} className={isCreatingChapter ? 'btn btn-primary disabled' : 'btn btn-primary'}>{isCreatingChapter ? 'Adding...' : 'Add Chapter'}</button>
+                      <button type="submit" disabled={isCreatingChapter} className={isCreatingChapter ? 'btn btn-primary disabled' : 'btn btn-primary'}>{isCreatingChapter ? 'Đang thêm...' : 'Thêm chương'}</button>
                     </div>
                   </form>
                 </div>
               ) : (
                   <div>
-                  <p>Select a book to manage chapters.</p>
-                  <div style={{display:'grid',gap:8}}>
+                  <p>Chọn một sách để quản lý chương.</p>
+                  <div style={{display:'grid',gap:8, maxHeight:'500px', overflowY:'auto', paddingRight:'8px'}}>
                     {console.log('[chapters view] Books available:', books) || books.map(b => (
                       <div key={b.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:8,background:'#fffefc',borderRadius:6}}>
                         <div>
-                          <div style={{fontWeight:700}}>{b.title || `(Untitled ${b.id})`}</div>
+                          <div style={{fontWeight:700}}>{b.title || `Chưa có tiêu đề #${b.id}`}</div>
                           <div className="small muted">{b.author || 'Không rõ tác giả'}</div>
                         </div>
                           <div>
-                            <button className="btn btn-secondary btn-small" onClick={()=>openChaptersForBook(b.id)}>Manage</button>
+                            <button className="btn btn-secondary btn-small" onClick={()=>openChaptersForBook(b.id)}>Quản lý</button>
                           </div>
                       </div>
                     ))}
@@ -1442,13 +1445,13 @@ export default function App() {
           {editChapterModal && (
             <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center'}}>
               <div style={{background:'#fff',padding:20,borderRadius:8,width:720,maxWidth:'95%'}}>
-                <h3>Edit Chapter</h3>
+                <h3>Sửa chương</h3>
                 <div style={{display:'grid',gap:8}}>
                   <input value={editChapterModal.title} onChange={e=>setEditChapterModal({...editChapterModal,title:e.target.value})} />
                   <textarea value={editChapterModal.content} onChange={e=>setEditChapterModal({...editChapterModal,content:e.target.value})} rows={12} />
                   <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:6}}>
-                    <button onClick={()=>setEditChapterModal(null)} style={{background:'#eee'}}>Cancel</button>
-                    <button onClick={()=>submitEditChapter(editChapterModal)} disabled={savingChapter} className={savingChapter ? 'btn btn-primary disabled' : 'btn btn-primary'}>{savingChapter ? 'Saving...' : 'Save'}</button>
+                    <button onClick={()=>setEditChapterModal(null)} style={{background:'#eee'}}>Hủy</button>
+                    <button onClick={()=>submitEditChapter(editChapterModal)} disabled={savingChapter} className={savingChapter ? 'btn btn-primary disabled' : 'btn btn-primary'}>{savingChapter ? 'Đang lưu...' : 'Lưu'}</button>
                   </div>
                 </div>
               </div>
@@ -1457,29 +1460,29 @@ export default function App() {
 
           {route === 'genres' && (
             <section className="panel">
-              <h3>Genres / Categories</h3>
+              <h3>Thể loại / Danh mục</h3>
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
                 <div>
-                  <h4>Create New Genre</h4>
+                  <h4>Tạo thể loại mới</h4>
                   <form onSubmit={async (e)=>{
                     e.preventDefault()
-                    if(!genreForm.name) return alert('Name required')
+                    if(!genreForm.name) return alert('Cần nhập tên thể loại')
                     const res = await createGenre(genreForm)
                     if(res && res.error) return alert(res.error)
                     setGenreForm({name:'',description:''})
                     load()
                   }}>
-                    <input placeholder="Genre name" value={genreForm.name} onChange={e=>setGenreForm({...genreForm,name:e.target.value})} style={{marginBottom:8}} />
-                    <textarea placeholder="Description" value={genreForm.description} onChange={e=>setGenreForm({...genreForm,description:e.target.value})} rows={3} />
+                    <input placeholder="Tên thể loại" value={genreForm.name} onChange={e=>setGenreForm({...genreForm,name:e.target.value})} style={{marginBottom:8}} />
+                    <textarea placeholder="Mô tả" value={genreForm.description} onChange={e=>setGenreForm({...genreForm,description:e.target.value})} rows={3} />
                     <div style={{display:'flex',justifyContent:'flex-end',marginTop:8}}>
-                      <button type="submit" className="btn btn-primary">Create</button>
+                      <button type="submit" className="btn btn-primary">Tạo</button>
                     </div>
                   </form>
                 </div>
                 <div>
-                  <h4>Existing Genres</h4>
-                  {loading ? <p>Loading...</p> : genres.length === 0 ? <p>No genres</p> : (
-                    <div style={{display:'grid',gap:8}}>
+                  <h4>Thể loại hiện có</h4>
+                  {loading ? <p>Đang tải...</p> : genres.length === 0 ? <p>Chưa có thể loại</p> : (
+                    <div style={{display:'grid',gap:8, maxHeight:'500px', overflowY:'auto', paddingRight:'8px'}}>
                       {genres.map(g=>(
                         <div key={g.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',background:'#fffefc',padding:8,borderRadius:6}}>
                           <div>
@@ -1487,13 +1490,13 @@ export default function App() {
                             {g.description && <div className="small muted">{g.description}</div>}
                           </div>
                           <div style={{display:'flex',gap:6}}>
-                            <button className="btn btn-edit btn-small" onClick={()=>setEditGenreModal({...g})}>Edit</button>
+                            <button className="btn btn-edit btn-small" onClick={()=>setEditGenreModal({...g})}>Sửa</button>
                             <button className="btn btn-delete btn-small" onClick={async()=>{
-                              if(!confirm(`Delete genre "${g.name}"?`)) return
+                              if(!confirm(`Xóa thể loại "${g.name}"?`)) return
                               const res = await deleteGenre(g.id)
-                              if(res && res.affectedRows) { alert('Deleted'); load() }
-                              else alert('Delete failed')
-                            }}>Delete</button>
+                              if(res && res.affectedRows) { alert('Đã xóa'); load() }
+                              else alert('Xóa thất bại')
+                            }}>Xóa</button>
                           </div>
                         </div>
                       ))}
@@ -1506,27 +1509,28 @@ export default function App() {
 
           {route === 'users' && (
             <section className="panel">
-              <h3>Users</h3>
+              <h3>Người dùng</h3>
               <div style={{ marginBottom: 12 }}>
-                <button onClick={() => setCreateUserModal({ fullname: '', email: '', password: '', role: 'user' })} style={{ background: '#8b5e34', color: '#fff', padding: '6px 10px', borderRadius: 6 }}>Add User</button>
+                <button onClick={() => setCreateUserModal({ fullname: '', email: '', password: '', role: 'user' })} style={{ background: '#8b5e34', color: '#fff', padding: '6px 10px', borderRadius: 6 }}>Thêm người dùng</button>
               </div>
-              {loading ? <p>Loading...</p> : usersError ? (
+              {loading ? <p>Đang tải...</p> : usersError ? (
                 <div className="muted" style={{ padding: 10, background: '#22190f', borderRadius: 6 }}>{usersError}</div>
               ) : (
                 <>
                   {users.length === 0 ? (
                     <div className="muted" style={{ padding: 10 }}>Không có người dùng hoặc bạn không có quyền xem.</div>
                   ) : (
+                    <div style={{maxHeight:'500px', overflowY:'auto'}}>
                     <table style={{width:'100%',borderCollapse:'collapse'}}>
-                      <thead>
+                      <thead style={{position:'sticky', top:0, zIndex:1, background:'#1c140e'}}>
                         <tr style={{textAlign:'left',borderBottom:'1px solid #eee'}}>
                           <th style={{padding:'8px'}}>ID</th>
-                          <th style={{padding:'8px'}}>Name</th>
+                          <th style={{padding:'8px'}}>Tên</th>
                           <th style={{padding:'8px'}}>Email</th>
-                          <th style={{padding:'8px'}}>Role</th>
-                          <th style={{padding:'8px'}}>Coins</th>
-                          <th style={{padding:'8px'}}>Created</th>
-                          <th style={{padding:'8px'}}>Actions</th>
+                          <th style={{padding:'8px'}}>Vai trò</th>
+                          <th style={{padding:'8px'}}>Xu</th>
+                          <th style={{padding:'8px'}}>Ngày tạo</th>
+                          <th style={{padding:'8px'}}>Hành động</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1539,14 +1543,15 @@ export default function App() {
                             <td style={{padding:8,fontWeight:700}}>{typeof u.coins === 'number' ? u.coins : (u.coins ?? 0)}</td>
                             <td style={{padding:8}}>{u.created_at ? new Date(u.created_at).toLocaleString() : ''}</td>
                             <td style={{padding:8,display:'flex',gap:6,flexWrap:'wrap'}}>
-                              <button className="btn btn-edit btn-small" onClick={() => handleEditUser(u)}>Edit</button>
-                              <button className="btn btn-delete btn-small" onClick={() => handleDeleteUser(u)} style={{opacity: u.role === 'admin' ? 0.7 : 1, cursor: 'pointer'}} title={u.role === 'admin' ? 'Không thể xóa tài khoản admin' : ''} disabled={false}>Delete</button>
+                              <button className="btn btn-edit btn-small" onClick={() => handleEditUser(u)}>Sửa</button>
+                              <button className="btn btn-delete btn-small" onClick={() => handleDeleteUser(u)} style={{opacity: u.role === 'admin' ? 0.7 : 1, cursor: 'pointer'}} title={u.role === 'admin' ? 'Không thể xóa tài khoản admin' : ''} disabled={false}>Xóa</button>
                               <button className="btn btn-small" onClick={() => handleAdminTopupUser(u)}>Nạp xu</button>
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   )}
                 </>
               )}
@@ -1559,13 +1564,13 @@ export default function App() {
               <div style={{background:'#fff',padding:20,borderRadius:8,width:520,maxWidth:'95%'}}>
                 <h3>Chỉnh sửa sách</h3>
                 <div style={{display:'grid',gap:8}}>
-                  <input placeholder="Title" value={editBookModal.title} onChange={e=>setEditBookModal({...editBookModal,title:e.target.value})} />
-                  <input placeholder="Author" value={editBookModal.author} onChange={e=>setEditBookModal({...editBookModal,author:e.target.value})} />
+                  <input placeholder="Tiêu đề" value={editBookModal.title} onChange={e=>setEditBookModal({...editBookModal,title:e.target.value})} />
+                  <input placeholder="Tác giả" value={editBookModal.author} onChange={e=>setEditBookModal({...editBookModal,author:e.target.value})} />
                   <select value={editBookModal.genre || ''} onChange={e=>setEditBookModal({...editBookModal,genre:e.target.value})} style={{padding:'8px',border:'1px solid #ddd',borderRadius:'4px'}}>
                     <option value="">-- Chọn thể loại --</option>
                     {genres.map(g => <option key={g.genre_id} value={g.name}>{g.name}</option>)}
                   </select>
-                  <textarea placeholder="Description" value={editBookModal.description} onChange={e=>setEditBookModal({...editBookModal,description:e.target.value})} />
+                  <textarea placeholder="Mô tả" value={editBookModal.description} onChange={e=>setEditBookModal({...editBookModal,description:e.target.value})} />
                   <div>
                     <label style={{display:'block',marginBottom:4,fontSize:14,fontWeight:500}}>Đổi ảnh bìa (tùy chọn)</label>
                     <input type="file" accept="image/*" onChange={e=>setEditBookCoverFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)} />
@@ -1583,18 +1588,18 @@ export default function App() {
           {editUserModal && (
             <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center'}}>
               <div style={{background:'#fff',padding:20,borderRadius:8,width:420,maxWidth:'95%'}}>
-                <h3>Edit User</h3>
+                <h3>Sửa người dùng</h3>
                 <div style={{display:'grid',gap:8}}>
                   <input value={editUserModal.fullname} onChange={e=>setEditUserModal({...editUserModal,fullname:e.target.value})} />
                   <input value={editUserModal.email} onChange={e=>setEditUserModal({...editUserModal,email:e.target.value})} />
                   <select value={editUserModal.role} onChange={e=>setEditUserModal({...editUserModal,role:e.target.value})}>
-                    <option value="user">user</option>
-                    <option value="author">author</option>
-                    <option value="admin">admin</option>
+                    <option value="user">Người dùng</option>
+                    <option value="author">Tác giả</option>
+                    <option value="admin">Quản trị</option>
                   </select>
                   <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:6}}>
-                    <button onClick={()=>setEditUserModal(null)} style={{background:'#eee'}}>Cancel</button>
-                    <button onClick={()=>submitEditUser(editUserModal)} disabled={editUserModal.role==='admin' && editUserModal.email==='admin@example.com' ? false : false}>Save</button>
+                    <button onClick={()=>setEditUserModal(null)} style={{background:'#eee'}}>Hủy</button>
+                    <button onClick={()=>submitEditUser(editUserModal)} disabled={editUserModal.role==='admin' && editUserModal.email==='admin@example.com' ? false : false}>Lưu</button>
                   </div>
                 </div>
               </div>
@@ -1605,18 +1610,18 @@ export default function App() {
           {createUserModal && (
             <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center'}}>
               <div style={{background:'#fff',padding:20,borderRadius:8,width:420,maxWidth:'95%'}}>
-                <h3>Create User</h3>
+                <h3>Tạo người dùng</h3>
                 <div style={{display:'grid',gap:8}}>
-                  <input placeholder="Full name" value={createUserModal.fullname} onChange={e=>setCreateUserModal({...createUserModal,fullname:e.target.value})} />
+                  <input placeholder="Họ tên" value={createUserModal.fullname} onChange={e=>setCreateUserModal({...createUserModal,fullname:e.target.value})} />
                   <input placeholder="Email" value={createUserModal.email} onChange={e=>setCreateUserModal({...createUserModal,email:e.target.value})} />
-                  <input placeholder="Password" type="password" value={createUserModal.password} onChange={e=>setCreateUserModal({...createUserModal,password:e.target.value})} />
+                  <input placeholder="Mật khẩu" type="password" value={createUserModal.password} onChange={e=>setCreateUserModal({...createUserModal,password:e.target.value})} />
                   <select value={createUserModal.role} onChange={e=>setCreateUserModal({...createUserModal,role:e.target.value})}>
-                    <option value="user">user</option>
-                    <option value="author">author</option>
+                    <option value="user">Người dùng</option>
+                    <option value="author">Tác giả</option>
                   </select>
                   <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:6}}>
-                    <button onClick={()=>setCreateUserModal(null)} style={{background:'#eee'}}>Cancel</button>
-                    <button onClick={()=>handleCreateUserSubmit(createUserModal)}>Create</button>
+                    <button onClick={()=>setCreateUserModal(null)} style={{background:'#eee'}}>Hủy</button>
+                    <button onClick={()=>handleCreateUserSubmit(createUserModal)}>Tạo</button>
                   </div>
                 </div>
               </div>
@@ -1627,21 +1632,21 @@ export default function App() {
           {editBannerModal && (
             <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center'}}>
               <div style={{background:'#fff',padding:20,borderRadius:8,width:520,maxWidth:'95%'}}>
-                <h3>Edit Banner</h3>
+                <h3>Sửa banner</h3>
                 <div style={{display:'grid',gap:8}}>
                   <input value={editBannerModal.title || ''} onChange={e=>setEditBannerModal({...editBannerModal,title:e.target.value})} />
                   <input value={editBannerModal.link || ''} onChange={e=>setEditBannerModal({...editBannerModal,link:e.target.value})} />
-                  <label>Enabled</label>
+                  <label>Trạng thái</label>
                   <select value={editBannerModal.enabled ? '1' : '0'} onChange={e=>setEditBannerModal({...editBannerModal,enabled: e.target.value === '1'})}>
-                    <option value="1">Enabled</option>
-                    <option value="0">Disabled</option>
+                    <option value="1">Bật</option>
+                    <option value="0">Tắt</option>
                   </select>
-                  <label>Replace Image</label>
+                  <label>Thay ảnh</label>
                   <input type="file" accept="image/*" onChange={e=>setEditBannerModal({...editBannerModal,bannerFile: e.target.files && e.target.files[0] ? e.target.files[0] : null})} />
-                  {editBannerModal.bannerFile && (<div style={{marginTop:8}}><img src={URL.createObjectURL(editBannerModal.bannerFile)} alt="preview" style={{maxWidth:240}} /></div>)}
+                  {editBannerModal.bannerFile && (<div style={{marginTop:8}}><img src={URL.createObjectURL(editBannerModal.bannerFile)} alt="xem trước" style={{maxWidth:240}} /></div>)}
                   <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:6}}>
-                    <button onClick={()=>setEditBannerModal(null)} style={{background:'#eee'}}>Cancel</button>
-                    <button onClick={()=>handleEditBannerSubmit(editBannerModal)}>Save</button>
+                    <button onClick={()=>setEditBannerModal(null)} style={{background:'#eee'}}>Hủy</button>
+                    <button onClick={()=>handleEditBannerSubmit(editBannerModal)}>Lưu</button>
                   </div>
                 </div>
               </div>
@@ -1651,23 +1656,23 @@ export default function App() {
           {editAdModal && (
             <div className="modal">
               <div className="modal-content" style={{ maxWidth: 720 }}>
-                <h3>Edit Video Ad</h3>
-                <label>Title</label>
+                <h3>Sửa quảng cáo video</h3>
+                <label>Tiêu đề</label>
                 <input value={editAdModal.title || ''} onChange={e=>setEditAdModal({...editAdModal,title:e.target.value})} />
-                <label>Link</label>
+                <label>Liên kết</label>
                 <input value={editAdModal.link || ''} onChange={e=>setEditAdModal({...editAdModal,link:e.target.value})} />
-                <label>Placement</label>
+                <label>Vị trí</label>
                 <select value={editAdModal.placement || 'interstitial'} onChange={e=>setEditAdModal({...editAdModal,placement:e.target.value})}>
-                  <option value="interstitial">Interstitial</option>
-                  <option value="reader">Reader</option>
-                  <option value="home">Home</option>
+                  <option value="interstitial">Toàn màn hình</option>
+                  <option value="reader">Khi đọc</option>
+                  <option value="home">Trang chủ</option>
                 </select>
-                <label>Enabled</label>
+                <label>Trạng thái</label>
                 <select value={editAdModal.enabled ? '1' : '0'} onChange={e=>setEditAdModal({...editAdModal,enabled: e.target.value === '1'})}>
-                  <option value="1">Enabled</option>
-                  <option value="0">Disabled</option>
+                  <option value="1">Bật</option>
+                  <option value="0">Tắt</option>
                 </select>
-                <label>Replace video (optional)</label>
+                <label>Thay video (tùy chọn)</label>
                 <input type="file" accept="video/*" onChange={e=>setEditAdModal({...editAdModal, videoFile: (e.target.files && e.target.files[0]) ? e.target.files[0] : null })} />
                 {(editAdModal.videoFile || editAdModal.video_url) && (
                   <div style={{ marginTop: 8 }}>
@@ -1675,8 +1680,8 @@ export default function App() {
                   </div>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-                  <button className="btn btn-ghost" onClick={()=>setEditAdModal(null)}>Cancel</button>
-                  <button className="btn btn-primary" onClick={()=>handleEditAdSubmit(editAdModal)}>Save</button>
+                  <button className="btn btn-ghost" onClick={()=>setEditAdModal(null)}>Hủy</button>
+                  <button className="btn btn-primary" onClick={()=>handleEditAdSubmit(editAdModal)}>Lưu</button>
                 </div>
               </div>
             </div>
@@ -1686,18 +1691,18 @@ export default function App() {
           {editGenreModal && (
             <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center'}}>
               <div style={{background:'#fff',padding:20,borderRadius:8,width:420,maxWidth:'95%'}}>
-                <h3>Edit Genre</h3>
+                <h3>Sửa thể loại</h3>
                 <div style={{display:'grid',gap:8}}>
-                  <input placeholder="Name" value={editGenreModal.name || ''} onChange={e=>setEditGenreModal({...editGenreModal,name:e.target.value})} />
-                  <textarea placeholder="Description" value={editGenreModal.description || ''} onChange={e=>setEditGenreModal({...editGenreModal,description:e.target.value})} rows={3} />
+                  <input placeholder="Tên" value={editGenreModal.name || ''} onChange={e=>setEditGenreModal({...editGenreModal,name:e.target.value})} />
+                  <textarea placeholder="Mô tả" value={editGenreModal.description || ''} onChange={e=>setEditGenreModal({...editGenreModal,description:e.target.value})} rows={3} />
                   <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:6}}>
-                    <button onClick={()=>setEditGenreModal(null)} style={{background:'#eee'}}>Cancel</button>
+                    <button onClick={()=>setEditGenreModal(null)} style={{background:'#eee'}}>Hủy</button>
                     <button onClick={async ()=>{
                       const res = await updateGenre(editGenreModal.id, {name: editGenreModal.name, description: editGenreModal.description})
                       if(res && res.error) return alert(res.error)
                       setEditGenreModal(null)
                       load()
-                    }}>Save</button>
+                    }}>Lưu</button>
                   </div>
                 </div>
               </div>

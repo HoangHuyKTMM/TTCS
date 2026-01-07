@@ -14,6 +14,10 @@ type Props = {
 }
 
 export default function AdInterstitial({ visible, onFinish, seconds = 0, placement = 'interstitial', minSecondsToSkip = 1 }: Props) {
+  const allowedPlacements = useMemo(() => new Set(['home', 'book-open']), [])
+  const allowed = allowedPlacements.has(placement)
+  const shouldShow = visible && allowed
+
   const [loading, setLoading] = useState(false)
   const [ad, setAd] = useState<VideoAd | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -36,16 +40,22 @@ export default function AdInterstitial({ visible, onFinish, seconds = 0, placeme
 
   useEffect(() => {
     if (!visible) return
+    if (!allowed) {
+      // Skip disallowed placements immediately to avoid over-showing ads.
+      finishedRef.current = true
+      onFinish()
+      return
+    }
     finishedRef.current = false
     setSkipRemaining(enforcedMinSeconds)
     const i = setInterval(() => {
       setSkipRemaining((r) => (r > 0 ? r - 1 : 0))
     }, 1000)
     return () => clearInterval(i)
-  }, [visible, enforcedMinSeconds])
+  }, [visible, enforcedMinSeconds, allowed, onFinish])
 
   useEffect(() => {
-    if (!visible) return
+    if (!shouldShow) return
     // Auto-close is optional. If you want it, pass seconds > 0.
     // Never auto-close before the enforced minimum watch time.
     if (!seconds || seconds <= 0) return
@@ -55,10 +65,10 @@ export default function AdInterstitial({ visible, onFinish, seconds = 0, placeme
       if (skipRemaining <= 0) finish()
     }, delay)
     return () => clearTimeout(t)
-  }, [visible, finish, seconds, enforcedMinSeconds, skipRemaining])
+  }, [shouldShow, finish, seconds, enforcedMinSeconds, skipRemaining])
 
   useEffect(() => {
-    if (!visible) {
+    if (!shouldShow) {
       setLoading(false)
       setAd(null)
       setError(null)
@@ -95,7 +105,7 @@ export default function AdInterstitial({ visible, onFinish, seconds = 0, placeme
       })()
 
     return () => { cancelled = true }
-  }, [visible, placement])
+  }, [shouldShow, placement])
 
   const handleOpenLink = useCallback(async () => {
     const url = ad?.link_url
@@ -119,8 +129,10 @@ export default function AdInterstitial({ visible, onFinish, seconds = 0, placeme
     }
   }, [finish, skipRemaining])
 
+  if (!shouldShow) return null
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={finish}>
+    <Modal visible={shouldShow} transparent animationType="fade" onRequestClose={finish}>
       <View style={styles.overlay}>
         <View style={styles.fullscreen}>
           <View style={styles.topRight}>
@@ -147,7 +159,7 @@ export default function AdInterstitial({ visible, onFinish, seconds = 0, placeme
                   ref={(r) => { videoRef.current = r }}
                   style={styles.video}
                   source={{ uri: ad.video_url }}
-                  shouldPlay={visible}
+                  shouldPlay={shouldShow}
                   // If user cannot skip yet, loop/replay to guarantee minimum watch time UX.
                   isLooping={skipRemaining > 0}
                   isMuted={false}

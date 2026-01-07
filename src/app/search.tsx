@@ -4,8 +4,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Link, useRouter } from "expo-router";
 import { apiFetchBooks, API_BASE } from '../lib/api';
 import * as Auth from '../lib/auth';
-import AdInterstitial from '../components/AdInterstitial'
-import { shouldShowAds } from '../lib/ads'
 import { useFocusEffect } from '@react-navigation/native'
 
 const GENRES = ["Tất cả", "Ngôn tình", "Hiện đại", "Cổ đại", "Huyền huyễn", "Xuyên không", "Đam mỹ"];
@@ -17,9 +15,6 @@ export default function SearchScreen() {
   const [selectedGenre, setSelectedGenre] = useState("Tất cả");
   const [user, setUser] = useState<any | null>(null)
   const [userLoaded, setUserLoaded] = useState(false)
-  const [interstitialVisible, setInterstitialVisible] = useState(false)
-  const [targetBookId, setTargetBookId] = useState<string | null>(null)
-  const [pendingOpen, setPendingOpen] = useState<string | null>(null)
   const router = useRouter()
 
   const fmtNum = useCallback((n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0), [])
@@ -69,24 +64,8 @@ export default function SearchScreen() {
   }
 
   function handleOpenBook(id: string) {
-    if (!userLoaded) {
-      setPendingOpen(id)
-      return
-    }
-    if (!shouldShowAds(user)) return openBookNow(id)
-    setTargetBookId(id)
-    setInterstitialVisible(true)
+    openBookNow(id)
   }
-
-  useEffect(() => {
-    if (!userLoaded) return
-    if (!pendingOpen) return
-    const id = pendingOpen
-    setPendingOpen(null)
-    if (!shouldShowAds(user)) return openBookNow(id)
-    setTargetBookId(id)
-    setInterstitialVisible(true)
-  }, [userLoaded, pendingOpen, user])
 
   const filtered = React.useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -190,14 +169,6 @@ export default function SearchScreen() {
         </>
       )}
 
-      <AdInterstitial
-        visible={interstitialVisible}
-        onFinish={() => {
-          setInterstitialVisible(false)
-          if (targetBookId) openBookNow(targetBookId)
-          setTargetBookId(null)
-        }}
-      />
     </SafeAreaView>
   );
 }

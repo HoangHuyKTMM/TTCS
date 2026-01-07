@@ -20,16 +20,37 @@ if not exist "%ROOT_DIR%node_modules" (
 
 cd /d "%ROOT_DIR%"
 
-echo Dang khoi dong Expo...
+:: Tu dong tao android\local.properties neu thieu (can cho build local bang Android Studio/Gradle)
+if not exist "%ROOT_DIR%android\local.properties" (
+    if exist "%LOCALAPPDATA%\Android\Sdk" (
+        echo [THONG TIN] Khong tim thay android\local.properties. Dang tao tu dong...
+        setlocal EnableDelayedExpansion
+        set "RAW_SDK=%LOCALAPPDATA%\Android\Sdk"
+        set "SDK_DIR=!RAW_SDK:\=\\!"
+        set "SDK_DIR=!SDK_DIR::=\:!"
+        > "%ROOT_DIR%android\local.properties" echo sdk.dir=!SDK_DIR!
+        endlocal
+    ) else (
+        echo [CANH BAO] Khong tim thay android\local.properties va cung khong tim thay Android SDK tai:
+        echo          %LOCALAPPDATA%\Android\Sdk
+        echo          Hay mo Android Studio ^> SDK Manager de cai Android SDK,
+        echo          hoac tao file android\local.properties voi dong:
+        echo          sdk.dir=C\:\\Users\\YOUR_USERNAME\\AppData\\Local\\Android\\Sdk
+        echo.
+    )
+)
+
+echo Dang chay tren Android Studio Emulator (Development Build)...
 echo.
-echo   Sau khi Expo khoi dong:
-echo   - Nhan 'a' de mo Android Emulator
-echo   - Nhan 'w' de mo tren Web
-echo   - Quet ma QR bang app Expo Go tren dien thoai
+echo   Cach dung:
+echo   1) Mo Android Studio ^> Device Manager ^> Start Emulator
+echo   2) Script se build + cai app len emulator va tu khoi dong Metro.
+echo.
+echo   [TIP] Lan sau neu khong doi native libs/config, ban co the chay nhanh bang: npm start
 echo.
 echo   Nhan Ctrl+C de dung.
 echo.
 
-npx expo start
+npx expo run:android
 
 pause

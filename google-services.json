@@ -22,6 +22,14 @@
           }
         },
         {
+          "client_id": "220903784873-j92dqbls9scb7qa7qgavqcfe49jt7n6f.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.dinhhung1508.readerapp",
+            "certificate_hash": "ce415af53a28235aab00d7eb526bb26a903c5889"
+          }
+        },
+        {
           "client_id": "220903784873-rn1gdgqifur44r8am7a0h8mb0meh11v5.apps.googleusercontent.com",
           "client_type": 3
         }

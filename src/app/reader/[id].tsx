@@ -1,21 +1,35 @@
-import React, { useMemo, useState, useEffect } from "react";
-import { StyleSheet, Text, View, ScrollView, Pressable } from "react-native";
+import React, { useMemo, useState, useEffect, useRef } from "react";
+import { StyleSheet, Text, View, ScrollView, Pressable, Animated } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Link, useLocalSearchParams } from "expo-router";
+import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { apiFetchChapter, apiFetchBook, apiFetchChapters } from '../../lib/api'
 import { saveReadingProgress } from '../../lib/reading'
 import * as Auth from '../../lib/auth'
-import AdInterstitial from '../../components/AdInterstitial'
 import { shouldShowAds } from '../../lib/ads'
 import { getOfflineChapter } from '../../lib/offline'
 
+function translateErrorMessage(msg: any): string | null {
+  const text = msg ? String(msg) : ''
+  if (!text) return null
+  if (text.toLowerCase().includes('guests can read 3 chapters per day')) {
+    return 'Khách chỉ được đọc 3 chương mỗi ngày. Vui lòng đăng nhập để đọc thêm.'
+  }
+  return text
+}
+
 export default function ReaderScreen() {
   const { id, ch } = useLocalSearchParams<{ id: string; ch?: string }>();
+  const router = useRouter();
   const chapterIndex = Math.max(1, Number(ch ?? 1));
 
-  const [interstitialVisible, setInterstitialVisible] = useState(false)
+  const slideAnim = useRef(new Animated.Value(0)).current;
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+  const prevChapterRef = useRef(0);
+
   const [user, setUser] = useState<any | null>(null)
   const [userLoaded, setUserLoaded] = useState(false)
+
+  const [bookTitle, setBookTitle] = useState<string | null>(null)
 
   const [fontSize, setFontSize] = useState(16);
   const [theme, setTheme] = useState<"light" | "sepia" | "dark">("light");
@@ -23,14 +37,6 @@ export default function ReaderScreen() {
   const [content, setContent] = useState<string[]>([])
   const [chaptersTotal, setChaptersTotal] = useState<number | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-
-  // Show video ad immediately when entering this screen (per-book, not per-chapter).
-  useEffect(() => {
-    if (!id) return
-    if (!userLoaded) return
-    if (!shouldShowAds(user)) return
-    setInterstitialVisible(true)
-  }, [id, userLoaded, user])
 
   useEffect(() => {
     let active = true
@@ -48,12 +54,41 @@ export default function ReaderScreen() {
     async function load() {
       if (!id) return
 
+      // Animate slide based on direction
+      const previousChapter = prevChapterRef.current;
+      if (previousChapter !== 0 && previousChapter !== chapterIndex) {
+        const isForward = chapterIndex > previousChapter;
+        const startValue = isForward ? 400 : -400;
+        
+        fadeAnim.setValue(0);
+        slideAnim.setValue(startValue);
+        
+        Animated.parallel([
+          Animated.timing(slideAnim, {
+            toValue: 0,
+            duration: 350,
+            useNativeDriver: true,
+          }),
+          Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 350,
+            useNativeDriver: true,
+          })
+        ]).start();
+      } else {
+        slideAnim.setValue(0);
+        fadeAnim.setValue(1);
+      }
+      prevChapterRef.current = chapterIndex;
+
       // OFFLINE first: if downloaded, read from local file.
       try {
         const offline = await getOfflineChapter(String(id), chapterIndex)
         if (offline && offline.content) {
           if (!mounted) return
           setErrorMsg(null)
+          const offlineTitle = offline.title || offline.name || offline.bookTitle
+          if (offlineTitle) setBookTitle(String(offlineTitle))
           const text = offline.content
           const paras = String(text).split(/\n\s*\n/).map((p: string) => p.trim()).filter(Boolean)
           setContent(paras.length ? paras : [String(text)])
@@ -83,6 +118,7 @@ export default function ReaderScreen() {
             try {
               const bookRes: any = await apiFetchBook(String(id), token || undefined)
               const title = bookRes && (bookRes.title || bookRes.name)
+              if (title) setBookTitle(String(title))
               const cover = bookRes && (bookRes.cover_url ? (String(bookRes.cover_url).startsWith('http') ? bookRes.cover_url : `${bookRes.cover_url}`) : null)
               const genre = bookRes && (bookRes.genre || bookRes.category || bookRes.type)
               await saveReadingProgress({ bookId: String(id), chapter: String(res.id || chapterIndex), chapterNo: chapterIndex, title, cover, genre })
@@ -95,7 +131,7 @@ export default function ReaderScreen() {
         // if server returned an error payload, surface it
         if (res && res.error) {
           setContent([])
-          setErrorMsg(res.message || res.detail || String(res.error))
+          setErrorMsg(translateErrorMessage(res.message || res.detail || String(res.error)))
           return
         }
       } catch (e) {
@@ -116,6 +152,7 @@ export default function ReaderScreen() {
             try {
               const bookRes: any = await apiFetchBook(String(id), token || undefined)
               const title = bookRes && (bookRes.title || bookRes.name)
+              if (title) setBookTitle(String(title))
               const cover = bookRes && (bookRes.cover_url ? (String(bookRes.cover_url).startsWith('http') ? bookRes.cover_url : `${bookRes.cover_url}`) : null)
               const genre = bookRes && (bookRes.genre || bookRes.category || bookRes.type)
               await saveReadingProgress({ bookId: String(id), chapter: String(chObj && (chObj.id || chObj.chapter_no) || chapterIndex), chapterNo: chapterIndex, title, cover, genre })
@@ -134,6 +171,8 @@ export default function ReaderScreen() {
         const token = await Auth.getToken()
         const bookRes: any = await apiFetchBook(String(id), token || undefined)
         if (bookRes && !bookRes.error) {
+          const title = bookRes && (bookRes.title || bookRes.name)
+          if (title) setBookTitle(String(title))
           const idx = chapterIndex - 1
           const chObj = Array.isArray(bookRes.chapters) ? bookRes.chapters[idx] : null
           const text = chObj && (chObj.content || chObj.body || chObj.text)
@@ -143,6 +182,7 @@ export default function ReaderScreen() {
             try {
               const bookRes: any = await apiFetchBook(String(id), token || undefined)
               const title = bookRes && (bookRes.title || bookRes.name)
+              if (title) setBookTitle(String(title))
               const cover = bookRes && (bookRes.cover_url ? (String(bookRes.cover_url).startsWith('http') ? bookRes.cover_url : `${bookRes.cover_url}`) : null)
               const genre = bookRes && (bookRes.genre || bookRes.category || bookRes.type)
               await saveReadingProgress({ bookId: String(id), chapter: String(chObj && (chObj.id || chapterIndex)), chapterNo: chapterIndex, title, cover, genre })
@@ -169,10 +209,25 @@ export default function ReaderScreen() {
 
   const nextCh = String(chapterIndex + 1);
   const prevCh = String(Math.max(1, chapterIndex - 1));
+  const hasPrev = chapterIndex > 1;
+  const hasNext = chaptersTotal == null || chapterIndex < chaptersTotal;
+
+  const handlePrev = () => {
+    if (!hasPrev) return;
+    router.replace({ pathname: "/reader/[id]", params: { id: id ?? "1", ch: prevCh } } as any);
+  };
+
+  const handleNext = () => {
+    if (!hasNext) return;
+    router.replace({ pathname: "/reader/[id]", params: { id: id ?? "1", ch: nextCh } } as any);
+  };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: themeStyle.bg }]}> 
       <View style={[styles.header, { backgroundColor: themeStyle.headerBg, borderBottomColor: themeStyle.border }]}> 
+        <Pressable onPress={() => router.back()} style={[styles.backBtn, { backgroundColor: themeStyle.btnBg }]}>
+          <Text style={{ color: themeStyle.text, fontSize: 18, fontWeight: '700' }}>←</Text>
+        </Pressable>
         <Text style={[styles.headerTitle, { color: themeStyle.text }]}>Chương {chapterIndex}</Text>
         <View style={styles.headerActions}>
           <Pressable onPress={() => setFontSize((s) => Math.max(12, s - 1))} style={[styles.iconBtn, { backgroundColor: themeStyle.btnBg }]}>
@@ -185,8 +240,13 @@ export default function ReaderScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={[styles.readerCard, { backgroundColor: themeStyle.cardBg, borderColor: themeStyle.border }]}>
-          <Text style={[styles.bookTitle, { color: themeStyle.text }]}>Tiểu thuyết #{id}</Text>
+        <Animated.View style={[styles.readerCard, { 
+          backgroundColor: themeStyle.cardBg, 
+          borderColor: themeStyle.border, 
+          transform: [{ translateX: slideAnim }],
+          opacity: fadeAnim
+        }]}>
+          <Text style={[styles.bookTitle, { color: themeStyle.text }]}>{`${bookTitle || `Truyện #${id}`} · Chương ${chapterIndex}`}</Text>
           {errorMsg ? (
             <Text style={{ color: themeStyle.text, fontSize, lineHeight: fontSize * 1.6, marginTop: 12 }}>{errorMsg}</Text>
           ) : (
@@ -196,7 +256,7 @@ export default function ReaderScreen() {
               </Text>
             ))
           )}
-        </View>
+        </Animated.View>
       </ScrollView>
 
       <View style={[styles.bottomBar, { backgroundColor: themeStyle.headerBg, borderTopColor: themeStyle.border }]}> 
@@ -213,39 +273,18 @@ export default function ReaderScreen() {
         </View>
 
         <View style={styles.navRow}>
-          {/* Left button (Prev) - always render to keep widths balanced */}
-          {chapterIndex > 1 ? (
-            <Link href={{ pathname: "/reader/[id]", params: { id: id ?? "1", ch: prevCh } } as any} asChild>
-              <Pressable style={styles.navBtn}>
-                <Text style={styles.navText}>Chương trước</Text>
-              </Pressable>
-            </Link>
-          ) : (
-            <Pressable style={[styles.navBtn, styles.navBtnDisabled]} disabled>
-              <Text style={styles.navText}>Chương trước</Text>
-            </Pressable>
-          )}
+          {/* Left button (Prev) */}
+          <Pressable style={[styles.navBtn, !hasPrev && styles.navBtnDisabled]} disabled={!hasPrev} onPress={handlePrev}>
+            <Text style={[styles.navText, !hasPrev && styles.navTextDisabled]}>← Chương trước</Text>
+          </Pressable>
 
-          {/* Right button (Next) - always render to keep widths balanced */}
-          {chaptersTotal == null || chapterIndex < chaptersTotal ? (
-            <Link href={{ pathname: "/reader/[id]", params: { id: id ?? "1", ch: nextCh } } as any} asChild>
-              <Pressable style={[styles.navBtn, styles.navBtnPrimary]}>
-                <Text style={[styles.navText, styles.navTextPrimary]}>Chương tiếp</Text>
-              </Pressable>
-            </Link>
-          ) : (
-            <Pressable style={[styles.navBtn, styles.navBtnPrimary, styles.navBtnDisabled]} disabled>
-              <Text style={[styles.navText, styles.navTextPrimary]}>Chương tiếp</Text>
-            </Pressable>
-          )}
+          {/* Right button (Next) */}
+          <Pressable style={[styles.navBtn, hasNext ? styles.navBtnPrimary : styles.navBtnDisabled]} disabled={!hasNext} onPress={handleNext}>
+            <Text style={[styles.navText, hasNext ? styles.navTextPrimary : styles.navTextDisabled]}>Chương tiếp →</Text>
+          </Pressable>
         </View>
       </View>
 
-      <AdInterstitial
-        visible={interstitialVisible}
-        placement="reader"
-        onFinish={() => setInterstitialVisible(false)}
-      />
     </SafeAreaView>
   );
 }
@@ -273,7 +312,8 @@ function getTheme(t: "light" | "sepia" | "dark") {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  headerTitle: { fontSize: 16, fontWeight: "800" },
+  backBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, marginRight: 12 },
+  headerTitle: { fontSize: 16, fontWeight: "800", flex: 1 },
   headerActions: { flexDirection: "row", gap: 8 },
   iconBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
 
@@ -289,9 +329,10 @@ const styles = StyleSheet.create({
   themeTextActive: { color: "#1088ff", fontWeight: "700" },
 
   navRow: { flexDirection: "row", marginTop: 10, alignItems: 'center' },
-  navBtn: { flex: 1, minHeight: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: "#f2f4f7", marginHorizontal: 4, paddingHorizontal: 12, paddingVertical: 8 },
-  navBtnPrimary: { backgroundColor: "#1088ff" },
-  navText: { color: "#374151", fontWeight: "700", fontSize: 14 },
+  navBtn: { flex: 1, minHeight: 48, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#e5e7eb", marginHorizontal: 5, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: "#cbd5e1", shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 4, elevation: 2 },
+  navBtnPrimary: { backgroundColor: "#1088ff", borderColor: "#0f73d0" },
+  navText: { color: "#0f172a", fontWeight: "800", fontSize: 14, letterSpacing: 0.1 },
   navTextPrimary: { color: "#ffffff" },
-  navBtnDisabled: { opacity: 0.45 },
+  navBtnDisabled: { backgroundColor: "#e5e7eb", borderColor: "#cbd5e1", opacity: 1 },
+  navTextDisabled: { color: "#0f172a" },
 });

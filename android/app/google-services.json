@@ -14,6 +14,22 @@
       },
       "oauth_client": [
         {
+          "client_id": "220903784873-atnh662gcd8oad48lkrtfhq25ejo1dcb.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.dinhhung1508.readerapp",
+            "certificate_hash": "46b86f0d8cc872c82229feda5d58fabd81eecdf7"
+          }
+        },
+        {
+          "client_id": "220903784873-j92dqbls9scb7qa7qgavqcfe49jt7n6f.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.dinhhung1508.readerapp",
+            "certificate_hash": "ce415af53a28235aab00d7eb526bb26a903c5889"
+          }
+        },
+        {
           "client_id": "220903784873-rn1gdgqifur44r8am7a0h8mb0meh11v5.apps.googleusercontent.com",
           "client_type": 3
         }
@@ -42,6 +58,14 @@
         }
       },
       "oauth_client": [
+        {
+          "client_id": "220903784873-107oufgoqbofc1m5hlq1mvk4nh9pnv6f.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.newsai",
+            "certificate_hash": "46b86f0d8cc872c82229feda5d58fabd81eecdf7"
+          }
+        },
         {
           "client_id": "220903784873-e97pe3tvjpab7cd8r3acg3fipe7e1412.apps.googleusercontent.com",
           "client_type": 1,

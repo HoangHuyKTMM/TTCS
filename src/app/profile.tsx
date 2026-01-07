@@ -199,7 +199,7 @@ export default function ProfileScreen() {
     if (!coins || coins <= 0) return Alert.alert("Lỗi", "Vui lòng nhập số xu hợp lệ.");
     if (!token) return Alert.alert("Lỗi", "Bạn cần đăng nhập.");
 
-    const payload: any = { coins, amount: amount || computePriceForCoins(coins), method: "bank", note: "Top-up mobile" };
+    const payload: any = { coins, amount: amount || computePriceForCoins(coins), method: "bank", note: "Nạp xu trên ứng dụng" };
     const res: any = await apiCreateTopupRequest(payload, token);
     if (res && res.error) return Alert.alert("Lỗi", res.message || "Tạo yêu cầu thất bại");
     setShowQRPayment(false);
@@ -413,7 +413,7 @@ export default function ProfileScreen() {
                 topupRequests.slice(0, 3).map((r, idx) => (
                   <View key={r.request_id || idx} style={styles.topupRowItem}>
                     <Text style={{ fontWeight: "700", color: "#0f172a" }}>{r.coins} xu</Text>
-                    <Text style={styles.statLabel}>{r.status || "pending"} · {r.created_at ? String(r.created_at).substring(0, 10) : ""}</Text>
+                    <Text style={styles.statLabel}>{r.status === "approved" ? "đã duyệt" : r.status === "rejected" ? "từ chối" : r.status ? r.status : "đang chờ"} · {r.created_at ? String(r.created_at).substring(0, 10) : ""}</Text>
                   </View>
                 ))
               ) : (

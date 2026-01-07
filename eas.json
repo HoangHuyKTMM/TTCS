@@ -7,16 +7,28 @@
             "developmentClient": true,
             "distribution": "internal",
             "android": {
-                "buildType": "apk"
+                "buildType": "apk",
+                "gradleCommand": ":app:assembleDebug"
+            },
+            "env": {
+                "EXPO_PUBLIC_API_BASE": "http://192.168.2.9:4000"
             }
         },
         "preview": {
             "distribution": "internal",
             "android": {
-                "buildType": "apk"
+                "buildType": "apk",
+                "gradleCommand": ":app:assembleRelease"
+            },
+            "env": {
+                "EXPO_PUBLIC_API_BASE": "http://192.168.2.9:4000"
             }
         },
-        "production": {}
+        "production": {
+            "android": {
+                "buildType": "app-bundle"
+            }
+        }
     },
     "submit": {
         "production": {}

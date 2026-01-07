@@ -1,8 +1,8 @@
-import { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { Image, TouchableOpacity, Linking, RefreshControl } from 'react-native'
 import { API_BASE, apiFetchBooks } from '../lib/api'
 import * as Auth from '../lib/auth'
-import { shouldShowAds } from '../lib/ads'
+import { shouldShowAds, shouldShowPlacement } from '../lib/ads'
 import AdInterstitial from '../components/AdInterstitial'
 import { useRouter } from 'expo-router'
 import { useFocusEffect } from '@react-navigation/native'
@@ -46,10 +46,6 @@ export default function ExplorePage() {
   const [user, setUser] = useState<any | null>(null)
   const [userLoaded, setUserLoaded] = useState(false)
   const [entryAdVisible, setEntryAdVisible] = useState(false)
-  const entryAdShownRef = useRef(false)
-  const [interstitialVisible, setInterstitialVisible] = useState(false)
-  const [targetBookId, setTargetBookId] = useState<string | null>(null)
-  const pendingOpenRef = useRef(false)
   const router = useRouter()
   const loadBooks = useCallback(async () => {
     let mounted = true
@@ -126,13 +122,10 @@ export default function ExplorePage() {
     return () => { active = false }
   }, [loadBooks]))
 
-  // Show full-screen ad when entering this page (replace the top banner ad).
+  // Home entry ad: show only once per session
   useEffect(() => {
     if (!userLoaded) return
-    if (!shouldShowAds(user)) return
-    if (entryAdShownRef.current) return
-    entryAdShownRef.current = true
-    setEntryAdVisible(true)
+    if (shouldShowPlacement('home-once', user)) setEntryAdVisible(true)
   }, [userLoaded, user])
 
   // NOTE: don't call loadBooks() here; useFocusEffect already loads on initial focus.
@@ -142,30 +135,8 @@ export default function ExplorePage() {
   }
 
   function handleOpenBook(id: string) {
-    // Don't decide before we know the user's role.
-    if (!userLoaded) {
-      setTargetBookId(id)
-      pendingOpenRef.current = true
-      return
-    }
-    if (!shouldShowAds(user)) return openBookNow(id)
-    setTargetBookId(id)
-    setInterstitialVisible(true)
+    openBookNow(id)
   }
-
-  // If user tapped a book before role loaded, resolve it after load.
-  useEffect(() => {
-    if (!userLoaded) return
-    if (!pendingOpenRef.current) return
-    if (!targetBookId) return
-    pendingOpenRef.current = false
-    if (!shouldShowAds(user)) {
-      openBookNow(targetBookId)
-      setTargetBookId(null)
-      return
-    }
-    setInterstitialVisible(true)
-  }, [userLoaded, user, targetBookId])
 
   const fmtNum = (n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0)
 
@@ -269,6 +240,30 @@ export default function ExplorePage() {
           </Link>
         </View>
 
+        {/* Banner Section */}
+        {banners.length > 0 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.bannerContainer}
+            contentContainerStyle={{ paddingHorizontal: 16 }}
+          >
+            {banners.map((banner) => (
+              <Pressable
+                key={banner.id}
+                style={styles.bannerItem}
+                onPress={() => handleBannerPress(banner.link)}
+              >
+                <Image
+                  source={{ uri: banner.image_url }}
+                  style={styles.bannerImage}
+                  resizeMode="cover"
+                />
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
+
         <View style={styles.sectionHeader}>
           <Link href={"/(tabs)/rank"} asChild>
             <Pressable>
@@ -286,7 +281,6 @@ export default function ExplorePage() {
           </View>
         ) : null}
 
-        {/* Banner removed */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -346,7 +340,7 @@ export default function ExplorePage() {
             </View>
           </Pressable>
         ))}
-        <AdInterstitial visible={interstitialVisible} placement="interstitial" onFinish={() => { setInterstitialVisible(false); if (targetBookId) openBookNow(targetBookId); setTargetBookId(null) }} />
+        <AdInterstitial visible={entryAdVisible} placement="home" onFinish={() => setEntryAdVisible(false)} />
       </ScrollView>
 
       {/* <AdInterstitial
@@ -458,4 +452,21 @@ const styles = StyleSheet.create({
   recTitle: { fontSize: 15, fontWeight: "700" },
   recDesc: { fontSize: 12, color: "#6b7280", marginTop: 2 },
   recStats: { fontSize: 12, color: "#6b7280", marginTop: 6 },
+  bannerContainer: {
+    marginTop: 16,
+    marginHorizontal: -16,
+    marginBottom: 8,
+  },
+  bannerItem: {
+    width: 260,
+    height: 120,
+    marginRight: 12,
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  bannerImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 12,
+  },
 });
