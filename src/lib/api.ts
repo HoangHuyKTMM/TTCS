@@ -318,6 +318,50 @@ export async function apiDeleteComment(commentId: string, token: string) {
   return request(`/comments/${encodeURIComponent(String(commentId))}`, { method: 'DELETE', headers })
 }
 
+// Check payment via bank API
+export type CheckPaymentResult = {
+  status: string
+  message: string
+  paid: boolean
+}
+
+export async function apiCheckPayment(account_no: string, content: string, amount: number): Promise<CheckPaymentResult> {
+  const BANK_API_URL = 'https://bank.dinhmanhhung.net/check-payment'
+  try {
+    const res = await fetch(BANK_API_URL, {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ account_no, content, amount })
+    })
+    const data = await res.json()
+    return data as CheckPaymentResult
+  } catch (err: any) {
+    console.error('[API] Check payment error:', err)
+    return { status: 'error', message: String(err?.message || err), paid: false }
+  }
+}
+
+// Verify payment and auto-credit coins (calls backend which checks bank API and credits wallet)
+export type VerifyPaymentResult = {
+  success: boolean
+  paid: boolean
+  message: string
+  wallet?: { coins: number; balance: number }
+  error?: string
+}
+
+export async function apiVerifyAndCreditPayment(coins: number, amount: number, paymentCode: string, token: string): Promise<VerifyPaymentResult> {
+  const headers: any = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+  return request('/wallet/verify-payment', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ coins, amount, paymentCode })
+  })
+}
+
 // Ads (public)
 export type VideoAd = {
   id: string | number

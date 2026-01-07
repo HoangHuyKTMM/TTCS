@@ -533,10 +533,19 @@ export default function ProfileScreen() {
         visible={showQRPayment}
         onClose={() => {
           setShowQRPayment(false);
-          handleCreateTopupRequest();
+        }}
+        onPaymentSuccess={(wallet) => {
+          // Wallet already credited by backend, just refresh UI
+          if (wallet) {
+            updateWalletState(wallet);
+          }
+          refreshWalletOnly();
+          Alert.alert("Thành công", "Xu đã được cộng vào tài khoản!");
         }}
         amount={Number(topupAmount || 0)}
         coins={Number(topupCoins || 0)}
+        userId={user?.id || user?.user_id}
+        token={token || undefined}
       />
     </SafeAreaView>
   );

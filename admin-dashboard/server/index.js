@@ -2127,6 +2127,92 @@ app.post('/wallet/topup', authMiddleware, async (req, res) => {
   }
 })
 
+// POST /wallet/verify-payment - verify payment via bank API and auto-credit coins
+// Content format: "RD<userId><shortCode>" e.g. "RD123A7B2" (sent from client)
+app.post('/wallet/verify-payment', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const userId = req.user && req.user.id
+    if (!userId) return res.status(401).json({ error: 'missing authorization' })
+
+    const { coins, amount, paymentCode } = req.body || {}
+    if (!coins || Number(coins) <= 0) return res.status(400).json({ error: 'coins required', success: false, paid: false, message: 'Số xu không hợp lệ' })
+    if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'amount required', success: false, paid: false, message: 'Số tiền không hợp lệ' })
+    if (!paymentCode) return res.status(400).json({ error: 'paymentCode required', success: false, paid: false, message: 'Mã thanh toán không hợp lệ' })
+
+    // Use paymentCode from client (format: "RD<userId><shortCode>")
+    const BANK_ACCOUNT_NO = '123406072004'
+    const BANK_API_URL = 'https://bank.dinhmanhhung.net/check-payment'
+
+    // Call bank API to verify payment
+    let bankResult
+    try {
+      const bankRes = await fetch(BANK_API_URL, {
+        method: 'POST',
+        headers: {
+          'accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          account_no: BANK_ACCOUNT_NO,
+          content: paymentCode,
+          amount: Number(amount)
+        })
+      })
+      bankResult = await bankRes.json()
+      console.log(`[verify-payment] user=${userId} paymentCode="${paymentCode}" amount=${amount} bankResult:`, bankResult)
+    } catch (bankErr) {
+      console.error('[verify-payment] Bank API error:', bankErr)
+      return res.status(500).json({
+        success: false,
+        paid: false,
+        message: 'Không thể kết nối đến hệ thống ngân hàng. Vui lòng thử lại.',
+        error: 'bank_api_error'
+      })
+    }
+
+    // Check if payment was found
+    if (!bankResult || !bankResult.paid) {
+      return res.json({
+        success: false,
+        paid: false,
+        message: bankResult?.message || 'Chưa tìm thấy giao dịch thanh toán phù hợp. Vui lòng kiểm tra lại nội dung chuyển khoản.'
+      })
+    }
+
+    // Payment verified! Credit coins to user's wallet
+    const wallet = await db.creditWallet(userId, Number(coins))
+
+    // Record payment for audit
+    try {
+      await db.createPayment({
+        user_id: userId,
+        amount: Number(amount),
+        coins: Number(coins),
+        provider: 'bank_auto',
+        provider_ref: `auto_verify_${Date.now()}`,
+        months: null,
+        days: null
+      })
+    } catch (e) {
+      console.error('[verify-payment] createPayment err', e)
+    }
+
+    console.log(`[verify-payment] SUCCESS user=${userId} credited ${coins} coins, new balance=${wallet.coins || wallet.balance}`)
+
+    return res.json({
+      success: true,
+      paid: true,
+      message: `Thanh toán thành công! Đã cộng ${coins} xu vào tài khoản.`,
+      wallet: wallet
+    })
+
+  } catch (err) {
+    console.error('[verify-payment] Error:', err)
+    res.status(500).json({ success: false, paid: false, message: 'Lỗi hệ thống', error: 'internal' })
+  }
+})
+
 // POST /wallet/buy-vip - spend coins to become VIP
 app.post('/wallet/buy-vip', authMiddleware, async (req, res) => {
   try {
