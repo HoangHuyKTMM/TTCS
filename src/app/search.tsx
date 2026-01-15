@@ -1,23 +1,41 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { StyleSheet, Text, View, TextInput, FlatList, Pressable, ActivityIndicator, Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Link, useRouter } from "expo-router";
 import { apiFetchBooks, API_BASE } from '../lib/api';
 import * as Auth from '../lib/auth';
 import { useFocusEffect } from '@react-navigation/native'
+import { BookCardSkeleton } from '../components/SkeletonLoader'
 
 const GENRES = ["Tất cả", "Ngôn tình", "Hiện đại", "Cổ đại", "Huyền huyễn", "Xuyên không", "Đam mỹ"];
 
 export default function SearchScreen() {
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [books, setBooks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedGenre, setSelectedGenre] = useState("Tất cả");
   const [user, setUser] = useState<any | null>(null)
   const [userLoaded, setUserLoaded] = useState(false)
+  const debounceTimer = useRef<NodeJS.Timeout | null>(null)
   const router = useRouter()
 
   const fmtNum = useCallback((n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0), [])
+
+  // Debounce search input
+  useEffect(() => {
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current)
+    }
+    debounceTimer.current = setTimeout(() => {
+      setDebouncedQ(q)
+    }, 300)
+    return () => {
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current)
+      }
+    }
+  }, [q])
 
   useFocusEffect(useCallback(() => {
     let active = true
@@ -68,7 +86,7 @@ export default function SearchScreen() {
   }
 
   const filtered = React.useMemo(() => {
-    const query = q.trim().toLowerCase();
+    const query = debouncedQ.trim().toLowerCase();
     let result = books;
     
     // If no search query and "Tất cả" selected, show only first 5 books as suggestions
@@ -93,7 +111,7 @@ export default function SearchScreen() {
     }
     
     return result;
-  }, [q, books, selectedGenre]);
+  }, [debouncedQ, books, selectedGenre]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -126,8 +144,12 @@ export default function SearchScreen() {
       </View>
 
       {loading ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" color="#1088ff" />
+        <View style={{ paddingHorizontal: 16 }}>
+          {[0, 1, 2, 3, 4].map((idx) => (
+            <View key={idx} style={{ marginBottom: 12 }}>
+              <BookCardSkeleton variant="horizontal" />
+            </View>
+          ))}
         </View>
       ) : (
         <>

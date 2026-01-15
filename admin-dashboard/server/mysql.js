@@ -1276,7 +1276,9 @@ async function updateUserVip(id, { months, days, until, role } = {}) {
     return ok
   }
 
+  // Always set fresh 30 days from NOW (no stacking)
   const ok = await runUpdate('UPDATE users SET role = ?, vip_until = DATE_ADD(NOW(), INTERVAL ? MONTH) WHERE user_id = ?', [roleToSet, monthsToAdd, id])
+  
   if (roleToSet === 'author') {
     try { await getOrCreateAuthorIdByUserId(id); await setAuthorStoriesHiddenByUserId(id, false, p) } catch (e) { /* ignore */ }
   }
@@ -2175,7 +2177,9 @@ async function getPublicFeed(opts = {}) {
   return combined.slice(offset, offset + limit)
 }
 
-// Notifications: aggregate events for current user (likes on your stories, follows of you, donations to you)
+// Notifications: aggregate events for current user
+// For authors: likes on your stories, follows of you, donations to you
+// For followers: new stories + chapters from authors you follow
 async function getNotifications(userId, opts = {}) {
   if (!userId) return []
   const limit = Math.max(1, Math.min(50, Number.parseInt(opts.limit, 10) || 30))
@@ -2236,30 +2240,11 @@ async function getNotifications(userId, opts = {}) {
     } catch { return 0 }
   }
 
+  // === NOTIFICATIONS FOR AUTHORS (if user is an author) ===
+  
   // Likes on stories authored by this user
   let likeRows = []
-  try {
-    const [rows] = await p.query(`
-      SELECT
-        l.like_id as event_id,
-        l.created_at,
-        l.user_id as actor_user_id,
-        u.fullname as actor_name,
-        u.avatar_url as actor_avatar_url,
-        s.story_id,
-        s.title as story_title
-      FROM likes l
-      JOIN stories s ON s.story_id = l.story_id
-      LEFT JOIN authors a ON s.author_id = a.author_id
-      LEFT JOIN users u ON u.user_id = l.user_id
-      WHERE (a.user_id = ? OR s.author_id = ?)
-        AND l.user_id <> ?
-      ORDER BY l.created_at DESC
-      LIMIT ?
-    `, [userId, userId, userId, need])
-    likeRows = rows || []
-  } catch (e) {
-    // fallback: best-effort without authors join
+  if (authorIds && authorIds.length) {
     try {
       const [rows] = await p.query(`
         SELECT
@@ -2272,19 +2257,42 @@ async function getNotifications(userId, opts = {}) {
           s.title as story_title
         FROM likes l
         JOIN stories s ON s.story_id = l.story_id
+        LEFT JOIN authors a ON s.author_id = a.author_id
         LEFT JOIN users u ON u.user_id = l.user_id
-        WHERE s.author_id = ?
+        WHERE (a.user_id = ? OR s.author_id = ?)
           AND l.user_id <> ?
         ORDER BY l.created_at DESC
         LIMIT ?
-      `, [userId, userId, need])
+      `, [userId, userId, userId, need])
       likeRows = rows || []
-    } catch (e2) {
-      likeRows = []
+    } catch (e) {
+      // fallback: best-effort without authors join
+      try {
+        const [rows] = await p.query(`
+          SELECT
+            l.like_id as event_id,
+            l.created_at,
+            l.user_id as actor_user_id,
+            u.fullname as actor_name,
+            u.avatar_url as actor_avatar_url,
+            s.story_id,
+            s.title as story_title
+          FROM likes l
+          JOIN stories s ON s.story_id = l.story_id
+          LEFT JOIN users u ON u.user_id = l.user_id
+          WHERE s.author_id = ?
+            AND l.user_id <> ?
+          ORDER BY l.created_at DESC
+          LIMIT ?
+        `, [userId, userId, need])
+        likeRows = rows || []
+      } catch (e2) {
+        likeRows = []
+      }
     }
   }
 
-  // New followers of this author
+  // New followers of this author (only if user is an author)
   let followRows = []
   if (authorIds && authorIds.length) {
     try {
@@ -2309,114 +2317,204 @@ async function getNotifications(userId, opts = {}) {
     }
   }
 
-  // Donations received by this user
+  // Donations received by this user (only if user is an author)
   let donationRows = []
+  if (authorIds && authorIds.length) {
+    try {
+      const [rows] = await p.query(`
+        SELECT
+          d.donation_id as event_id,
+          d.created_at,
+          d.donor_id as actor_user_id,
+          u.fullname as actor_name,
+          u.avatar_url as actor_avatar_url,
+          d.story_id,
+          s.title as story_title,
+          d.coins,
+          d.message
+        FROM donations d
+        LEFT JOIN users u ON u.user_id = d.donor_id
+        LEFT JOIN stories s ON s.story_id = d.story_id
+        WHERE d.author_id = ?
+          AND d.donor_id <> ?
+        ORDER BY d.created_at DESC
+        LIMIT ?
+      `, [userId, userId, need])
+      donationRows = rows || []
+    } catch (e) {
+      donationRows = []
+    }
+  }
+
+  // === NOTIFICATIONS FOR FOLLOWERS ===
+  // New stories + chapters from authors the user follows
+  
+  let followedAuthorStories = []
+  let followedAuthorChapters = []
+  
   try {
-    const [rows] = await p.query(`
-      SELECT
-        d.donation_id as event_id,
-        d.created_at,
-        d.donor_id as actor_user_id,
-        u.fullname as actor_name,
-        u.avatar_url as actor_avatar_url,
-        d.story_id,
-        s.title as story_title,
-        d.coins,
-        d.message
-      FROM donations d
-      LEFT JOIN users u ON u.user_id = d.donor_id
-      LEFT JOIN stories s ON s.story_id = d.story_id
-      WHERE d.author_id = ?
-        AND d.donor_id <> ?
-      ORDER BY d.created_at DESC
-      LIMIT ?
-    `, [userId, userId, need])
-    donationRows = rows || []
+    // Get list of authors this user follows
+    const [followedAuthors] = await p.execute(`
+      SELECT author_id 
+      FROM author_follows 
+      WHERE user_id = ?
+    `, [userId])
+    
+    const followedAuthorIds = (followedAuthors || []).map(r => r.author_id).filter(Boolean)
+    
+    if (followedAuthorIds.length > 0) {
+      const placeholders = followedAuthorIds.map(() => '?').join(', ')
+      
+      // Get new stories from followed authors
+      try {
+        const [storyRows] = await p.query(`
+          SELECT
+            s.story_id,
+            s.title as story_title,
+            s.created_at,
+            s.cover_image,
+            a.author_id,
+            a.pen_name as author_name,
+            a.user_id as author_user_id
+          FROM stories s
+          JOIN authors a ON s.author_id = a.author_id
+          WHERE s.author_id IN (${placeholders})
+            AND (s.is_hidden IS NULL OR s.is_hidden = 0)
+          ORDER BY s.created_at DESC
+          LIMIT ?
+        `, [...followedAuthorIds, need])
+        followedAuthorStories = storyRows || []
+      } catch (e) {
+        console.error('Error fetching followed author stories:', e)
+      }
+      
+      // Get new chapters from followed authors
+      try {
+        const fkCandidates = await getChaptersFkCandidates(p)
+        const pkCandidates = await getChaptersPkCandidates(p)
+        const hasNo = await getChaptersHasChapterNo(p)
+        
+        for (const fkCol of fkCandidates) {
+          for (const pkCol of pkCandidates) {
+            try {
+              const [chapterRows] = await p.query(`
+                SELECT
+                  c.${pkCol} as chapter_id,
+                  ${hasNo ? 'c.chapter_no' : 'NULL as chapter_no'},
+                  c.title as chapter_title,
+                  c.created_at,
+                  s.story_id,
+                  s.title as story_title,
+                  a.author_id,
+                  a.pen_name as author_name,
+                  a.user_id as author_user_id
+                FROM chapters c
+                JOIN stories s ON s.story_id = c.${fkCol}
+                JOIN authors a ON s.author_id = a.author_id
+                WHERE s.author_id IN (${placeholders})
+                  AND (s.is_hidden IS NULL OR s.is_hidden = 0)
+                ORDER BY c.created_at DESC
+                LIMIT ?
+              `, [...followedAuthorIds, need])
+              followedAuthorChapters = chapterRows || []
+              break
+            } catch (e) {
+              // try next column combination
+            }
+          }
+          if (followedAuthorChapters.length > 0) break
+        }
+      } catch (e) {
+        console.error('Error fetching followed author chapters:', e)
+      }
+    }
   } catch (e) {
-    donationRows = []
+    console.error('Error fetching followed authors notifications:', e)
   }
 
   // Trending rank notification: your stories' current position on the "Thịnh hành" board.
   // The Rank tab sorts by views descending, where views = COUNT(*) chapter_views.
   // We only compute ranks for the global top N to keep this lightweight.
   let rankItems = []
-  try {
-    await ensureStoriesHiddenColumn(p)
-    const TOP_N = 200
-    const MAX_RANK_ITEMS = 3
+  if (authorIds && authorIds.length) {
+    try {
+      await ensureStoriesHiddenColumn(p)
+      const TOP_N = 200
+      const MAX_RANK_ITEMS = 3
 
-    const [topRows] = await p.query(`
-      SELECT
-        s.story_id,
-        s.created_at,
-        COALESCE(v.views_count, 0) as views_count,
-        v.last_viewed_at
-      FROM stories s
-      LEFT JOIN (
-        SELECT story_id, COUNT(*) as views_count, MAX(viewed_at) as last_viewed_at
-        FROM chapter_views
-        GROUP BY story_id
-      ) v ON v.story_id = s.story_id
-      WHERE (s.is_hidden IS NULL OR s.is_hidden = 0)
-      ORDER BY views_count DESC, s.created_at DESC, s.story_id ASC
-      LIMIT ?
-    `, [TOP_N])
-
-    const rankMap = new Map()
-    for (let i = 0; i < (topRows || []).length; i++) {
-      const r = topRows[i]
-      if (!r || !r.story_id) continue
-      rankMap.set(String(r.story_id), { rank: i + 1, views: Number(r.views_count || 0), last_viewed_at: r.last_viewed_at || null, created_at: r.created_at || null })
-    }
-
-    if (rankMap.size) {
-      const [myRows] = await p.query(`
-        SELECT s.story_id, s.title, s.created_at
+      const [topRows] = await p.query(`
+        SELECT
+          s.story_id,
+          s.created_at,
+          COALESCE(v.views_count, 0) as views_count,
+          v.last_viewed_at
         FROM stories s
-        LEFT JOIN authors a ON s.author_id = a.author_id
-        WHERE (a.user_id = ? OR s.author_id = ?)
-          AND (s.is_hidden IS NULL OR s.is_hidden = 0)
-      `, [userId, userId])
+        LEFT JOIN (
+          SELECT story_id, COUNT(*) as views_count, MAX(viewed_at) as last_viewed_at
+          FROM chapter_views
+          GROUP BY story_id
+        ) v ON v.story_id = s.story_id
+        WHERE (s.is_hidden IS NULL OR s.is_hidden = 0)
+        ORDER BY views_count DESC, s.created_at DESC, s.story_id ASC
+        LIMIT ?
+      `, [TOP_N])
 
-      const nowTs = Date.now()
+      const rankMap = new Map()
+      for (let i = 0; i < (topRows || []).length; i++) {
+        const r = topRows[i]
+        if (!r || !r.story_id) continue
+        rankMap.set(String(r.story_id), { rank: i + 1, views: Number(r.views_count || 0), last_viewed_at: r.last_viewed_at || null, created_at: r.created_at || null })
+      }
 
-      rankItems = (myRows || [])
-        .map(r => {
-          const sid = r && r.story_id ? String(r.story_id) : null
-          if (!sid) return null
-          const found = rankMap.get(sid)
-          if (!found) return null
+      if (rankMap.size) {
+        const [myRows] = await p.query(`
+          SELECT s.story_id, s.title, s.created_at
+          FROM stories s
+          LEFT JOIN authors a ON s.author_id = a.author_id
+          WHERE (a.user_id = ? OR s.author_id = ?)
+            AND (s.is_hidden IS NULL OR s.is_hidden = 0)
+        `, [userId, userId])
 
-          // Use last_viewed_at as a stable-ish "event" time so unread logic works.
-          // If there are no views yet, fall back to story created_at.
-          const createdAt = found.last_viewed_at || r.created_at || found.created_at || new Date().toISOString()
-          let createdTs = 0
-          try {
-            createdTs = new Date(createdAt).getTime()
-            if (!Number.isFinite(createdTs)) createdTs = nowTs
-          } catch { createdTs = nowTs }
-          return {
-            id: `rank:${sid}:${found.rank}`,
-            type: 'rank',
-            created_at: createdAt,
-            created_ts: createdTs - Number(found.rank || 0),
-            actor_user_id: null,
-            actor_name: 'Hệ thống',
-            actor_avatar_url: null,
-            story_id: sid,
-            story_title: r.title || null,
-            rank: Number(found.rank || 0),
-            views: Number(found.views || 0),
-            coins: null,
-            message: null,
-          }
-        })
-        .filter(Boolean)
-        .sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0))
-        .slice(0, MAX_RANK_ITEMS)
+        const nowTs = Date.now()
+
+        rankItems = (myRows || [])
+          .map(r => {
+            const sid = r && r.story_id ? String(r.story_id) : null
+            if (!sid) return null
+            const found = rankMap.get(sid)
+            if (!found) return null
+
+            // Use last_viewed_at as a stable-ish "event" time so unread logic works.
+            // If there are no views yet, fall back to story created_at.
+            const createdAt = found.last_viewed_at || r.created_at || found.created_at || new Date().toISOString()
+            let createdTs = 0
+            try {
+              createdTs = new Date(createdAt).getTime()
+              if (!Number.isFinite(createdTs)) createdTs = nowTs
+            } catch { createdTs = nowTs }
+            return {
+              id: `rank:${sid}:${found.rank}`,
+              type: 'rank',
+              created_at: createdAt,
+              created_ts: createdTs - Number(found.rank || 0),
+              actor_user_id: null,
+              actor_name: 'Hệ thống',
+              actor_avatar_url: null,
+              story_id: sid,
+              story_title: r.title || null,
+              rank: Number(found.rank || 0),
+              views: Number(found.views || 0),
+              coins: null,
+              message: null,
+            }
+          })
+          .filter(Boolean)
+          .sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0))
+          .slice(0, MAX_RANK_ITEMS)
+      }
+    } catch (e) {
+      rankItems = []
     }
-  } catch (e) {
-    rankItems = []
   }
 
   const likes = (likeRows || []).map(r => {
@@ -2470,10 +2568,87 @@ async function getNotifications(userId, opts = {}) {
     }
   })
 
-  const combined = ([]).concat(rankItems, likes, follows, donations)
+  // New stories from followed authors
+  const newStories = (followedAuthorStories || []).map(r => {
+    const created_ts = normalizeDate(r.created_at)
+    return {
+      id: `new_story:${r.story_id}`,
+      type: 'new_story',
+      created_at: r.created_at,
+      created_ts,
+      actor_user_id: r.author_user_id ? String(r.author_user_id) : null,
+      actor_name: r.author_name || null,
+      actor_avatar_url: null,
+      story_id: r.story_id ? String(r.story_id) : null,
+      story_title: r.story_title || null,
+      author_id: r.author_id ? String(r.author_id) : null,
+      coins: null,
+      message: null
+    }
+  })
+
+  // New chapters from followed authors
+  const newChapters = (followedAuthorChapters || []).map(r => {
+    const created_ts = normalizeDate(r.created_at)
+    return {
+      id: `new_chapter:${r.chapter_id}`,
+      type: 'new_chapter',
+      created_at: r.created_at,
+      created_ts,
+      actor_user_id: r.author_user_id ? String(r.author_user_id) : null,
+      actor_name: r.author_name || null,
+      actor_avatar_url: null,
+      story_id: r.story_id ? String(r.story_id) : null,
+      story_title: r.story_title || null,
+      chapter_id: r.chapter_id ? String(r.chapter_id) : null,
+      chapter_no: r.chapter_no !== undefined && r.chapter_no !== null ? Number(r.chapter_no) : null,
+      chapter_title: r.chapter_title || null,
+      author_id: r.author_id ? String(r.author_id) : null,
+      coins: null,
+      message: null
+    }
+  })
+
+  const combined = ([]).concat(rankItems, likes, follows, donations, newStories, newChapters)
     .sort((a, b) => Number(b.created_ts) - Number(a.created_ts))
 
-  return combined.slice(offset, offset + limit)
+  // Get user's last_seen_at timestamp to determine read/unread status
+  let lastSeenTs = 0
+  try {
+    await ensureNotificationStateTable(p)
+    const [rows] = await p.execute('SELECT last_seen_at FROM notification_state WHERE user_id = ? LIMIT 1', [userId])
+    if (rows && rows[0] && rows[0].last_seen_at) {
+      lastSeenTs = new Date(rows[0].last_seen_at).getTime()
+    }
+  } catch (e) {
+    // ignore and treat as no last_seen
+  }
+
+  const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000 // 7 days in milliseconds
+  const now = Date.now()
+
+  // Filter notifications: only show if less than 1 week old OR unread
+  const filtered = combined
+    .map(item => {
+      const itemTs = item.created_ts || 0
+      const itemAge = now - itemTs
+      const isUnread = !lastSeenTs || lastSeenTs === 0 || itemTs > lastSeenTs
+      
+      // Add is_unread flag to each notification
+      return {
+        ...item,
+        is_unread: isUnread
+      }
+    })
+    .filter(item => {
+      const itemTs = item.created_ts || 0
+      const itemAge = now - itemTs
+      
+      // Show if: less than 1 week old OR unread (regardless of age)
+      return itemAge < ONE_WEEK_MS || item.is_unread
+    })
+
+  return filtered.slice(offset, offset + limit)
 }
 
 async function ensureNotificationStateTable(p) {

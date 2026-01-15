@@ -17,6 +17,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Link } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { BookCardSkeleton } from '../components/SkeletonLoader'
 
 type RankItem = {
   id: string;
@@ -41,6 +42,7 @@ export default function ExplorePage() {
   const [books, setBooks] = useState<any[]>([])
   const [recData, setRecData] = useState<RecommendItem[]>([])
   const [refreshing, setRefreshing] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
 
   const [error, setError] = useState<string | null>(null)
   const [user, setUser] = useState<any | null>(null)
@@ -50,6 +52,7 @@ export default function ExplorePage() {
   const loadBooks = useCallback(async () => {
     let mounted = true
     setRefreshing(true)
+    setIsLoading(true)
     try {
       const res: any = await apiFetchBooks()
       if (!mounted) return
@@ -104,7 +107,10 @@ export default function ExplorePage() {
       setBooks([])
       setRecData([])
     } finally {
-      if (mounted) setRefreshing(false)
+      if (mounted) {
+        setRefreshing(false)
+        setIsLoading(false)
+      }
     }
     return () => { mounted = false }
   }, [])
@@ -281,65 +287,94 @@ export default function ExplorePage() {
           </View>
         ) : null}
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{ marginHorizontal: -16 }}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}
-        >
-          {rankColumns.map((col, colIdx) => (
-            <View key={colIdx} style={styles.col}>
-              {col.map((item, rowIdx) => {
-                const globalIndex = colIdx * 3 + rowIdx;
-                return (
-                  <Pressable key={item.id} style={styles.rankItem} onPress={() => handleOpenBook(item.id)}>
-                    <View style={styles.coverWrap}>
-                      {item.cover ? (
-                        <Image source={{ uri: item.cover }} style={styles.cover} />
-                      ) : (
-                        <View style={styles.cover} />
-                      )}
-                      <View
-                        style={[
-                          styles.rankBadge,
-                          globalIndex === 0 && styles.rankGold,
-                          globalIndex === 1 && styles.rankSilver,
-                          globalIndex === 2 && styles.rankBronze,
-                        ]}
-                      >
-                        <Text style={styles.rankBadgeText}>{globalIndex + 1}</Text>
+        {isLoading ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ marginHorizontal: -16 }}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}
+          >
+            {[0, 1].map((colIdx) => (
+              <View key={colIdx} style={styles.col}>
+                {[0, 1, 2].map((rowIdx) => (
+                  <View key={rowIdx} style={{ marginBottom: 12 }}>
+                    <BookCardSkeleton />
+                  </View>
+                ))}
+              </View>
+            ))}
+          </ScrollView>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ marginHorizontal: -16 }}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}
+          >
+            {rankColumns.map((col, colIdx) => (
+              <View key={colIdx} style={styles.col}>
+                {col.map((item, rowIdx) => {
+                  const globalIndex = colIdx * 3 + rowIdx;
+                  return (
+                    <Pressable key={item.id} style={styles.rankItem} onPress={() => handleOpenBook(item.id)}>
+                      <View style={styles.coverWrap}>
+                        {item.cover ? (
+                          <Image source={{ uri: item.cover }} style={styles.cover} />
+                        ) : (
+                          <View style={styles.cover} />
+                        )}
+                        <View
+                          style={[
+                            styles.rankBadge,
+                            globalIndex === 0 && styles.rankGold,
+                            globalIndex === 1 && styles.rankSilver,
+                            globalIndex === 2 && styles.rankBronze,
+                          ]}
+                        >
+                          <Text style={styles.rankBadgeText}>{globalIndex + 1}</Text>
+                        </View>
                       </View>
-                    </View>
-                    <View style={styles.rankTextWrap}>
-                      <Text style={styles.rankTitle} numberOfLines={1}>{item.title}</Text>
-                      <Text style={styles.rankSubtitle} numberOfLines={1}>{item.subtitle}</Text>
-                      <Text style={styles.rankStats}>{item.stats}</Text>
-                    </View>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ))}
-        </ScrollView>
+                      <View style={styles.rankTextWrap}>
+                        <Text style={styles.rankTitle} numberOfLines={1}>{item.title}</Text>
+                        <Text style={styles.rankSubtitle} numberOfLines={1}>{item.subtitle}</Text>
+                        <Text style={styles.rankStats}>{item.stats}</Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ))}
+          </ScrollView>
+        )}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Có Thể Bạn Sẽ Thích</Text>
           <Text style={styles.sectionAction}>Thêm</Text>
         </View>
-        {recData.map((it) => (
-          <Pressable key={it.id} style={styles.recItem} onPress={() => handleOpenBook(it.id)}>
-            {it.cover ? (
-              <Image source={{ uri: it.cover }} style={styles.recCover} />
-            ) : (
-              <View style={styles.recCover} />
-            )}
-            <View style={styles.recTextWrap}>
-              <Text style={styles.recTitle} numberOfLines={2}>{it.title}</Text>
-              <Text style={styles.recDesc} numberOfLines={2}>{it.desc}</Text>
-              <Text style={styles.recStats}>{it.stats}</Text>
-            </View>
-          </Pressable>
-        ))}
+        {isLoading ? (
+          <>
+            {[0, 1, 2, 3].map((idx) => (
+              <View key={idx} style={{ marginBottom: 12 }}>
+                <BookCardSkeleton variant="horizontal" />
+              </View>
+            ))}
+          </>
+        ) : (
+          recData.map((it) => (
+            <Pressable key={it.id} style={styles.recItem} onPress={() => handleOpenBook(it.id)}>
+              {it.cover ? (
+                <Image source={{ uri: it.cover }} style={styles.recCover} />
+              ) : (
+                <View style={styles.recCover} />
+              )}
+              <View style={styles.recTextWrap}>
+                <Text style={styles.recTitle} numberOfLines={2}>{it.title}</Text>
+                <Text style={styles.recDesc} numberOfLines={2}>{it.desc}</Text>
+                <Text style={styles.recStats}>{it.stats}</Text>
+              </View>
+            </Pressable>
+          ))
+        )}
         <AdInterstitial visible={entryAdVisible} placement="home" onFinish={() => setEntryAdVisible(false)} />
       </ScrollView>
 

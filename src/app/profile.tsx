@@ -261,11 +261,40 @@ export default function ProfileScreen() {
   const handleBuyAuthor = async () => {
     if (!token) return Alert.alert("Lỗi", "Bạn cần đăng nhập.");
     if (isAuthor) return Alert.alert("Thông báo", "Bạn đã là tác giả.");
-    const cost = isVip ? AUTHOR_COST_VIP : AUTHOR_COST_BASE;
+    
+    // Check VIP days remaining to determine correct price
+    const MIN_VIP_DAYS_FOR_DISCOUNT = 15
+    let cost = AUTHOR_COST_BASE
+    
+    if (isVip && vipDaysLeft !== null && vipDaysLeft >= MIN_VIP_DAYS_FOR_DISCOUNT) {
+      cost = AUTHOR_COST_VIP
+    }
+    
+    // Show warning if VIP but not enough days for discount
+    if (isVip && vipDaysLeft !== null && vipDaysLeft > 0 && vipDaysLeft < MIN_VIP_DAYS_FOR_DISCOUNT) {
+      Alert.alert(
+        "Thông báo",
+        `VIP của bạn còn ${vipDaysLeft} ngày (cần ít nhất ${MIN_VIP_DAYS_FOR_DISCOUNT} ngày để được giảm giá ${AUTHOR_COST_VIP} xu).\n\nGiá hiện tại: ${AUTHOR_COST_BASE} xu`,
+        [
+          { text: "Hủy", style: "cancel" },
+          { text: "Tiếp tục", onPress: () => executeBuyAuthor(cost) }
+        ]
+      )
+      return
+    }
+    
+    executeBuyAuthor(cost)
+  };
+  
+  const executeBuyAuthor = async (cost: number) => {
+    if (!token) return
     const res: any = await apiBuyAuthorWithCoins(cost, token);
     if (res && res.error) {
       if (res.error === 'insufficient_funds') {
         return Alert.alert("Lỗi", "Bạn không đủ xu. Vui lòng nạp thêm xu để mở quyền tác giả.");
+      }
+      if (res.error === 'invalid_price') {
+        return Alert.alert("Lỗi giá", res.message || `Giá không hợp lệ. Giá đúng: ${res.expected_cost} xu`);
       }
       return Alert.alert("Lỗi", res.message || res.error || "Không thể mở quyền tác giả");
     }
@@ -379,7 +408,13 @@ export default function ProfileScreen() {
               <View style={styles.cardRow}>
                 <View>
                   <Text style={styles.cardTitle}>Mở quyền tác giả</Text>
-                  <Text style={styles.cardSubtitle}>Chỉ {isVip ? AUTHOR_COST_VIP : AUTHOR_COST_BASE} xu</Text>
+                  <Text style={styles.cardSubtitle}>
+                    {isVip && vipDaysLeft !== null && vipDaysLeft >= 15
+                      ? `Giá VIP: ${AUTHOR_COST_VIP} xu`
+                      : isVip && vipDaysLeft !== null && vipDaysLeft > 0
+                      ? `${AUTHOR_COST_BASE} xu (VIP còn ${vipDaysLeft} ngày, cần ≥15 ngày để giảm giá)`
+                      : `${AUTHOR_COST_BASE} xu`}
+                  </Text>
                 </View>
                 <Pressable style={styles.chip} onPress={handleBuyAuthor}><Text style={styles.chipText}>Mua</Text></Pressable>
               </View>
@@ -436,7 +471,12 @@ export default function ProfileScreen() {
             </View>
 
             <View style={styles.createCard}>
-              <Text style={styles.sectionTitle}>📚  Truyện của tôi</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <Text style={styles.sectionTitle}>📚  Truyện của tôi</Text>
+                <Pressable onPress={() => router.push('/author/manage' as any)} style={styles.chip}>
+                  <Text style={styles.chipText}>Quản lý</Text>
+                </Pressable>
+              </View>
               {myAuthoredBooks.length === 0 ? (
                 <Text style={styles.statLabel}>Chưa có truyện nào.</Text>
               ) : (

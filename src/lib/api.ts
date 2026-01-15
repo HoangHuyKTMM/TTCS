@@ -1,7 +1,7 @@
 import Constants from 'expo-constants'
 
 const extra = (Constants.expoConfig?.extra || {}) as any
-export const API_BASE = extra.apiBase || process.env.EXPO_PUBLIC_API_BASE || 'http://10.0.2.2:4000' // use EXPO_PUBLIC_API_BASE or extra.apiBase; default to Android emulator loopback
+export const API_BASE = extra.apiBase || process.env.EXPO_PUBLIC_API_BASE || 'http://10.0.2.2:4000' // use EXPO_PUBLIC_API_BASE or extra.apiBase; default to Android emulator
 
 console.log('[API] API_BASE:', API_BASE)
 console.log('[API] process.env.EXPO_PUBLIC_API_BASE:', process.env.EXPO_PUBLIC_API_BASE)
@@ -168,6 +168,36 @@ export async function apiCreateBook(payload: { title: string; author?: string; d
 export async function apiCreateChapter(bookId: string, payload: { title: string; content: string }, token: string) {
   const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
   return request(`/books/${bookId}/chapters`, { method: 'POST', headers, body: JSON.stringify(payload) })
+}
+
+// Author: update book
+export async function apiUpdateBook(bookId: string, payload: { title?: string; description?: string; cover_url?: string; genre?: string }, token: string) {
+  const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  return request(`/books/${bookId}`, { method: 'PUT', headers, body: JSON.stringify(payload) })
+}
+
+// Author: delete book
+export async function apiDeleteBook(bookId: string, token: string) {
+  const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  return request(`/books/${bookId}`, { method: 'DELETE', headers })
+}
+
+// Author: update chapter
+export async function apiUpdateChapter(bookId: string, chapterId: string, payload: { title?: string; content?: string }, token: string) {
+  const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  return request(`/books/${bookId}/chapters/${chapterId}`, { method: 'PUT', headers, body: JSON.stringify(payload) })
+}
+
+// Author: delete chapter
+export async function apiDeleteChapter(bookId: string, chapterId: string, token: string) {
+  const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  return request(`/books/${bookId}/chapters/${chapterId}`, { method: 'DELETE', headers })
+}
+
+// Author: import book from text file
+export async function apiImportBook(payload: { title: string; content: string; author?: string; description?: string; cover_url?: string; genre?: string }, token: string) {
+  const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  return request('/books/import', { method: 'POST', headers, body: JSON.stringify(payload) })
 }
 
 // Likes / Favorites

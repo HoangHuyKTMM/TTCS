@@ -802,7 +802,6 @@ export default function App() {
             <a href="#" onClick={e=>{e.preventDefault(); setRoute('genres')}} className={route==='genres'? 'active':''}>Thể loại</a>
             {/* New Book moved into Books page */}
             <a href="#" onClick={e=>{e.preventDefault(); setRoute('users')}} className={route==='users'? 'active':''}>Người dùng</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('coins')}} className={route==='coins'? 'active':''}>Nạp xu</a>
             <a href="#" onClick={e=>{e.preventDefault(); setRoute('transactions')}} className={route==='transactions'? 'active':''}>Giao dịch</a>
             <a href="#" onClick={e=>{e.preventDefault(); setRoute('comments')}} className={route==='comments'? 'active':''}>Bình luận</a>
             <a href="#" onClick={e=>{e.preventDefault(); setRoute('settings')}}>Cài đặt</a>
@@ -1136,60 +1135,7 @@ export default function App() {
             </section>
           )}
 
-          {route === 'coins' && (
-            <section className="panel">
-              <h3>Yêu cầu nạp xu</h3>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                <div className="muted">Người dùng tạo lệnh nạp, admin duyệt để cộng xu.</div>
-                <button className="btn" onClick={reloadTopups}>Tải lại</button>
-              </div>
-              {topupsError ? (
-                <div className="muted" style={{padding:12,background:'#22190f',borderRadius:6}}>{topupsError}</div>
-              ) : topups.length === 0 ? (
-                <div className="muted" style={{padding:12}}>Chưa có yêu cầu.</div>
-              ) : (
-                <div style={{overflowX:'auto', maxHeight:'500px', overflowY:'auto'}}>
-                  <table className="table">
-                    <thead style={{position:'sticky', top:0, zIndex:1, background:'#1c140e'}}>
-                      <tr>
-                        <th>ID</th>
-                        <th>Người dùng</th>
-                        <th>Xu</th>
-                        <th>Số tiền</th>
-                        <th>Phương thức</th>
-                        <th>Trạng thái</th>
-                        <th>Ngày tạo</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {topups.map(t => (
-                        <tr key={t.request_id || t.id}>
-                          <td>{t.request_id || t.id}</td>
-                          <td>{t.user_id}</td>
-                          <td>{t.coins}</td>
-                          <td>{t.amount || '-'}</td>
-                          <td>{t.method || '-'}</td>
-                          <td>{t.status}</td>
-                          <td>{t.created_at ? new Date(t.created_at).toLocaleString() : ''}</td>
-                          <td style={{display:'flex',gap:8}}>
-                            {t.status === 'pending' ? (
-                              <>
-                                <button className="btn btn-primary" onClick={()=>handleApproveTopup(t)}>Duyệt</button>
-                                <button className="btn btn-ghost" onClick={()=>handleRejectTopup(t)}>Từ chối</button>
-                              </>
-                            ) : (
-                              <span className="small muted">Đã xử lý</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-          )}
+
 
           {route === 'transactions' && (
             <section className="panel">

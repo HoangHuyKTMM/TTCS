@@ -546,6 +546,95 @@ app.post('/books/upload', upload.single('cover'), async (req, res) => {
   }
 })
 
+// POST /books/import - import book from text content (auto-split chapters)
+app.post('/books/import', authMiddleware, async (req, res) => {
+  try {
+    const { title, content, author, description, cover_url, genre } = req.body
+    if (!title || !content) return res.status(400).json({ error: 'title and content required' })
+    
+    const role = req.user.role
+    if (role !== 'admin' && role !== 'author') {
+      return res.status(403).json({ error: 'forbidden', message: 'Chỉ tác giả/admin mới được import truyện' })
+    }
+
+    if (useMysql) {
+      // Create book first
+      let creatorAuthorId = null
+      if (role === 'author') {
+        try {
+          creatorAuthorId = await db.getOrCreateAuthorIdByUserId(req.user.id)
+        } catch (e) { console.error('get/create author id failed', e) }
+      }
+      
+      const book = await db.createBook({ 
+        title: title.trim(), 
+        author: author || req.user.email || 'Tác giả', 
+        description: description || '', 
+        cover_url: cover_url || null,
+        genre: genre || null,
+        author_id: creatorAuthorId
+      })
+      
+      // Auto-split content into chapters
+      // Method 1: Split by "Chương" or "Chapter" markers
+      const chapterPattern = /(?:^|\n)(?:chương|chapter)\s*(\d+|[ivxlcdm]+)[:\s\-–—]*([^\n]*)/gi
+      const matches = [...content.matchAll(chapterPattern)]
+      
+      if (matches.length > 0) {
+        // Content has chapter markers
+        for (let i = 0; i < matches.length; i++) {
+          const match = matches[i]
+          const chapterNum = match[1]
+          const chapterTitle = match[2].trim() || `Chương ${chapterNum}`
+          const startIndex = match.index + match[0].length
+          const endIndex = i < matches.length - 1 ? matches[i + 1].index : content.length
+          const chapterContent = content.substring(startIndex, endIndex).trim()
+          
+          if (chapterContent) {
+            try {
+              await db.createChapter(book.story_id || book.id, {
+                title: chapterTitle,
+                content: chapterContent
+              })
+            } catch (e) {
+              console.error('Failed to create chapter', e)
+            }
+          }
+        }
+      } else {
+        // No chapter markers - split by paragraph count (every 50 paragraphs = 1 chapter)
+        const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 0)
+        const PARAGRAPHS_PER_CHAPTER = 50
+        let chapterNum = 1
+        
+        for (let i = 0; i < paragraphs.length; i += PARAGRAPHS_PER_CHAPTER) {
+          const chapterParagraphs = paragraphs.slice(i, i + PARAGRAPHS_PER_CHAPTER)
+          const chapterContent = chapterParagraphs.join('\n\n')
+          
+          try {
+            await db.createChapter(book.story_id || book.id, {
+              title: `Chương ${chapterNum}`,
+              content: chapterContent
+            })
+            chapterNum++
+          } catch (e) {
+            console.error('Failed to create chapter', e)
+          }
+        }
+      }
+      
+      // Fetch complete book with chapters
+      const fullBook = await db.getBookById(book.story_id || book.id)
+      return res.status(201).json(fullBook)
+    }
+    
+    return res.status(500).json({ error: 'MySQL mode required' })
+  } catch (err) {
+    console.error('POST /books/import err', err)
+    res.status(500).json({ error: err && err.message ? err.message : 'internal' })
+  }
+})
+
 // Banners endpoints
 // GET /banners - public list
 app.get('/banners', async (req, res) => {
@@ -1141,20 +1230,39 @@ app.post('/auth/firebase', async (req, res) => {
   }
 })
 
-// PUT /books/:bookId/chapters/:chapterId - admin edit chapter
+// PUT /books/:bookId/chapters/:chapterId - admin or author edit chapter
 app.put('/books/:bookId/chapters/:chapterId', authMiddleware, async (req, res) => {
   try {
     const id = req.params.chapterId
+    const bookId = req.params.bookId
     const { title, content } = req.body
+    const userId = req.user?.id
+    const userRole = req.user?.role
+    
     if (useMysql) {
-      if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+      // Check if user is admin or author
+      if (userRole !== 'admin' && userRole !== 'author') {
+        return res.status(403).json({ error: 'forbidden' })
+      }
+      
+      // If author, verify ownership of the book
+      if (userRole === 'author') {
+        const book = await db.getBookById(bookId)
+        if (!book) return res.status(404).json({ error: 'book not found' })
+        
+        const bookOwnerId = book.author_user_id || book.user_id
+        if (String(bookOwnerId) !== String(userId)) {
+          return res.status(403).json({ error: 'not your book' })
+        }
+      }
+      
       const updated = await db.updateChapter(id, { title, content })
       if (!updated) return res.status(404).json({ error: 'not found' })
       return res.json(updated)
     }
     // file-mode: update chapter in data.json
     const data = readData()
-    const book = data.books.find(b => b.id === req.params.bookId)
+    const book = data.books.find(b => b.id === bookId)
     if (!book) return res.status(404).json({ error: 'book not found' })
     const ch = (book.chapters || []).find(c => String(c.id) === String(id))
     if (!ch) return res.status(404).json({ error: 'chapter not found' })
@@ -1168,13 +1276,33 @@ app.put('/books/:bookId/chapters/:chapterId', authMiddleware, async (req, res) =
   }
 })
 
-// DELETE /books/:bookId/chapters/:chapterId - admin delete chapter
+// DELETE /books/:bookId/chapters/:chapterId - admin or author delete chapter
 app.delete('/books/:bookId/chapters/:chapterId', authMiddleware, async (req, res) => {
   try {
     const id = req.params.chapterId
-    console.log(`[DELETE] /books/${req.params.bookId}/chapters/${id} useMysql=${useMysql} user=${req.user && req.user.email ? req.user.email : req.user && req.user.id ? req.user.id : 'unknown'}`)
+    const bookId = req.params.bookId
+    const userId = req.user?.id
+    const userRole = req.user?.role
+    
+    console.log(`[DELETE] /books/${bookId}/chapters/${id} useMysql=${useMysql} user=${req.user && req.user.email ? req.user.email : req.user && req.user.id ? req.user.id : 'unknown'}`)
+    
     if (useMysql) {
-      if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+      // Check if user is admin or author
+      if (userRole !== 'admin' && userRole !== 'author') {
+        return res.status(403).json({ error: 'forbidden' })
+      }
+      
+      // If author, verify ownership of the book
+      if (userRole === 'author') {
+        const book = await db.getBookById(bookId)
+        if (!book) return res.status(404).json({ error: 'book not found' })
+        
+        const bookOwnerId = book.author_user_id || book.user_id
+        if (String(bookOwnerId) !== String(userId)) {
+          return res.status(403).json({ error: 'not your book' })
+        }
+      }
+      
       try {
         const result = await db.deleteChapter(id)
         return res.json(result)
@@ -1187,7 +1315,7 @@ app.delete('/books/:bookId/chapters/:chapterId', authMiddleware, async (req, res
     }
     // file-mode: remove chapter from data.json
     const data = readData()
-    const book = data.books.find(b => b.id === req.params.bookId)
+    const book = data.books.find(b => b.id === bookId)
     if (!book) return res.status(404).json({ error: 'book not found' })
     const idx = (book.chapters || []).findIndex(c => String(c.id) === String(id))
     if (idx === -1) return res.status(404).json({ error: 'chapter not found' })
@@ -1733,11 +1861,13 @@ app.put('/books/:id', async (req, res) => {
     console.log('[PUT /books/:id] Received body:', JSON.stringify(req.body, null, 2))
     console.log('[PUT /books/:id] Extracted genre:', genre)
     const cover_url = req.body ? (req.body.cover_url || req.body.coverUrl || req.body.coverUrl) : undefined
-    // If using MySQL, require admin auth and use db.updateBook
+    // If using MySQL, require admin or author auth
     if (useMysql) {
       const headerBypass = String(req.headers['x-bypass-auth'] || req.headers['x-dev-token'] || '').toLowerCase() === 'true'
       const localReq = (req.hostname === 'localhost') || (req.ip === '::1') || (req.ip && req.ip.startsWith('127.')) || ((req.get && req.get('host') || '').startsWith('localhost'))
       const bypass = headerBypass && (process.env.ALLOW_DEV_TOKENS === 'true' || localReq)
+      
+      let userPayload = null
       if (!bypass) {
         const auth = req.headers.authorization
         if (!auth) return res.status(401).json({ error: 'missing authorization' })
@@ -1745,9 +1875,26 @@ app.put('/books/:id', async (req, res) => {
         if (parts.length !== 2 || parts[0] !== 'Bearer') return res.status(401).json({ error: 'invalid authorization format' })
         const token = parts[1]
         try {
-          const payload = require('jsonwebtoken').verify(token, JWT_SECRET)
-          if (!payload || payload.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
-          console.log(`[PUT] /books/${id} by user=${payload.email || payload.id || 'unknown'}`)
+          userPayload = require('jsonwebtoken').verify(token, JWT_SECRET)
+          const userRole = userPayload?.role
+          
+          // Allow admin or author
+          if (userRole !== 'admin' && userRole !== 'author') {
+            return res.status(403).json({ error: 'forbidden' })
+          }
+          
+          // If author, check ownership
+          if (userRole === 'author') {
+            const book = await db.getBookById(id)
+            if (!book) return res.status(404).json({ error: 'book not found' })
+            
+            const bookOwnerId = book.author_user_id || book.user_id
+            if (String(bookOwnerId) !== String(userPayload.id)) {
+              return res.status(403).json({ error: 'not your book' })
+            }
+          }
+          
+          console.log(`[PUT] /books/${id} by user=${userPayload.email || userPayload.id || 'unknown'}`)
         } catch (e) {
           console.error('auth verify failed', e)
           return res.status(401).json({ error: 'invalid token' })
@@ -1842,8 +1989,27 @@ app.post('/uploads/cover-json', async (req, res) => {
 app.delete('/books/:id', authMiddleware, async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
     const id = req.params.id
+    const userId = req.user?.id
+    const userRole = req.user?.role
+    
+    // Check if user is admin or author of this book
+    if (userRole !== 'admin' && userRole !== 'author') {
+      return res.status(403).json({ error: 'forbidden' })
+    }
+    
+    // If author, verify ownership
+    if (userRole === 'author') {
+      const book = await db.getBookById(id)
+      if (!book) return res.status(404).json({ error: 'book not found' })
+      
+      // Check if user owns this book (author_user_id or user_id matches)
+      const bookOwnerId = book.author_user_id || book.user_id
+      if (String(bookOwnerId) !== String(userId)) {
+        return res.status(403).json({ error: 'not your book' })
+      }
+    }
+    
     const result = await db.deleteBook(id)
     res.json(result)
   } catch (err) {
@@ -2251,6 +2417,42 @@ app.post('/wallet/buy-author', authMiddleware, async (req, res) => {
     const { cost_coins } = req.body || {}
     if (!userId) return res.status(401).json({ error: 'missing authorization' })
     if (!cost_coins || Number(cost_coins) <= 0) return res.status(400).json({ error: 'cost_coins required' })
+    
+    // Validate pricing based on VIP status and remaining time
+    const AUTHOR_COST_BASE = 800
+    const AUTHOR_COST_VIP = 300
+    const MIN_VIP_DAYS_FOR_DISCOUNT = 15 // VIP must have at least 15 days remaining
+    
+    const currentUser = await db.getUserById(userId)
+    if (!currentUser) return res.status(404).json({ error: 'user not found' })
+    
+    let expectedCost = AUTHOR_COST_BASE
+    let vipDaysLeft = 0
+    
+    if (currentUser.vip_until) {
+      const vipUntilTime = new Date(currentUser.vip_until).getTime()
+      const now = Date.now()
+      if (vipUntilTime > now) {
+        vipDaysLeft = Math.ceil((vipUntilTime - now) / (1000 * 60 * 60 * 24))
+        // Only apply VIP discount if user has enough VIP days remaining
+        if (vipDaysLeft >= MIN_VIP_DAYS_FOR_DISCOUNT) {
+          expectedCost = AUTHOR_COST_VIP
+        }
+      }
+    }
+    
+    // Validate client sent correct price
+    if (Number(cost_coins) !== expectedCost) {
+      return res.status(400).json({ 
+        error: 'invalid_price', 
+        expected_cost: expectedCost,
+        vip_days_left: vipDaysLeft,
+        message: vipDaysLeft > 0 && vipDaysLeft < MIN_VIP_DAYS_FOR_DISCOUNT 
+          ? `VIP của bạn còn ${vipDaysLeft} ngày (cần ít nhất ${MIN_VIP_DAYS_FOR_DISCOUNT} ngày để được giảm giá). Giá: ${AUTHOR_COST_BASE} xu`
+          : `Giá không hợp lệ. Giá đúng: ${expectedCost} xu`
+      })
+    }
+    
     const debit = await db.debitWallet(userId, Number(cost_coins))
     if (debit && debit.error) return res.status(400).json({ error: 'insufficient_funds', balance: debit.balance })
     try { await db.createPayment({ user_id: userId, amount: 0, coins: -Number(cost_coins), provider: 'coin', provider_ref: 'buy-author', months: 1, days: null }) } catch (e) { console.error('createPayment err', e) }

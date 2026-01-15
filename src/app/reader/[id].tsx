@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from "react";
-import { StyleSheet, Text, View, ScrollView, Pressable, Animated } from "react-native";
+import { StyleSheet, Text, View, ScrollView, Pressable, Animated, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { apiFetchChapter, apiFetchBook, apiFetchChapters } from '../../lib/api'
@@ -7,6 +7,7 @@ import { saveReadingProgress } from '../../lib/reading'
 import * as Auth from '../../lib/auth'
 import { shouldShowAds } from '../../lib/ads'
 import { getOfflineChapter } from '../../lib/offline'
+import { SkeletonLoader } from '../../components/SkeletonLoader'
 
 function translateErrorMessage(msg: any): string | null {
   const text = msg ? String(msg) : ''
@@ -37,6 +38,7 @@ export default function ReaderScreen() {
   const [content, setContent] = useState<string[]>([])
   const [chaptersTotal, setChaptersTotal] = useState<number | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState<boolean>(true)
 
   useEffect(() => {
     let active = true
@@ -53,6 +55,8 @@ export default function ReaderScreen() {
     let mounted = true
     async function load() {
       if (!id) return
+      
+      setIsLoading(true)
 
       // Animate slide based on direction
       const previousChapter = prevChapterRef.current;
@@ -93,6 +97,7 @@ export default function ReaderScreen() {
           const paras = String(text).split(/\n\s*\n/).map((p: string) => p.trim()).filter(Boolean)
           setContent(paras.length ? paras : [String(text)])
           if (typeof offline.chaptersTotal === 'number') setChaptersTotal(offline.chaptersTotal)
+          setIsLoading(false)
           // Save progress (best-effort)
           try {
             await saveReadingProgress({ bookId: String(id), chapter: String(chapterIndex), chapterNo: chapterIndex })
@@ -114,11 +119,16 @@ export default function ReaderScreen() {
           if (text) {
             const paras = text.split(/\n\s*\n/).map((p: string) => p.trim()).filter(Boolean)
             setContent(paras.length ? paras : [text])
+            setIsLoading(false)
             // save reading progress (book metadata fetched separately)
             try {
               const bookRes: any = await apiFetchBook(String(id), token || undefined)
               const title = bookRes && (bookRes.title || bookRes.name)
               if (title) setBookTitle(String(title))
+              // Get total chapters from book data
+              if (Array.isArray(bookRes.chapters)) {
+                setChaptersTotal(bookRes.chapters.length)
+              }
               const cover = bookRes && (bookRes.cover_url ? (String(bookRes.cover_url).startsWith('http') ? bookRes.cover_url : `${bookRes.cover_url}`) : null)
               const genre = bookRes && (bookRes.genre || bookRes.category || bookRes.type)
               await saveReadingProgress({ bookId: String(id), chapter: String(res.id || chapterIndex), chapterNo: chapterIndex, title, cover, genre })
@@ -132,6 +142,7 @@ export default function ReaderScreen() {
         if (res && res.error) {
           setContent([])
           setErrorMsg(translateErrorMessage(res.message || res.detail || String(res.error)))
+          setIsLoading(false)
           return
         }
       } catch (e) {
@@ -149,6 +160,7 @@ export default function ReaderScreen() {
           if (text && mounted) {
             const paras = String(text).split(/\n\s*\n/).map((p:string) => p.trim()).filter(Boolean)
             setContent(paras.length ? paras : [String(text)])
+            setIsLoading(false)
             try {
               const bookRes: any = await apiFetchBook(String(id), token || undefined)
               const title = bookRes && (bookRes.title || bookRes.name)
@@ -173,16 +185,16 @@ export default function ReaderScreen() {
         if (bookRes && !bookRes.error) {
           const title = bookRes && (bookRes.title || bookRes.name)
           if (title) setBookTitle(String(title))
+          // Always store total chapters so UI can hide "next" on last chapter
+          if (Array.isArray(bookRes.chapters)) setChaptersTotal(bookRes.chapters.length)
           const idx = chapterIndex - 1
           const chObj = Array.isArray(bookRes.chapters) ? bookRes.chapters[idx] : null
           const text = chObj && (chObj.content || chObj.body || chObj.text)
           if (text && mounted) {
             const paras = String(text).split(/\n\s*\n/).map((p:string) => p.trim()).filter(Boolean)
             setContent(paras.length ? paras : [String(text)])
+            setIsLoading(false)
             try {
-              const bookRes: any = await apiFetchBook(String(id), token || undefined)
-              const title = bookRes && (bookRes.title || bookRes.name)
-              if (title) setBookTitle(String(title))
               const cover = bookRes && (bookRes.cover_url ? (String(bookRes.cover_url).startsWith('http') ? bookRes.cover_url : `${bookRes.cover_url}`) : null)
               const genre = bookRes && (bookRes.genre || bookRes.category || bookRes.type)
               await saveReadingProgress({ bookId: String(id), chapter: String(chObj && (chObj.id || chapterIndex)), chapterNo: chapterIndex, title, cover, genre })
@@ -191,8 +203,6 @@ export default function ReaderScreen() {
             }
             return
           }
-          // store total chapters so UI can hide "next" on last chap
-          if (Array.isArray(bookRes.chapters)) setChaptersTotal(bookRes.chapters.length)
         }
       } catch (ee) {
         console.error('fallback fetch book err', ee)
@@ -200,6 +210,7 @@ export default function ReaderScreen() {
 
       // final fallback to mock text
       setContent(mockChapterText(chapterIndex))
+      setIsLoading(false)
     }
     load()
     return () => { mounted = false }
@@ -210,7 +221,8 @@ export default function ReaderScreen() {
   const nextCh = String(chapterIndex + 1);
   const prevCh = String(Math.max(1, chapterIndex - 1));
   const hasPrev = chapterIndex > 1;
-  const hasNext = chaptersTotal == null || chapterIndex < chaptersTotal;
+  // Only show next button if we know there are more chapters
+  const hasNext = chaptersTotal != null && chapterIndex < chaptersTotal;
 
   const handlePrev = () => {
     if (!hasPrev) return;
@@ -240,23 +252,39 @@ export default function ReaderScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <Animated.View style={[styles.readerCard, { 
-          backgroundColor: themeStyle.cardBg, 
-          borderColor: themeStyle.border, 
-          transform: [{ translateX: slideAnim }],
-          opacity: fadeAnim
-        }]}>
-          <Text style={[styles.bookTitle, { color: themeStyle.text }]}>{`${bookTitle || `Truyện #${id}`} · Chương ${chapterIndex}`}</Text>
-          {errorMsg ? (
-            <Text style={{ color: themeStyle.text, fontSize, lineHeight: fontSize * 1.6, marginTop: 12 }}>{errorMsg}</Text>
-          ) : (
-            content.map((p, idx) => (
-              <Text key={idx} style={{ color: themeStyle.text, fontSize, lineHeight: fontSize * 1.6, marginTop: idx === 0 ? 8 : 12 }}>
-                {p}
-              </Text>
-            ))
-          )}
-        </Animated.View>
+        {isLoading ? (
+          <View style={[styles.readerCard, { backgroundColor: themeStyle.cardBg, borderColor: themeStyle.border }]}>
+            <SkeletonLoader width="80%" height={24} style={{ marginBottom: 20 }} />
+            <SkeletonLoader width="100%" height={16} style={{ marginBottom: 12 }} />
+            <SkeletonLoader width="100%" height={16} style={{ marginBottom: 12 }} />
+            <SkeletonLoader width="100%" height={16} style={{ marginBottom: 12 }} />
+            <SkeletonLoader width="95%" height={16} style={{ marginBottom: 20 }} />
+            <SkeletonLoader width="100%" height={16} style={{ marginBottom: 12 }} />
+            <SkeletonLoader width="100%" height={16} style={{ marginBottom: 12 }} />
+            <SkeletonLoader width="88%" height={16} style={{ marginBottom: 20 }} />
+            <SkeletonLoader width="100%" height={16} style={{ marginBottom: 12 }} />
+            <SkeletonLoader width="100%" height={16} style={{ marginBottom: 12 }} />
+            <SkeletonLoader width="92%" height={16} />
+          </View>
+        ) : (
+          <Animated.View style={[styles.readerCard, { 
+            backgroundColor: themeStyle.cardBg, 
+            borderColor: themeStyle.border, 
+            transform: [{ translateX: slideAnim }],
+            opacity: fadeAnim
+          }]}>
+            <Text style={[styles.bookTitle, { color: themeStyle.text }]}>{`${bookTitle || `Truyện #${id}`} · Chương ${chapterIndex}`}</Text>
+            {errorMsg ? (
+              <Text style={{ color: themeStyle.text, fontSize, lineHeight: fontSize * 1.6, marginTop: 12 }}>{errorMsg}</Text>
+            ) : (
+              content.map((p, idx) => (
+                <Text key={idx} style={{ color: themeStyle.text, fontSize, lineHeight: fontSize * 1.6, marginTop: idx === 0 ? 8 : 12 }}>
+                  {p}
+                </Text>
+              ))
+            )}
+          </Animated.View>
+        )}
       </ScrollView>
 
       <View style={[styles.bottomBar, { backgroundColor: themeStyle.headerBg, borderTopColor: themeStyle.border }]}> 
@@ -274,14 +302,22 @@ export default function ReaderScreen() {
 
         <View style={styles.navRow}>
           {/* Left button (Prev) */}
-          <Pressable style={[styles.navBtn, !hasPrev && styles.navBtnDisabled]} disabled={!hasPrev} onPress={handlePrev}>
-            <Text style={[styles.navText, !hasPrev && styles.navTextDisabled]}>← Chương trước</Text>
-          </Pressable>
+          {hasPrev ? (
+            <Pressable style={styles.navBtn} onPress={handlePrev}>
+              <Text style={styles.navText}>← Chương trước</Text>
+            </Pressable>
+          ) : (
+            <View style={styles.navBtnPlaceholder} />
+          )}
 
           {/* Right button (Next) */}
-          <Pressable style={[styles.navBtn, hasNext ? styles.navBtnPrimary : styles.navBtnDisabled]} disabled={!hasNext} onPress={handleNext}>
-            <Text style={[styles.navText, hasNext ? styles.navTextPrimary : styles.navTextDisabled]}>Chương tiếp →</Text>
-          </Pressable>
+          {hasNext ? (
+            <Pressable style={[styles.navBtn, styles.navBtnPrimary]} onPress={handleNext}>
+              <Text style={[styles.navText, styles.navTextPrimary]}>Chương tiếp →</Text>
+            </Pressable>
+          ) : (
+            <View style={styles.navBtnPlaceholder} />
+          )}
         </View>
       </View>
 
@@ -331,8 +367,7 @@ const styles = StyleSheet.create({
   navRow: { flexDirection: "row", marginTop: 10, alignItems: 'center' },
   navBtn: { flex: 1, minHeight: 48, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#e5e7eb", marginHorizontal: 5, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: "#cbd5e1", shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 4, elevation: 2 },
   navBtnPrimary: { backgroundColor: "#1088ff", borderColor: "#0f73d0" },
+  navBtnPlaceholder: { flex: 1, marginHorizontal: 5 },
   navText: { color: "#0f172a", fontWeight: "800", fontSize: 14, letterSpacing: 0.1 },
   navTextPrimary: { color: "#ffffff" },
-  navBtnDisabled: { backgroundColor: "#e5e7eb", borderColor: "#cbd5e1", opacity: 1 },
-  navTextDisabled: { color: "#0f172a" },
 });

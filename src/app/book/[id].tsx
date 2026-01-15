@@ -10,6 +10,7 @@ import { shouldShowPlacement } from '../../lib/ads'
 import AdInterstitial from '../../components/AdInterstitial'
 import { downloadBookOffline, isBookDownloaded, removeOfflineBook } from '../../lib/offline'
 import { getReadingProgress } from '../../lib/reading'
+import { SkeletonLoader, BookCardSkeleton, CommentSkeleton, ChapterListSkeleton } from '../../components/SkeletonLoader'
 
 export default function BookDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -41,6 +42,32 @@ export default function BookDetailScreen() {
 
   const [lastReadChapter, setLastReadChapter] = useState<number | null>(null)
   const [visibleComments, setVisibleComments] = useState<number>(5)
+
+  // Format thời gian bình luận (vừa xong, 5 phút trước, 2 giờ trước, etc.)
+  const formatCommentTime = (timestamp: string | number | Date | null | undefined): string => {
+    if (!timestamp) return ''
+    
+    try {
+      const now = new Date()
+      const commentDate = new Date(timestamp)
+      const diffMs = now.getTime() - commentDate.getTime()
+      const diffSec = Math.floor(diffMs / 1000)
+      const diffMin = Math.floor(diffSec / 60)
+      const diffHour = Math.floor(diffMin / 60)
+      const diffDay = Math.floor(diffHour / 24)
+      const diffMonth = Math.floor(diffDay / 30)
+      const diffYear = Math.floor(diffDay / 365)
+
+      if (diffSec < 60) return 'Vừa xong'
+      if (diffMin < 60) return `${diffMin} phút trước`
+      if (diffHour < 24) return `${diffHour} giờ trước`
+      if (diffDay < 30) return `${diffDay} ngày trước`
+      if (diffMonth < 12) return `${diffMonth} tháng trước`
+      return `${diffYear} năm trước`
+    } catch (e) {
+      return ''
+    }
+  }
 
   const loadAuthorMeta = useCallback(async (aId: string) => {
     try {
@@ -405,12 +432,43 @@ export default function BookDetailScreen() {
   if (!book) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={{ padding: 16 }}>
-          <Text style={styles.title}>{id ? 'Đang tải...' : 'Tiểu thuyết'}</Text>
-          <View style={{ marginTop: 12 }}>
-            <ActivityIndicator size="large" color="#1088ff" />
+        <ScrollView style={styles.scroll}>
+          {/* Header Skeleton */}
+          <View style={styles.headerRow}>
+            <SkeletonLoader width={96} height={128} borderRadius={12} />
+            <View style={{ flex: 1 }}>
+              <SkeletonLoader width="80%" height={20} style={{ marginBottom: 8 }} />
+              <SkeletonLoader width="60%" height={14} style={{ marginBottom: 6 }} />
+              <SkeletonLoader width="50%" height={14} style={{ marginBottom: 12 }} />
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <SkeletonLoader width={80} height={32} borderRadius={10} />
+                <SkeletonLoader width={80} height={32} borderRadius={10} />
+              </View>
+            </View>
           </View>
-        </View>
+
+          {/* Description Card Skeleton */}
+          <View style={[styles.card, { marginTop: 16 }]}>
+            <SkeletonLoader width="40%" height={18} style={{ marginBottom: 12 }} />
+            <SkeletonLoader width="100%" height={14} style={{ marginBottom: 6 }} />
+            <SkeletonLoader width="95%" height={14} style={{ marginBottom: 6 }} />
+            <SkeletonLoader width="85%" height={14} />
+          </View>
+
+          {/* Chapters Skeleton */}
+          <View style={styles.card}>
+            <SkeletonLoader width="50%" height={18} style={{ marginBottom: 12 }} />
+            <ChapterListSkeleton />
+          </View>
+
+          {/* Comments Skeleton */}
+          <View style={styles.card}>
+            <SkeletonLoader width="40%" height={18} style={{ marginBottom: 12 }} />
+            <CommentSkeleton />
+            <CommentSkeleton />
+            <CommentSkeleton />
+          </View>
+        </ScrollView>
       </SafeAreaView>
     )
   }
@@ -569,12 +627,23 @@ export default function BookDetailScreen() {
                   const isHidden = isNegative && !revealedNegative.has(c.id)
                   const myId = user ? String(user.id || user.user_id) : null
                   const isMine = !!(myId && c && c.user_id && String(c.user_id) === String(myId))
+                  
+                  // Handle avatar URL from multiple possible fields
+                  const avatarUrl = c.user_avatar || c.avatar_url || c.avatar || null
+                  const fullAvatarUrl = avatarUrl 
+                    ? (avatarUrl.startsWith('http') ? avatarUrl : `${API_BASE}${avatarUrl.startsWith('/') ? '' : '/'}${avatarUrl}`)
+                    : null
+                  
                   return (
                     <View key={c.id || idx} style={[styles.commentRow, idx !== 0 && styles.rowDivider]}>
-                      {c.user_avatar ? (
-                        <Image source={{ uri: c.user_avatar.startsWith('http') ? c.user_avatar : `${API_BASE}${c.user_avatar}` }} style={styles.avatarStub} />
+                      {fullAvatarUrl ? (
+                        <Image source={{ uri: fullAvatarUrl }} style={styles.commentAvatar} />
                       ) : (
-                        <View style={styles.avatarStub} />
+                        <View style={styles.commentAvatar}>
+                          <Text style={styles.avatarPlaceholder}>
+                            {(c.user_name || c.name || 'U').charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
                       )}
                       <View style={{ flex: 1 }}>
                         <View style={styles.commentHeaderRow}>
@@ -593,7 +662,14 @@ export default function BookDetailScreen() {
                             </View>
                           </Pressable>
                         ) : (
-                          <Text style={[styles.commentText, isNegative && styles.negativeComment]}>{c.content}</Text>
+                          <>
+                            <Text style={[styles.commentText, isNegative && styles.negativeComment]}>{c.content}</Text>
+                            {(c.created_at || c.timestamp) && (
+                              <Text style={styles.commentTime}>
+                                {formatCommentTime(c.created_at || c.timestamp)}
+                              </Text>
+                            )}
+                          </>
                         )}
                       </View>
                     </View>
@@ -721,7 +797,8 @@ const styles = StyleSheet.create({
   sendBtn: { backgroundColor: '#1088ff', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10 },
   sendBtnText: { color: '#fff', fontWeight: '700' },
   commentRow: { flexDirection: 'row', gap: 10, paddingVertical: 10 },
-  avatarStub: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#e5e7eb' },
+  commentAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#e9f2ff', alignItems: 'center', justifyContent: 'center' },
+  avatarPlaceholder: { color: '#1088ff', fontWeight: '800', fontSize: 16 },
   commentHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   commentAuthor: { fontWeight: '700', color: '#0f172a' },
   loadMoreBtn: { marginTop: 12, padding: 12, backgroundColor: '#f2f4f7', borderRadius: 10, alignItems: 'center' },
@@ -729,6 +806,7 @@ const styles = StyleSheet.create({
   commentDeleteBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#fef2f2', borderWidth: StyleSheet.hairlineWidth, borderColor: '#fecaca' },
   commentDeleteText: { color: '#dc2626', fontWeight: '800', fontSize: 12 },
   commentText: { color: '#111827', marginTop: 2 },
+  commentTime: { fontSize: 11, color: '#94a3b8', marginTop: 4 },
   hiddenComment: { backgroundColor: '#f1f5f9', borderRadius: 8, padding: 12, marginTop: 4, borderStyle: 'dashed', borderWidth: 1, borderColor: '#cbd5e1' },
   hiddenCommentText: { color: '#64748b', fontSize: 13, fontStyle: 'italic' },
   negativeComment: { color: '#6b7280', fontStyle: 'italic', backgroundColor: '#fff7ed', padding: 8, borderRadius: 6 },

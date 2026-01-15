@@ -7,15 +7,19 @@ import { API_BASE, apiFetchNotifications, apiMarkNotificationsSeen, type Notific
 
 type UiNotification = {
   id: string
-  type: 'like' | 'follow' | 'donation' | 'rank'
+  type: 'like' | 'follow' | 'donation' | 'rank' | 'new_story' | 'new_chapter'
   created_at: string
   actorName: string
   actorAvatar: string | null
   storyId: string | null
   storyTitle: string | null
+  chapterId: string | null
+  chapterNo: number | null
+  chapterTitle: string | null
   rank: number | null
   coins: number | null
   message: string | null
+  isUnread: boolean
 }
 
 function timeAgo(iso: string) {
@@ -71,15 +75,24 @@ export default function NotificationsScreen() {
           : null
         return {
           id: String(it.id),
-          type: it.type === 'rank' ? 'rank' : it.type === 'donation' ? 'donation' : it.type === 'follow' ? 'follow' : 'like',
+          type: it.type === 'rank' ? 'rank' 
+              : it.type === 'donation' ? 'donation' 
+              : it.type === 'follow' ? 'follow' 
+              : it.type === 'new_story' ? 'new_story'
+              : it.type === 'new_chapter' ? 'new_chapter'
+              : 'like',
           created_at: String(it.created_at || ''),
           actorName: String(it.actor_name || (it.type === 'rank' ? 'Hệ thống' : 'Ai đó')),
           actorAvatar,
           storyId: it.story_id ? String(it.story_id) : null,
           storyTitle: it.story_title ? String(it.story_title) : null,
+          chapterId: it.chapter_id ? String(it.chapter_id) : null,
+          chapterNo: it.chapter_no !== undefined && it.chapter_no !== null ? Number(it.chapter_no) : null,
+          chapterTitle: it.chapter_title ? String(it.chapter_title) : null,
           rank: it.rank !== undefined && it.rank !== null ? Number(it.rank) : null,
           coins: it.coins !== undefined && it.coins !== null ? Number(it.coins) : null,
           message: it.message ? String(it.message) : null,
+          isUnread: !!it.is_unread,
         }
       })
       setItems(mapped)
@@ -107,7 +120,7 @@ export default function NotificationsScreen() {
 
   const renderMessage = (it: UiNotification) => {
     if (it.type === 'rank') {
-      const title = it.storyTitle ? `“${it.storyTitle}”` : 'truyện của bạn'
+      const title = it.storyTitle ? `"${it.storyTitle}"` : 'truyện của bạn'
       const n = it.rank || 0
       if (n === 1 || n === 2 || n === 3) return `Chúc mừng! Truyện ${title} đang Top ${n} trên bảng Thịnh hành.`
       if (n > 0) return `Truyện ${title} đang đứng hạng #${n} trên bảng Thịnh hành.`
@@ -115,30 +128,57 @@ export default function NotificationsScreen() {
     }
     if (it.type === 'follow') return `${it.actorName} đã theo dõi bạn.`
     if (it.type === 'donation') {
-      const storyPart = it.storyTitle ? ` cho truyện “${it.storyTitle}”` : ''
+      const storyPart = it.storyTitle ? ` cho truyện "${it.storyTitle}"` : ''
       return `${it.actorName} đã donate ${it.coins ?? 0} xu${storyPart}.`
     }
+    if (it.type === 'new_story') {
+      const title = it.storyTitle ? `"${it.storyTitle}"` : 'truyện mới'
+      return `${it.actorName} đã thêm truyện mới ${title}.`
+    }
+    if (it.type === 'new_chapter') {
+      const storyPart = it.storyTitle ? ` "${it.storyTitle}"` : ''
+      const chapterPart = it.chapterTitle 
+        ? `chương "${it.chapterTitle}"` 
+        : it.chapterNo 
+          ? `chương ${it.chapterNo}` 
+          : 'chương mới'
+      return `${it.actorName} đã thêm ${chapterPart} vào truyện${storyPart}.`
+    }
     // like
-    const storyPart = it.storyTitle ? ` truyện “${it.storyTitle}”` : ' truyện của bạn'
+    const storyPart = it.storyTitle ? ` truyện "${it.storyTitle}"` : ' truyện của bạn'
     return `${it.actorName} đã thích${storyPart}.`
   }
 
   const renderItem = ({ item }: { item: UiNotification }) => {
     const canOpenStory = !!item.storyId
+    const targetPath = item.chapterId && item.type === 'new_chapter'
+      ? { pathname: '/reader/[id]', params: { id: item.storyId || '1', ch: item.chapterNo?.toString() || '1' } }
+      : { pathname: '/book/[id]', params: { id: item.storyId } }
+    
     return (
       <Pressable
         onPress={() => {
-          if (canOpenStory && item.storyId) router.push({ pathname: '/book/[id]', params: { id: item.storyId } } as any)
+          if (canOpenStory && item.storyId) router.push(targetPath as any)
         }}
-        style={({ pressed }) => [styles.item, pressed && { opacity: 0.8 }, !canOpenStory && { opacity: 1 }]}
+        style={({ pressed }) => [
+          styles.item, 
+          pressed && { opacity: 0.8 }, 
+          !canOpenStory && { opacity: 1 },
+          item.isUnread && { backgroundColor: '#f0f9ff' }
+        ]}
       >
-        {item.actorAvatar ? (
-          <Image source={{ uri: item.actorAvatar }} style={styles.avatar} />
-        ) : (
-          <View style={[styles.avatar, styles.avatarFallback]}>
-            <Text style={{ fontWeight: '800', color: '#0f172a' }}>{item.actorName.slice(0, 1).toUpperCase()}</Text>
-          </View>
-        )}
+        <View style={{ position: 'relative' }}>
+          {item.actorAvatar ? (
+            <Image source={{ uri: item.actorAvatar }} style={styles.avatar} />
+          ) : (
+            <View style={[styles.avatar, styles.avatarFallback]}>
+              <Text style={{ fontWeight: '800', color: '#0f172a' }}>{item.actorName.slice(0, 1).toUpperCase()}</Text>
+            </View>
+          )}
+          {item.isUnread && (
+            <View style={styles.unreadDot} />
+          )}
+        </View>
 
         <View style={{ flex: 1 }}>
           <Text style={styles.msg}>{renderMessage(item)}</Text>
@@ -222,6 +262,17 @@ const styles = StyleSheet.create({
   },
   avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#b3d7ff' },
   avatarFallback: { alignItems: 'center', justifyContent: 'center' },
+  unreadDot: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#ef4444',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
   msg: { color: '#0f172a', fontWeight: '700', fontSize: 14, lineHeight: 20 },
   meta: { color: '#64748b', fontSize: 12 },
   metaLink: { color: '#1088ff', fontSize: 12, fontWeight: '800' },
