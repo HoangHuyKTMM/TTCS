@@ -3,6 +3,7 @@ import { StyleSheet, Text, View, ScrollView, Pressable, TextInput, Alert, Image,
 import { Link, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
+import { useDebouncedNavigation } from '../lib/navigation'
 import * as Auth from "../lib/auth";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
@@ -35,6 +36,7 @@ const AUTHOR_COST_VIP = 300;
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const { navigate } = useDebouncedNavigation()
   const [token, setToken] = useState<string | null>(null);
   const [hasUnreadNotifs, setHasUnreadNotifs] = useState(false);
   const [user, setUser] = useState<any | null>(null);
@@ -473,7 +475,7 @@ export default function ProfileScreen() {
             <View style={styles.createCard}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <Text style={styles.sectionTitle}>📚  Truyện của tôi</Text>
-                <Pressable onPress={() => router.push('/author/manage' as any)} style={styles.chip}>
+                <Pressable onPress={() => navigate('/author/manage')} style={styles.chip}>
                   <Text style={styles.chipText}>Quản lý</Text>
                 </Pressable>
               </View>
@@ -546,7 +548,7 @@ export default function ProfileScreen() {
             <Pressable
               key={it.key}
               onPress={() => {
-                if (it.href) return router.push(it.href as any);
+                if (it.href) return navigate(it.href);
                 Alert.alert("Thông báo", "Chức năng đang phát triển.");
               }}
               style={({ pressed }) => [styles.listItem, idx !== 0 && styles.listItemDivider, pressed && { opacity: 0.7 }]}

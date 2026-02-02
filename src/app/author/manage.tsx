@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { ScrollView, View, Text, Pressable, StyleSheet, Alert, FlatList, TextInput, Modal, ActivityIndicator } from 'react-native'
 import { useRouter, useFocusEffect } from 'expo-router'
+import { useDebouncedNavigation } from '../../lib/navigation'
 import * as Auth from '../../lib/auth'
 import { apiFetchBooks, apiDeleteBook, apiUpdateBook, apiDeleteChapter, apiUpdateChapter, apiFetchBook, API_BASE } from '../../lib/api'
 
@@ -22,6 +23,7 @@ type Chapter = {
 
 export default function AuthorManageScreen() {
   const router = useRouter()
+  const { navigate } = useDebouncedNavigation()
   const [token, setToken] = useState<string | null>(null)
   const [books, setBooks] = useState<Book[]>([])
   const [loading, setLoading] = useState(true)
@@ -179,7 +181,7 @@ export default function AuthorManageScreen() {
       <SafeAreaView style={styles.container}>
         <View style={{ padding: 24, alignItems: 'center' }}>
           <Text style={styles.title}>Đăng nhập để quản lý truyện</Text>
-          <Pressable onPress={() => router.push('/(auth)/login' as any)} style={styles.primaryBtn}>
+          <Pressable onPress={() => navigate('/(auth)/login')} style={styles.primaryBtn}>
             <Text style={styles.primaryBtnText}>Đăng nhập</Text>
           </Pressable>
         </View>
@@ -258,7 +260,7 @@ export default function AuthorManageScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Quản lý truyện</Text>
-        <Pressable onPress={() => router.push('/author/create' as any)} style={styles.importBtn}>
+        <Pressable onPress={() => navigate('/author/create')} style={styles.importBtn}>
           <Text style={styles.importBtnText}>Tạo truyện</Text>
         </Pressable>
       </View>
@@ -291,7 +293,7 @@ export default function AuthorManageScreen() {
           ListEmptyComponent={
             <View style={{ padding: 24, alignItems: 'center' }}>
               <Text style={{ color: '#64748b', marginBottom: 16 }}>Chưa có truyện nào</Text>
-              <Pressable onPress={() => router.push('/author/create' as any)} style={styles.primaryBtn}>
+              <Pressable onPress={() => navigate('/author/create')} style={styles.primaryBtn}>
                 <Text style={styles.primaryBtnText}>Tạo truyện mới</Text>
               </Pressable>
             </View>

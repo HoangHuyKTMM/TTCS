@@ -3,6 +3,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { ActivityIndicator, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native'
 import { useFocusEffect } from '@react-navigation/native'
 import { useRouter } from 'expo-router'
+import { useDebouncedNavigation } from '../../lib/navigation'
 import * as Auth from '../../lib/auth'
 import { API_BASE, apiFetchAuthors, apiFetchPublicFeed, apiFollowAuthor, apiUnfollowAuthor, type AuthorItem, type FollowingFeedItem } from '../../lib/api'
 import CustomAlert from '../../components/CustomAlert'
@@ -54,6 +55,7 @@ export default function FollowScreen() {
   const [alertButtons, setAlertButtons] = useState<any[] | undefined>(undefined)
 
   const router = useRouter()
+  const { navigate } = useDebouncedNavigation()
 
   const fmtNum = useCallback((n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0), [])
 
@@ -199,7 +201,7 @@ export default function FollowScreen() {
       if (!t) {
         showAlert('Cần đăng nhập', 'Vui lòng đăng nhập để theo dõi tác giả.', [
           { text: 'Để sau' },
-          { text: 'Đăng nhập', onPress: () => router.push('/(auth)/login' as any) },
+          { text: 'Đăng nhập', onPress: () => navigate('/(auth)/login') },
         ])
         return
       }
@@ -238,11 +240,11 @@ export default function FollowScreen() {
       loadAuthors(false)
       loadFeed()
     }
-  }, [authors, token, loadAuthors, loadFeed, me, router, showAlert])
+  }, [authors, token, loadAuthors, loadFeed, me, navigate, showAlert])
 
-  function openBookNow(id: string) {
-    router.push({ pathname: '/book/[id]', params: { id } } as any)
-  }
+  const openBookNow = useCallback((id: string) => {
+    navigate('/book/[id]', { id })
+  }, [navigate])
 
   function handleOpenBook(id: string) {
     if (!userLoaded) {
@@ -269,7 +271,7 @@ export default function FollowScreen() {
     const isSelf = !!(me && item.user_id && String(item.user_id) === String(me.id || me.user_id))
     return (
       <View style={styles.authorCard}>
-        <Pressable onPress={() => router.push({ pathname: '/author/[id]', params: { id: item.id, name: item.name } } as any)} style={{ flex: 1 }}>
+        <Pressable onPress={() => navigate('/author/[id]', { id: item.id, name: item.name })} style={{ flex: 1 }}>
           <View style={styles.authorAvatar}>
             {item.avatarUrl ? (
               <Image source={{ uri: item.avatarUrl }} style={styles.authorAvatarImg} />
@@ -290,7 +292,7 @@ export default function FollowScreen() {
         </Pressable>
       </View>
     )
-  }, [handleToggleFollow, me, router, userLoaded])
+  }, [handleToggleFollow, me, navigate, userLoaded])
 
   const renderFeedItem = useCallback(({ item }: { item: UiFeedItem }) => {
     const headerRight = timeAgo(item.created_at)
@@ -301,7 +303,7 @@ export default function FollowScreen() {
     return (
       <View style={styles.postCard}>
         <View style={styles.postHeader}>
-          <Pressable onPress={() => item.authorId ? router.push({ pathname: '/author/[id]', params: { id: item.authorId, name: item.authorName } } as any) : undefined}>
+          <Pressable onPress={() => item.authorId ? navigate('/author/[id]', { id: item.authorId, name: item.authorName }) : undefined}>
             <Text style={styles.postAuthor} numberOfLines={1}>{item.authorName}</Text>
           </Pressable>
           <Text style={styles.postTime}>{headerRight}</Text>

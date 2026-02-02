@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+admin-dashboard/
+
+# Build outputs
+android/build/
+android/app/build/
+android/.gradle/
+
+# IDE
+.vscode/
+.idea/
+
+# Temp files
+*.log
+.DS_Store
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Local files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Debug
+debug_grok.txt
+grok_output.txt
+grok_test_out.txt
+build_error_log.json
+
+# Other
+picture/
+*.bat

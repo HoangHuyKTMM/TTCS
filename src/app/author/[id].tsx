@@ -3,6 +3,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { ActivityIndicator, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useFocusEffect } from '@react-navigation/native'
+import { useDebouncedNavigation } from '../../lib/navigation'
 import * as Auth from '../../lib/auth'
 import { API_BASE, apiFetchAuthorBooks, apiFetchAuthors, apiFollowAuthor, apiUnfollowAuthor, type AuthorItem } from '../../lib/api'
 import AdInterstitial from '../../components/AdInterstitial'
@@ -44,6 +45,7 @@ export default function AuthorDetailScreen() {
   const [alertButtons, setAlertButtons] = useState<any[] | undefined>(undefined)
 
   const router = useRouter()
+  const { navigate } = useDebouncedNavigation()
 
   const fmtNum = useCallback((n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0), [])
 
@@ -140,7 +142,7 @@ export default function AuthorDetailScreen() {
       if (!token) {
         showAlert('Cần đăng nhập', 'Vui lòng đăng nhập để theo dõi tác giả.', [
           { text: 'Để sau' },
-          { text: 'Đăng nhập', onPress: () => router.push('/(auth)/login' as any) },
+          { text: 'Đăng nhập', onPress: () => navigate('/(auth)/login') },
         ])
         return
       }
@@ -174,11 +176,11 @@ export default function AuthorDetailScreen() {
       console.error(e)
       loadAuthorMeta()
     }
-  }, [authorId, authorUserId, isFollowing, loadAuthorMeta, router, showAlert, user])
+  }, [authorId, authorUserId, isFollowing, loadAuthorMeta, navigate, showAlert, user])
 
-  function openBookNow(id: string) {
-    router.push({ pathname: '/book/[id]', params: { id } } as any)
-  }
+  const openBookNow = useCallback((id: string) => {
+    navigate('/book/[id]', { id })
+  }, [navigate])
 
   function handleOpenBook(id: string) {
     if (!userLoaded) {

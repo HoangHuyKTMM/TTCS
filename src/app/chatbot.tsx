@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { useDebouncedNavigation } from '../lib/navigation'
 import { API_BASE } from "../lib/api";
 import * as Auth from "../lib/auth";
 import Markdown from "react-native-markdown-display";
@@ -27,6 +28,7 @@ type Message = {
 
 export default function ChatbotScreen() {
     const router = useRouter();
+    const { navigate } = useDebouncedNavigation()
     const [messages, setMessages] = useState<Message[]>([
         {
             id: "welcome",
@@ -125,12 +127,7 @@ export default function ChatbotScreen() {
                                 <Pressable
                                     key={book.id}
                                     style={styles.bookCard}
-                                    onPress={() =>
-                                        router.push({
-                                            pathname: "/book/[id]",
-                                            params: { id: book.id },
-                                        } as any)
-                                    }
+                                    onPress={() => navigate('/book/[id]', { id: book.id })}
                                 >
                                     {book.cover_url ? (
                                         <Image

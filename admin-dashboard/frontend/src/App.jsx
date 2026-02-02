@@ -264,7 +264,7 @@ export default function App() {
     if (route === 'book' && selectedBook && selectedBook.id) {
       // nothing - already loaded
     }
-  }, [route, selectedBook])
+  }, [route, selectedBook?.id])
 
   async function load() {
     setLoading(true)
@@ -833,14 +833,34 @@ export default function App() {
                 <h3>Thống kê</h3>
                 <div style={{display:'flex',gap:18,alignItems:'stretch',flexWrap:'wrap'}}>
                   <div style={{flex:1,minWidth:300,background:'#fffefc',padding:12,borderRadius:8}}>
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
                       <div style={{fontWeight:700}}>Top truyện được đọc</div>
-                      <div className="small muted">Dựa trên số độc giả (reading_history)</div>
+                      <div className="small muted">Top 3 theo lượt xem</div>
                     </div>
                     {stats.top_books && stats.top_books.length > 0 ? (
-                      <Bar data={{ labels: stats.top_books.map(b=>b.title), datasets: [{ label: 'Độc giả', backgroundColor: '#8b5e34', data: stats.top_books.map(b=>b.readers) }] }} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }} height={200} />
+                      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                        {stats.top_books.map((book, idx) => (
+                          <div key={book.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 12px',background:'#fff',borderRadius:6,border:'1px solid #efe6db'}}>
+                            <div style={{flex:1}}>
+                              <div style={{fontWeight:600,color:'#333',marginBottom:4,fontSize:14}}>
+                                {idx + 1}. {book.title}
+                              </div>
+                            </div>
+                            <div style={{display:'flex',gap:16,alignItems:'center',marginLeft:12}}>
+                              <div style={{textAlign:'center'}}>
+                                <div className="small muted">Views</div>
+                                <div style={{fontWeight:700,fontSize:16,color:'#8b5e34'}}>{fmtAmount(book.views || 0)}</div>
+                              </div>
+                              <div style={{textAlign:'center'}}>
+                                <div className="small muted">Likes</div>
+                                <div style={{fontWeight:700,fontSize:16,color:'#d2691e'}}>{fmtAmount(book.likes || 0)}</div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     ) : (
-                      <div style={{padding:18}} className="muted">Chưa có dữ liệu đọc (reading_history trống)</div>
+                      <div style={{padding:18}} className="muted">Chưa có dữ liệu truyện</div>
                     )}
                   </div>
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StyleSheet, Text, View, Pressable, FlatList, ActivityIndicator, Image, RefreshControl } from "react-native";
 import { Link, useRouter } from "expo-router";
+import { useDebouncedNavigation } from '../../lib/navigation'
 import { apiFetchBooks, API_BASE } from '../../lib/api';
 import * as Auth from '../../lib/auth';
 import AdInterstitial from '../../components/AdInterstitial'
@@ -21,6 +22,7 @@ export default function RankScreen() {
   const [pendingOpen, setPendingOpen] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const router = useRouter()
+  const { navigate } = useDebouncedNavigation()
 
   const fmtNum = (n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0)
 
@@ -76,9 +78,9 @@ export default function RankScreen() {
     loadBooks(true)
   }, [loadBooks])
 
-  function openBookNow(id: string) {
-    router.push({ pathname: '/book/[id]', params: { id } } as any)
-  }
+  const openBookNow = useCallback((id: string) => {
+    navigate('/book/[id]', { id })
+  }, [navigate])
 
   function handleOpenBook(id: string) {
     if (!userLoaded) {

@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
+import React, { useMemo, useState, useEffect, useCallback } from "react";
 import { Image, TouchableOpacity, Linking, RefreshControl } from 'react-native'
 import { API_BASE, apiFetchBooks } from '../lib/api'
 import * as Auth from '../lib/auth'
@@ -6,6 +6,7 @@ import { shouldShowAds, shouldShowPlacement } from '../lib/ads'
 import AdInterstitial from '../components/AdInterstitial'
 import { useRouter } from 'expo-router'
 import { useFocusEffect } from '@react-navigation/native'
+import { useDebouncedNavigation } from '../lib/navigation'
 import {
   StyleSheet,
   Text,
@@ -37,6 +38,49 @@ type RecommendItem = {
 
 const TABS = ["Đề xuất"] as const;
 
+// Memoized components for better performance
+const RankItemCard = React.memo(({ item, index, onPress }: { item: RankItem; index: number; onPress: (id: string) => void }) => (
+  <Pressable style={styles.rankItem} onPress={() => onPress(item.id)}>
+    <View style={styles.coverWrap}>
+      {item.cover ? (
+        <Image source={{ uri: item.cover }} style={styles.cover} />
+      ) : (
+        <View style={styles.cover} />
+      )}
+      <View
+        style={[
+          styles.rankBadge,
+          index === 0 && styles.rankGold,
+          index === 1 && styles.rankSilver,
+          index === 2 && styles.rankBronze,
+        ]}
+      >
+        <Text style={styles.rankBadgeText}>{index + 1}</Text>
+      </View>
+    </View>
+    <View style={styles.rankTextWrap}>
+      <Text style={styles.rankTitle} numberOfLines={1}>{item.title}</Text>
+      <Text style={styles.rankSubtitle} numberOfLines={1}>{item.subtitle}</Text>
+      <Text style={styles.rankStats}>{item.stats}</Text>
+    </View>
+  </Pressable>
+));
+
+const RecommendItemCard = React.memo(({ item, onPress }: { item: RecommendItem; onPress: (id: string) => void }) => (
+  <Pressable style={styles.recItem} onPress={() => onPress(item.id)}>
+    {item.cover ? (
+      <Image source={{ uri: item.cover }} style={styles.recCover} />
+    ) : (
+      <View style={styles.recCover} />
+    )}
+    <View style={styles.recTextWrap}>
+      <Text style={styles.recTitle} numberOfLines={2}>{item.title}</Text>
+      <Text style={styles.recDesc} numberOfLines={2}>{item.desc}</Text>
+      <Text style={styles.recStats}>{item.stats}</Text>
+    </View>
+  </Pressable>
+));
+
 export default function ExplorePage() {
   const [tab, setTab] = useState<(typeof TABS)[number]>(TABS[0]);
   const [books, setBooks] = useState<any[]>([])
@@ -49,6 +93,8 @@ export default function ExplorePage() {
   const [userLoaded, setUserLoaded] = useState(false)
   const [entryAdVisible, setEntryAdVisible] = useState(false)
   const router = useRouter()
+  const { navigate } = useDebouncedNavigation()
+  
   const loadBooks = useCallback(async () => {
     let mounted = true
     setRefreshing(true)
@@ -136,15 +182,11 @@ export default function ExplorePage() {
 
   // NOTE: don't call loadBooks() here; useFocusEffect already loads on initial focus.
 
-  function openBookNow(id: string) {
-    router.push({ pathname: '/book/[id]', params: { id } } as any)
-  }
+  const handleOpenBook = useCallback((id: string) => {
+    navigate('/book/[id]', { id })
+  }, [navigate])
 
-  function handleOpenBook(id: string) {
-    openBookNow(id)
-  }
-
-  const fmtNum = (n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0)
+  const fmtNum = useCallback((n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0), [])
 
   const topByViews = useMemo(() => {
     return [...books]
@@ -310,36 +352,19 @@ export default function ExplorePage() {
             showsHorizontalScrollIndicator={false}
             style={{ marginHorizontal: -16 }}
             contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}
+            removeClippedSubviews={true}
           >
             {rankColumns.map((col, colIdx) => (
               <View key={colIdx} style={styles.col}>
                 {col.map((item, rowIdx) => {
                   const globalIndex = colIdx * 3 + rowIdx;
                   return (
-                    <Pressable key={item.id} style={styles.rankItem} onPress={() => handleOpenBook(item.id)}>
-                      <View style={styles.coverWrap}>
-                        {item.cover ? (
-                          <Image source={{ uri: item.cover }} style={styles.cover} />
-                        ) : (
-                          <View style={styles.cover} />
-                        )}
-                        <View
-                          style={[
-                            styles.rankBadge,
-                            globalIndex === 0 && styles.rankGold,
-                            globalIndex === 1 && styles.rankSilver,
-                            globalIndex === 2 && styles.rankBronze,
-                          ]}
-                        >
-                          <Text style={styles.rankBadgeText}>{globalIndex + 1}</Text>
-                        </View>
-                      </View>
-                      <View style={styles.rankTextWrap}>
-                        <Text style={styles.rankTitle} numberOfLines={1}>{item.title}</Text>
-                        <Text style={styles.rankSubtitle} numberOfLines={1}>{item.subtitle}</Text>
-                        <Text style={styles.rankStats}>{item.stats}</Text>
-                      </View>
-                    </Pressable>
+                    <RankItemCard 
+                      key={item.id} 
+                      item={item} 
+                      index={globalIndex} 
+                      onPress={handleOpenBook} 
+                    />
                   );
                 })}
               </View>
@@ -361,18 +386,7 @@ export default function ExplorePage() {
           </>
         ) : (
           recData.map((it) => (
-            <Pressable key={it.id} style={styles.recItem} onPress={() => handleOpenBook(it.id)}>
-              {it.cover ? (
-                <Image source={{ uri: it.cover }} style={styles.recCover} />
-              ) : (
-                <View style={styles.recCover} />
-              )}
-              <View style={styles.recTextWrap}>
-                <Text style={styles.recTitle} numberOfLines={2}>{it.title}</Text>
-                <Text style={styles.recDesc} numberOfLines={2}>{it.desc}</Text>
-                <Text style={styles.recStats}>{it.stats}</Text>
-              </View>
-            </Pressable>
+            <RecommendItemCard key={it.id} item={it} onPress={handleOpenBook} />
           ))
         )}
         <AdInterstitial visible={entryAdVisible} placement="home" onFinish={() => setEntryAdVisible(false)} />

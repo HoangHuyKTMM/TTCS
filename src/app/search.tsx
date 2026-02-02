@@ -6,8 +6,30 @@ import { apiFetchBooks, API_BASE } from '../lib/api';
 import * as Auth from '../lib/auth';
 import { useFocusEffect } from '@react-navigation/native'
 import { BookCardSkeleton } from '../components/SkeletonLoader'
+import { useDebouncedNavigation } from '../lib/navigation'
 
 const GENRES = ["Tất cả", "Ngôn tình", "Hiện đại", "Cổ đại", "Huyền huyễn", "Xuyên không", "Đam mỹ"];
+
+// Memoized search result item
+const SearchResultItem = React.memo(({ item, fmtNum, onPress }: { item: any; fmtNum: (n: number) => string; onPress: (id: string) => void }) => (
+  <Pressable onPress={() => onPress(item.id)} style={styles.item}>
+    {item.cover ? (
+      <Image source={{ uri: item.cover }} style={styles.cover} />
+    ) : (
+      <View style={styles.cover} />
+    )}
+    <View style={{ flex: 1 }}>
+      <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
+      {item.author ? (
+        <Text style={styles.author} numberOfLines={1}>{item.author}</Text>
+      ) : null}
+      <Text style={styles.meta}>
+        {fmtNum(Number(item.views || 0))} lượt xem · {fmtNum(Number(item.likes || 0))} lượt thích
+      </Text>
+      <Text style={styles.meta}>{item.chapters_count} chương</Text>
+    </View>
+  </Pressable>
+));
 
 export default function SearchScreen() {
   const [q, setQ] = useState("");
@@ -17,8 +39,9 @@ export default function SearchScreen() {
   const [selectedGenre, setSelectedGenre] = useState("Tất cả");
   const [user, setUser] = useState<any | null>(null)
   const [userLoaded, setUserLoaded] = useState(false)
-  const debounceTimer = useRef<NodeJS.Timeout | null>(null)
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const router = useRouter()
+  const { navigate } = useDebouncedNavigation()
 
   const fmtNum = useCallback((n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0), [])
 
@@ -77,37 +100,37 @@ export default function SearchScreen() {
     return () => { mounted = false; };
   }, [fmtNum]);
 
-  function openBookNow(id: string) {
-    router.push({ pathname: '/book/[id]', params: { id } } as any)
-  }
+  const handleOpenBook = useCallback((id: string) => {
+    navigate('/book/[id]', { id })
+  }, [navigate])
 
-  function handleOpenBook(id: string) {
-    openBookNow(id)
-  }
+  const renderItem = useCallback(({ item }: { item: any }) => (
+    <SearchResultItem item={item} fmtNum={fmtNum} onPress={handleOpenBook} />
+  ), [fmtNum])
+
+  const keyExtractor = useCallback((item: any) => item.id, [])
 
   const filtered = React.useMemo(() => {
     const query = debouncedQ.trim().toLowerCase();
     let result = books;
     
-    // If no search query and "Tất cả" selected, show only first 5 books as suggestions
-    if (!query && selectedGenre === "Tất cả") {
-      return books.slice(0, 5);
-    }
-    
-    // Filter by genre
+    // Step 1: Filter by genre first
     if (selectedGenre !== "Tất cả") {
       result = result.filter((b) => 
         b.genre && b.genre.toLowerCase().includes(selectedGenre.toLowerCase())
       );
     }
     
-    // Filter by search query
+    // Step 2: Filter by search query
     if (query) {
       result = result.filter((b) => {
         const titleLc = (b.title || '').toLowerCase();
         const authorLc = typeof b.author === 'string' ? b.author.toLowerCase() : '';
         return titleLc.includes(query) || authorLc.includes(query);
       });
+    } else {
+      // If no search query, limit results to first 10 books
+      result = result.slice(0, 10);
     }
     
     return result;
@@ -153,34 +176,22 @@ export default function SearchScreen() {
         </View>
       ) : (
         <>
-          {!q && selectedGenre === "Tất cả" && (
+          {!q && (
             <View style={styles.hintContainer}>
-              <Text style={styles.hintText}>Gợi ý truyện hot</Text>
+              <Text style={styles.hintText}>
+                {selectedGenre === "Tất cả" ? "Gợi ý truyện hot" : `Thể loại: ${selectedGenre}`}
+              </Text>
             </View>
           )}
           <FlatList
             data={filtered}
-            keyExtractor={(it) => it.id}
+            keyExtractor={keyExtractor}
             contentContainerStyle={styles.list}
-            renderItem={({ item }) => (
-                  <Pressable onPress={() => handleOpenBook(item.id)} style={styles.item}>
-                  {item.cover ? (
-                    <Image source={{ uri: item.cover }} style={styles.cover} />
-                  ) : (
-                    <View style={styles.cover} />
-                  )}
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
-                    {item.author ? (
-                      <Text style={styles.author} numberOfLines={1}>{item.author}</Text>
-                    ) : null}
-                    <Text style={styles.meta}>
-                      {fmtNum(Number(item.views || 0))} lượt xem · {fmtNum(Number(item.likes || 0))} lượt thích
-                    </Text>
-                    <Text style={styles.meta}>{item.chapters_count} chương</Text>
-                  </View>
-                </Pressable>
-            )}
+            renderItem={renderItem}
+            removeClippedSubviews={true}
+            maxToRenderPerBatch={10}
+            windowSize={5}
+            initialNumToRender={10}
             ItemSeparatorComponent={() => <View style={styles.divider} />}
             ListEmptyComponent={() => (
               <View style={styles.empty}>

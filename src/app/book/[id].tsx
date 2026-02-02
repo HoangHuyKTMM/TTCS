@@ -3,6 +3,7 @@ import { StyleSheet, Text, View, ScrollView, Pressable, ActivityIndicator, Image
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from '@react-navigation/native'
+import { useDebouncedNavigation } from '../../lib/navigation'
 
 import { apiFetchBook, API_BASE, apiDonateCoins, apiLikeBook, apiUnlikeBook, apiFetchAuthors, apiFollowAuthor, apiUnfollowAuthor, apiFetchComments, apiPostComment, apiDeleteComment, apiGetWallet } from '../../lib/api'
 import * as Auth from '../../lib/auth'
@@ -15,6 +16,7 @@ import { SkeletonLoader, BookCardSkeleton, CommentSkeleton, ChapterListSkeleton 
 export default function BookDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter()
+  const { navigate, goBack } = useDebouncedNavigation()
   const [book, setBook] = useState<Book | null>(null)
   const [loading, setLoading] = useState(false)
   const [user, setUser] = useState<any | null>(null)
@@ -494,7 +496,7 @@ export default function BookDetailScreen() {
               {!!authorId && (
                 <View style={styles.authorRow}>
                   <Pressable
-                    onPress={() => router.push({ pathname: '/author/[id]', params: { id: authorId, name: authorName || undefined } } as any)}
+                    onPress={() => navigate('/author/[id]', { id: authorId, name: authorName || undefined })}
                     style={({ pressed }) => [styles.authorLeft, pressed && { opacity: 0.75 }]}
                   >
                     <View style={styles.authorAvatar}>

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { ActivityIndicator, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Link, useRouter } from 'expo-router'
+import { useDebouncedNavigation } from '../lib/navigation'
 import * as Auth from '../lib/auth'
 import { API_BASE, apiFetchNotifications, apiMarkNotificationsSeen, type NotificationItem } from '../lib/api'
 
@@ -48,6 +49,7 @@ function timeAgo(iso: string) {
 
 export default function NotificationsScreen() {
   const router = useRouter()
+  const { navigate } = useDebouncedNavigation()
   const [token, setToken] = useState<string | null>(null)
   const [items, setItems] = useState<UiNotification[]>([])
   const [loading, setLoading] = useState(true)
@@ -152,13 +154,16 @@ export default function NotificationsScreen() {
   const renderItem = ({ item }: { item: UiNotification }) => {
     const canOpenStory = !!item.storyId
     const targetPath = item.chapterId && item.type === 'new_chapter'
-      ? { pathname: '/reader/[id]', params: { id: item.storyId || '1', ch: item.chapterNo?.toString() || '1' } }
-      : { pathname: '/book/[id]', params: { id: item.storyId } }
+      ? '/reader/[id]'
+      : '/book/[id]'
+    const params = item.chapterId && item.type === 'new_chapter'
+      ? { id: item.storyId || '1', ch: item.chapterNo?.toString() || '1' }
+      : { id: item.storyId }
     
     return (
       <Pressable
         onPress={() => {
-          if (canOpenStory && item.storyId) router.push(targetPath as any)
+          if (canOpenStory && item.storyId) navigate(targetPath, params)
         }}
         style={({ pressed }) => [
           styles.item, 
