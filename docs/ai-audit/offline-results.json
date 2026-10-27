@@ -1,0 +1,161 @@
+{
+  "auditDate": "2026-10-01",
+  "method": "synthetic fixtures; injected model responses; no network or production DB",
+  "results": [
+    {
+      "id": "A01",
+      "title": "First chapter uses no model",
+      "verdict": "pass",
+      "calls": 0,
+      "calledModel": false
+    },
+    {
+      "id": "A02",
+      "title": "Short cached summary is reused",
+      "verdict": "pass",
+      "calls": 0,
+      "cached": true
+    },
+    {
+      "id": "A03",
+      "title": "Long valid cached summary is regenerated",
+      "verdict": "issue_reproduced",
+      "cacheChars": 651,
+      "unexpectedModelCalls": 1
+    },
+    {
+      "id": "A04",
+      "title": "Concurrent identical misses duplicate model calls",
+      "verdict": "issue_reproduced",
+      "concurrentRequests": 2,
+      "modelCalls": 2
+    },
+    {
+      "id": "A05",
+      "title": "Ending of a long chapter is absent from summary prompt",
+      "verdict": "issue_reproduced",
+      "endingIncluded": false
+    },
+    {
+      "id": "A06",
+      "title": "Client chapter overrides existing server progress",
+      "verdict": "issue_reproduced",
+      "serverProgress": 5,
+      "clientProgress": 100,
+      "progressReads": 0,
+      "fetchedRange": [
+        85,
+        99
+      ]
+    },
+    {
+      "id": "A07",
+      "title": "Missing progress defaults to latest chapter",
+      "verdict": "issue_reproduced",
+      "missingProgress": true,
+      "fetchedRange": [
+        85,
+        99
+      ]
+    },
+    {
+      "id": "A08",
+      "title": "Foreign conversation ID is loaded without ownership check",
+      "verdict": "issue_reproduced",
+      "loadedConversation": 123,
+      "otherUserHistoryReachedModel": true,
+      "status": 200
+    },
+    {
+      "id": "A09",
+      "title": "Recap chip asks for ten chapters but retrieves fifteen",
+      "verdict": "issue_reproduced",
+      "uiChapters": 10,
+      "retrievedChapters": 15,
+      "window": {
+        "fromChapter": 5,
+        "toChapter": 19
+      }
+    },
+    {
+      "id": "A10",
+      "title": "Unsupported recommended title is accepted",
+      "verdict": "issue_reproduced",
+      "ungroundedReplyAccepted": true,
+      "bookCards": 0
+    },
+    {
+      "id": "A11",
+      "title": "Favorite write has no explicit user intent gate",
+      "verdict": "issue_reproduced",
+      "requestedAction": "recommend",
+      "favoriteWrites": 1
+    },
+    {
+      "id": "A12",
+      "title": "Regex rejects benign discussion of sensitive fiction",
+      "verdict": "issue_reproduced",
+      "text": "Truyện phê phán khủng bố và lên án bạo lực rất rõ.",
+      "rejected": true
+    },
+    {
+      "id": "A13",
+      "title": "Heuristic confuses ordinary Vietnamese with profanity",
+      "verdict": "issue_reproduced",
+      "text": "Các nhân vật có bước trưởng thành lớn trong buổi gặp mặt.",
+      "score": 0.92,
+      "zone": "red"
+    },
+    {
+      "id": "A14",
+      "title": "Score parser accepts an unrelated year as maximum toxicity",
+      "verdict": "issue_reproduced",
+      "modelOutput": "Năm 2026, điểm độc hại là 0.1",
+      "parsedScore": 1
+    },
+    {
+      "id": "A15",
+      "title": "Toxic ending beyond 2000 characters is not sent to model",
+      "verdict": "issue_reproduced",
+      "sentChars": 2000,
+      "endingIncluded": false
+    },
+    {
+      "id": "A16",
+      "title": "Middle toxicity zone creates no admin review log",
+      "verdict": "issue_reproduced",
+      "score": 0.7,
+      "status": "shadowbanned",
+      "moderationLogs": 0
+    },
+    {
+      "id": "A17",
+      "title": "Exact duplicate is flagged without requiring LLM",
+      "verdict": "pass",
+      "hamming": 0,
+      "zone": "red"
+    },
+    {
+      "id": "A18",
+      "title": "Moderation invents 15 percent after dismissing collision",
+      "verdict": "issue_reproduced",
+      "hamming": 20,
+      "bitAgreementPct": 68.75,
+      "displayedPct": 15,
+      "zone": "green"
+    },
+    {
+      "id": "A19",
+      "title": "Plagiarism LLM sees only first 1000 characters",
+      "verdict": "issue_reproduced",
+      "copiedEndingIncluded": false
+    },
+    {
+      "id": "A20",
+      "title": "HTTP rejection from telemetry is reported as stored",
+      "verdict": "issue_reproduced",
+      "httpStatus": 401,
+      "reportedStored": true
+    }
+  ]
+}

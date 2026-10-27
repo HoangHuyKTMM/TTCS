@@ -1,128 +1,180 @@
+import { useThemeStyles } from './AppTheme'
+import { type AppColors } from '../theme'
 import React, { useState, useEffect, useRef } from 'react'
-import { View, Text, Modal, StyleSheet, Pressable, Image, ActivityIndicator, Alert } from 'react-native'
+import { View, Text, Modal, StyleSheet, Pressable, Image, ActivityIndicator, ScrollView } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
-import { apiVerifyAndCreditPayment } from '../lib/api'
+import { apiCreateTopupIntent, apiCheckTopupIntentStatus, apiVerifyAndCreditPayment, apiLocalSepayPay, TopupIntent } from '../lib/api'
 
 type Props = {
     visible: boolean
     onClose: () => void
     onPaymentSuccess?: (wallet?: any) => void
-    amount: number
     coins: number
-    userId?: string | number
     token?: string
 }
 
-const BANK_ID = "MB"
-const ACCOUNT_NO = "123406072004"
-const ACCOUNT_NAME = "Hoang Van Huy"
+export default function QRPaymentModal({ visible, onClose, onPaymentSuccess, coins, token }: Props) {
+  const { colors, styles } = useThemeStyles(createStyles)
 
-export default function QRPaymentModal({ visible, onClose, onPaymentSuccess, amount, coins, userId, token }: Props) {
+    const [loadingIntent, setLoadingIntent] = useState(false)
     const [checking, setChecking] = useState(false)
     const [paymentStatus, setPaymentStatus] = useState<'pending' | 'success' | 'failed'>('pending')
     const [statusMessage, setStatusMessage] = useState('')
     const checkIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+    const successRef = useRef(false)
 
+    const [intentCoins, setIntentCoins] = useState(coins)
+    const [intentAmount, setIntentAmount] = useState(coins * 100)
     const [paymentCode, setPaymentCode] = useState('')
+    const [bankName, setBankName] = useState('MBBank')
+    const [accountNo, setAccountNo] = useState('')
+    const [accountName, setAccountName] = useState('')
+    const [qrImageUrl, setQrImageUrl] = useState('')
+    const [localMode, setLocalMode] = useState(false)
 
-    // Payment content is a short unique code
-    // Format: "RD<userId><shortCode>" e.g. "RD123A7B2"
-    const addInfo = paymentCode || `Nap ${coins} xu`
-    const qrUrl = `https://img.vietqr.io/image/${BANK_ID}-${ACCOUNT_NO}-compact2.jpg?amount=${amount}&addInfo=${encodeURIComponent(addInfo)}&accountName=${encodeURIComponent(ACCOUNT_NAME)}`
+    const stopPolling = () => {
+        if (checkIntervalRef.current) {
+            clearInterval(checkIntervalRef.current)
+            checkIntervalRef.current = null
+        }
+    }
 
-    // Reset state when modal opens
+    const handlePaymentSuccess = (walletData?: any, creditedCoins?: number) => {
+        if (successRef.current) return
+        successRef.current = true
+        stopPolling()
+        const n = creditedCoins ?? intentCoins
+        setPaymentStatus('success')
+        setStatusMessage(`✅ Thanh toán thành công! Đã nạp ${n} xu.`)
+
+        setTimeout(() => {
+            if (onPaymentSuccess) {
+                onPaymentSuccess(walletData)
+            }
+            onClose()
+        }, 1500)
+    }
+
+    const verifyOnce = async (code: string) => {
+        if (!code || !token || successRef.current) return
+        try {
+            const result = await apiVerifyAndCreditPayment(code, token)
+            if (result && result.paid && (result.success || result.already_credited)) {
+                handlePaymentSuccess(result.wallet, intentCoins)
+                return
+            }
+            const status = await apiCheckTopupIntentStatus(code, token)
+            if (status && (status.is_paid || status.status === 'consumed')) {
+                handlePaymentSuccess(status.wallet, status.coins ?? intentCoins)
+            }
+        } catch (e) {
+            // Ignore polling network glitches
+        }
+    }
+
+    const startAutoCheck = (code: string) => {
+        stopPolling()
+        checkIntervalRef.current = setInterval(() => {
+            verifyOnce(code)
+        }, 3000)
+    }
+
     useEffect(() => {
-        if (visible) {
+        let isMounted = true
+        successRef.current = false
+
+        const initPayment = async () => {
+            if (!visible) {
+                stopPolling()
+                return
+            }
+
             setPaymentStatus('pending')
             setStatusMessage('')
             setChecking(false)
+            setLoadingIntent(true)
+            setQrImageUrl('')
+            setLocalMode(false)
+            setPaymentCode('')
+            setAccountNo('')
+            setAccountName('')
 
-            // Generate unique payment code: RD + userId + short timestamp (base36)
-            if (userId) {
-                const shortTs = Date.now().toString(36).slice(-4).toUpperCase()
-                setPaymentCode(`RD${userId}${shortTs}`)
-            } else {
-                setPaymentCode('')
+            if (!token) {
+                if (isMounted) {
+                    setPaymentStatus('failed')
+                    setStatusMessage('Bạn cần đăng nhập để tạo mã thanh toán.')
+                    setLoadingIntent(false)
+                }
+                return
             }
-        } else {
-            // Clear interval when modal closes
-            if (checkIntervalRef.current) {
-                clearInterval(checkIntervalRef.current)
-                checkIntervalRef.current = null
+
+            try {
+                const res = await apiCreateTopupIntent(coins, token)
+                if (!isMounted) return
+                if (res && res.success && res.intent) {
+                    const intent: TopupIntent = res.intent
+                    setPaymentCode(intent.payment_code)
+                    setIntentCoins(Number(intent.coins) || coins)
+                    setIntentAmount(Number(intent.amount) || coins * 100)
+                    if (intent.bank_name) setBankName(intent.bank_name)
+                    if (intent.account_no) setAccountNo(intent.account_no)
+                    if (intent.account_name) setAccountName(intent.account_name)
+                    setQrImageUrl(intent.vietqr_url || intent.qr_url)
+                    setLocalMode(!!intent.local_mode)
+                    startAutoCheck(intent.payment_code)
+                    verifyOnce(intent.payment_code)
+                    setLoadingIntent(false)
+                    return
+                }
+                setPaymentStatus('failed')
+                setStatusMessage((res && (res.error || (res as any).message)) || 'Không tạo được mã QR. Vui lòng thử lại.')
+            } catch (err) {
+                console.error('[QRPayment] Error creating topup intent:', err)
+                if (isMounted) {
+                    setPaymentStatus('failed')
+                    setStatusMessage('Không tạo được mã QR. Vui lòng thử lại.')
+                }
             }
+            if (isMounted) setLoadingIntent(false)
         }
-    }, [visible, userId])
 
-    // Cleanup on unmount
-    useEffect(() => {
+        initPayment()
+
         return () => {
-            if (checkIntervalRef.current) {
-                clearInterval(checkIntervalRef.current)
-            }
+            isMounted = false
+            stopPolling()
         }
-    }, [])
+    }, [visible, coins, token])
 
-    const checkPayment = async () => {
+    const handleManualCheck = async () => {
         if (!token) {
             setStatusMessage('Bạn cần đăng nhập để xác thực thanh toán.')
             return
         }
+        if (!paymentCode) {
+            setStatusMessage('Chưa có mã thanh toán. Vui lòng đóng và mở lại.')
+            return
+        }
 
         setChecking(true)
-        setStatusMessage('Đang kiểm tra giao dịch...')
+        setStatusMessage(localMode ? 'Đang cộng xu trên máy local...' : 'Đang kiểm tra giao dịch...')
 
         try {
-            // Call backend API which verifies with bank and auto-credits coins
-            const result = await apiVerifyAndCreditPayment(coins, amount, paymentCode, token)
-
-            if (result.paid && result.success) {
-                setPaymentStatus('success')
-                setStatusMessage(result.message || '✅ Thanh toán thành công! Xu đã được cộng vào tài khoản.')
-
-                // Clear any running interval
-                if (checkIntervalRef.current) {
-                    clearInterval(checkIntervalRef.current)
-                    checkIntervalRef.current = null
-                }
-
-                // Wait a bit then call success callback with wallet info
-                setTimeout(() => {
-                    if (onPaymentSuccess) {
-                        onPaymentSuccess(result.wallet)
-                    }
-                    onClose()
-                }, 1500)
+            const result = localMode
+                ? await apiLocalSepayPay(paymentCode, token)
+                : await apiVerifyAndCreditPayment(paymentCode, token)
+            if (result.paid && (result.success || result.already_credited)) {
+                handlePaymentSuccess(result.wallet, intentCoins)
             } else {
                 setPaymentStatus('pending')
-                setStatusMessage(result.message || 'Chưa tìm thấy giao dịch. Vui lòng kiểm tra nội dung chuyển khoản.')
+                setStatusMessage(result.message || 'Chưa tìm thấy giao dịch. Vui lòng chuyển khoản đúng nội dung và thử lại.')
             }
         } catch (error: any) {
-            setStatusMessage('Lỗi kết nối. Vui lòng thử lại.')
-            console.error('[QRPayment] Verify payment error:', error)
+            setStatusMessage('Lỗi kết nối tới cổng thanh toán. Vui lòng thử lại.')
+            console.error('[QRPayment] Manual verify payment error:', error)
         } finally {
             setChecking(false)
         }
-    }
-
-    // Auto-check payment every 5 seconds when modal is visible
-    const startAutoCheck = () => {
-        if (checkIntervalRef.current) {
-            clearInterval(checkIntervalRef.current)
-        }
-
-        // Check immediately
-        checkPayment()
-
-        // Then check every 5 seconds
-        checkIntervalRef.current = setInterval(() => {
-            if (paymentStatus !== 'success') {
-                checkPayment()
-            }
-        }, 5000)
-    }
-
-    const handleManualCheck = () => {
-        checkPayment()
     }
 
     const handleClose = () => {
@@ -138,126 +190,184 @@ export default function QRPaymentModal({ visible, onClose, onPaymentSuccess, amo
             <View style={styles.overlay}>
                 <View style={styles.container}>
                     <View style={styles.header}>
-                        <Text style={styles.title}>Thanh toán</Text>
+                        <View>
+                            <Text style={styles.title}>Nạp xu tự động</Text>
+                            <Text style={styles.subtitle}>Cổng thanh toán tự động SePay</Text>
+                        </View>
                         <Pressable onPress={handleClose} hitSlop={10}>
-                            <Ionicons name="close" size={24} color="#6b7280" />
+                            <Ionicons name="close" size={24} color={colors.textSecondary} />
                         </Pressable>
                     </View>
 
-                    <View style={styles.qrContainer}>
-                        <Image
-                            source={{ uri: qrUrl }}
-                            style={styles.qrImage}
-                            resizeMode="contain"
-                        />
-                    </View>
-
-                    <View style={styles.info}>
-                        <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>Ngân hàng</Text>
-                            <Text style={styles.infoValue}>MB Bank</Text>
-                        </View>
-                        <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>Số tài khoản</Text>
-                            <Text style={styles.infoValue}>{ACCOUNT_NO}</Text>
-                        </View>
-                        <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>Chủ tài khoản</Text>
-                            <Text style={styles.infoValue}>{ACCOUNT_NAME}</Text>
-                        </View>
-                        <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>Số tiền</Text>
-                            <Text style={[styles.infoValue, styles.amount]}>{amount.toLocaleString('vi-VN')} VNĐ</Text>
-                        </View>
-                        <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>Nội dung CK</Text>
-                            <Text style={styles.infoValue}>{addInfo}</Text>
-                        </View>
-                    </View>
-
-                    {/* Payment Status */}
-                    {statusMessage ? (
-                        <View style={[
-                            styles.statusContainer,
-                            paymentStatus === 'success' && styles.statusSuccess
-                        ]}>
-                            {checking && <ActivityIndicator size="small" color="#1088ff" style={{ marginRight: 8 }} />}
-                            <Text style={[
-                                styles.statusText,
-                                paymentStatus === 'success' && styles.statusTextSuccess
-                            ]}>
-                                {statusMessage}
-                            </Text>
-                        </View>
-                    ) : (
-                        <Text style={styles.note}>
-                            Quét mã QR bằng app ngân hàng để thanh toán. Sau khi thanh toán, nhấn nút xác nhận bên dưới.
-                        </Text>
-                    )}
-
-                    {/* Verify Payment Button */}
-                    <Pressable
-                        style={[styles.verifyBtn, checking && styles.verifyBtnDisabled]}
-                        onPress={handleManualCheck}
-                        disabled={checking || paymentStatus === 'success'}
-                    >
-                        {checking ? (
-                            <ActivityIndicator size="small" color="#fff" />
+                    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+                        {loadingIntent ? (
+                            <View style={styles.loadingContainer}>
+                                <ActivityIndicator size="large" color={colors.accentText} />
+                                <Text style={styles.loadingText}>Đang tạo mã QR thanh toán SePay...</Text>
+                            </View>
+                        ) : paymentStatus === 'failed' || !qrImageUrl ? (
+                            <View style={styles.loadingContainer}>
+                                <Ionicons name="alert-circle" size={36} color={colors.danger} />
+                                <Text style={styles.loadingText}>{statusMessage || 'Không tạo được mã QR. Vui lòng thử lại.'}</Text>
+                                <Pressable style={styles.doneBtn} onPress={handleClose}>
+                                    <Text style={styles.doneBtnText}>Đóng</Text>
+                                </Pressable>
+                            </View>
                         ) : (
                             <>
-                                <Ionicons name="checkmark-circle-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
-                                <Text style={styles.verifyBtnText}>Xác nhận thanh toán</Text>
+                                <View style={styles.qrContainer}>
+                                    <Image
+                                        source={{ uri: qrImageUrl }}
+                                        style={styles.qrImage}
+                                        resizeMode="contain"
+                                    />
+                                    <View style={styles.badgeAuto}>
+                                        <Ionicons name="flash" size={14} color={colors.secondaryText} />
+                                        <Text style={styles.badgeAutoText}>{localMode ? 'SePay local: bấm xác nhận để cộng xu' : 'Tự động cộng xu sau 1 - 3 giây'}</Text>
+                                    </View>
+                                </View>
+
+                                <View style={styles.info}>
+                                    <View style={styles.infoRow}>
+                                        <Text style={styles.infoLabel}>Ngân hàng</Text>
+                                        <Text style={styles.infoValue}>{bankName}</Text>
+                                    </View>
+                                    <View style={styles.infoRow}>
+                                        <Text style={styles.infoLabel}>Số tài khoản</Text>
+                                        <Text style={[styles.infoValue, { color: colors.accentText }]} selectable>{accountNo}</Text>
+                                    </View>
+                                    <View style={styles.infoRow}>
+                                        <Text style={styles.infoLabel}>Chủ tài khoản</Text>
+                                        <Text style={styles.infoValue}>{accountName}</Text>
+                                    </View>
+                                    <View style={styles.infoRow}>
+                                        <Text style={styles.infoLabel}>Số tiền</Text>
+                                        <Text style={[styles.infoValue, styles.amount]}>{Number(intentAmount || 0).toLocaleString('vi-VN')} VNĐ</Text>
+                                    </View>
+                                    <View style={styles.infoRow}>
+                                        <Text style={styles.infoLabel}>Nội dung CK</Text>
+                                        <Text style={[styles.infoValue, styles.codeHighlight]} selectable>{paymentCode}</Text>
+                                    </View>
+                                </View>
+
+                                {/* Payment Status / Live indicator */}
+                                {paymentStatus === 'success' ? (
+                                    <View style={[styles.statusContainer, styles.statusSuccess]}>
+                                        <Ionicons name="checkmark-circle" size={20} color="#166534" style={{ marginRight: 8 }} />
+                                        <Text style={[styles.statusText, styles.statusTextSuccess]}>
+                                            {statusMessage}
+                                        </Text>
+                                    </View>
+                                ) : (
+                                    <View style={styles.statusContainer}>
+                                        <ActivityIndicator size="small" color={colors.accentText} style={{ marginRight: 8 }} />
+                                        <Text style={styles.statusText}>
+                                            {statusMessage || (localMode ? 'Chế độ local không trừ tiền ngân hàng. Bấm xác nhận để cộng xu.' : 'Đang chờ chuyển khoản... Quét mã QR bằng App ngân hàng.')}
+                                        </Text>
+                                    </View>
+                                )}
+
+                                <Text style={styles.note}>
+                                    ⚠️ Vui lòng giữ nguyên <Text style={{ fontWeight: '700' }}>Nội dung CK</Text> để hệ thống SePay tự động cộng xu ngay lập tức.
+                                </Text>
+
+                                {/* Manual verify fallback */}
+                                <Pressable
+                                    style={[styles.verifyBtn, (checking || paymentStatus === 'success') && styles.verifyBtnDisabled]}
+                                    onPress={handleManualCheck}
+                                    disabled={checking || paymentStatus === 'success'}
+                                >
+                                    {checking ? (
+                                        <ActivityIndicator size="small" color={colors.onAccent} />
+                                    ) : (
+                                        <>
+                                            <Ionicons name="checkmark-circle-outline" size={20} color={colors.onAccent} style={{ marginRight: 8 }} />
+                                            <Text style={styles.verifyBtnText}>{localMode ? 'Xác nhận SePay local' : 'Xác nhận thanh toán'}</Text>
+                                        </>
+                                    )}
+                                </Pressable>
+
+                                {/* Close Button */}
+                                <Pressable style={styles.doneBtn} onPress={handleClose}>
+                                    <Text style={styles.doneBtnText}>Đóng</Text>
+                                </Pressable>
                             </>
                         )}
-                    </Pressable>
-
-                    {/* Close / Done Button */}
-                    <Pressable style={styles.doneBtn} onPress={handleClose}>
-                        <Text style={styles.doneBtnText}>Đóng</Text>
-                    </Pressable>
+                    </ScrollView>
                 </View>
             </View>
         </Modal>
     )
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: AppColors) => StyleSheet.create({
     overlay: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.5)',
         justifyContent: 'flex-end',
     },
     container: {
-        backgroundColor: '#fff',
+        backgroundColor: colors.surface,
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
         padding: 20,
-        paddingBottom: 40,
+        maxHeight: '90%',
     },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         marginBottom: 16,
     },
     title: {
         fontSize: 20,
         fontWeight: '700',
-        color: '#111827',
+        color: colors.text,
+    },
+    subtitle: {
+        fontSize: 12,
+        color: colors.textSecondary,
+        marginTop: 2,
+    },
+    loadingContainer: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 50,
+        gap: 12,
+    },
+    loadingText: {
+        fontSize: 14,
+        color: colors.textSecondary,
+        fontWeight: '500',
     },
     qrContainer: {
         alignItems: 'center',
-        backgroundColor: '#f8fafc',
+        backgroundColor: colors.bg,
         borderRadius: 16,
         padding: 16,
         marginBottom: 16,
     },
     qrImage: {
         width: 250,
-        height: 300,
+        height: 290,
+    },
+    badgeAuto: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.successSoft,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 20,
+        marginTop: 8,
+        gap: 4,
+    },
+    badgeAutoText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: colors.secondaryText,
     },
     info: {
-        backgroundColor: '#f8fafc',
+        backgroundColor: colors.bg,
         borderRadius: 12,
         padding: 16,
         marginBottom: 16,
@@ -270,47 +380,59 @@ const styles = StyleSheet.create({
     },
     infoLabel: {
         fontSize: 14,
-        color: '#6b7280',
+        color: colors.textSecondary,
     },
     infoValue: {
         fontSize: 14,
         fontWeight: '600',
-        color: '#111827',
+        color: colors.text,
+    },
+    codeHighlight: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#e11d48',
+        backgroundColor: '#ffe4e6',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 6,
     },
     amount: {
-        color: '#059669',
+        color: colors.secondaryText,
         fontSize: 16,
         fontWeight: '700',
     },
     note: {
         fontSize: 13,
-        color: '#6b7280',
+        color: colors.textSecondary,
         textAlign: 'center',
         marginBottom: 16,
+        lineHeight: 18,
     },
     statusContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#f0f9ff',
+        backgroundColor: colors.accentSoft,
         borderRadius: 12,
         padding: 12,
-        marginBottom: 16,
+        marginBottom: 14,
     },
     statusSuccess: {
-        backgroundColor: '#dcfce7',
+        backgroundColor: colors.successSoft,
     },
     statusText: {
-        fontSize: 14,
+        fontSize: 13,
         color: '#1e40af',
         fontWeight: '500',
+        flexShrink: 1,
+        textAlign: 'center',
     },
     statusTextSuccess: {
         color: '#166534',
         fontWeight: '700',
     },
     verifyBtn: {
-        backgroundColor: '#1088ff',
+        backgroundColor: colors.accent,
         paddingVertical: 14,
         borderRadius: 12,
         alignItems: 'center',
@@ -322,20 +444,19 @@ const styles = StyleSheet.create({
         backgroundColor: '#93c5fd',
     },
     verifyBtnText: {
-        color: '#fff',
+        color: colors.onAccent,
         fontSize: 16,
         fontWeight: '700',
     },
     doneBtn: {
-        backgroundColor: '#e5e7eb',
-        paddingVertical: 14,
+        backgroundColor: colors.surfaceSubtle,
+        paddingVertical: 12,
         borderRadius: 12,
         alignItems: 'center',
     },
     doneBtnText: {
-        color: '#374151',
-        fontSize: 16,
-        fontWeight: '700',
+        color: colors.text,
+        fontSize: 15,
+        fontWeight: '600',
     },
 })
-

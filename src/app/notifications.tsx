@@ -1,7 +1,11 @@
+import { useThemeStyles } from '../components/AppTheme'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { ActivityIndicator, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { Link, useRouter } from 'expo-router'
+import { Link } from 'expo-router'
+import { Ionicons } from '@expo/vector-icons'
+import { radius, cardShadowSm, type AppColors } from '../theme'
+import { EmptyState, ScreenBack } from '../components/ui'
 import { useDebouncedNavigation } from '../lib/navigation'
 import * as Auth from '../lib/auth'
 import { API_BASE, apiFetchNotifications, apiMarkNotificationsSeen, type NotificationItem } from '../lib/api'
@@ -20,6 +24,9 @@ type UiNotification = {
   rank: number | null
   coins: number | null
   message: string | null
+  giftName: string | null
+  giftEmoji: string | null
+  quantity: number | null
   isUnread: boolean
 }
 
@@ -48,8 +55,9 @@ function timeAgo(iso: string) {
 }
 
 export default function NotificationsScreen() {
-  const router = useRouter()
-  const { navigate } = useDebouncedNavigation()
+  const { colors, styles } = useThemeStyles(createStyles)
+
+  const { navigate, goBack } = useDebouncedNavigation()
   const [token, setToken] = useState<string | null>(null)
   const [items, setItems] = useState<UiNotification[]>([])
   const [loading, setLoading] = useState(true)
@@ -94,6 +102,9 @@ export default function NotificationsScreen() {
           rank: it.rank !== undefined && it.rank !== null ? Number(it.rank) : null,
           coins: it.coins !== undefined && it.coins !== null ? Number(it.coins) : null,
           message: it.message ? String(it.message) : null,
+          giftName: it.gift_name ? String(it.gift_name) : null,
+          giftEmoji: it.gift_emoji ? String(it.gift_emoji) : null,
+          quantity: it.quantity !== undefined && it.quantity !== null ? Number(it.quantity) : null,
           isUnread: !!it.is_unread,
         }
       })
@@ -131,6 +142,11 @@ export default function NotificationsScreen() {
     if (it.type === 'follow') return `${it.actorName} đã theo dõi bạn.`
     if (it.type === 'donation') {
       const storyPart = it.storyTitle ? ` cho truyện "${it.storyTitle}"` : ''
+      if (it.giftName) {
+        const qty = it.quantity && it.quantity > 1 ? ` ×${it.quantity}` : ''
+        const emoji = it.giftEmoji ? `${it.giftEmoji} ` : ''
+        return `${it.actorName} đã tặng ${emoji}${it.giftName}${qty} (${it.coins ?? 0} xu)${storyPart}.`
+      }
       return `${it.actorName} đã donate ${it.coins ?? 0} xu${storyPart}.`
     }
     if (it.type === 'new_story') {
@@ -169,15 +185,19 @@ export default function NotificationsScreen() {
           styles.item, 
           pressed && { opacity: 0.8 }, 
           !canOpenStory && { opacity: 1 },
-          item.isUnread && { backgroundColor: '#f0f9ff' }
+          item.isUnread && { backgroundColor: colors.accentSoft }
         ]}
       >
         <View style={{ position: 'relative' }}>
           {item.actorAvatar ? (
             <Image source={{ uri: item.actorAvatar }} style={styles.avatar} />
           ) : (
-            <View style={[styles.avatar, styles.avatarFallback]}>
-              <Text style={{ fontWeight: '800', color: '#0f172a' }}>{item.actorName.slice(0, 1).toUpperCase()}</Text>
+            <View style={[styles.avatar, styles.avatarFallback, { backgroundColor: item.type === 'donation' ? colors.goldSoft : colors.accentSoft }]}>
+              <Ionicons
+                name={item.type === 'donation' ? 'gift' : item.type === 'follow' ? 'person-add' : item.type === 'new_chapter' ? 'book' : item.type === 'rank' ? 'trophy' : 'heart'}
+                size={18}
+                color={item.type === 'donation' ? '#d97706' : colors.accent}
+              />
             </View>
           )}
           {item.isUnread && (
@@ -200,72 +220,66 @@ export default function NotificationsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Thông báo</Text>
-      </View>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <ScreenBack title="Thông báo" onBack={goBack} />
 
       {!token && !loading && (
         <View style={styles.loginCard}>
-          <Text style={styles.muted}>Bạn chưa đăng nhập.</Text>
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+          <Text style={styles.muted}>Bạn chưa đăng nhập để xem thông báo.</Text>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
             <Link href="/(auth)/login" asChild>
-              <Pressable style={styles.primaryBtn}><Text style={styles.primaryBtnText}>Đăng nhập</Text></Pressable>
+              <Pressable style={styles.primaryBtn}><Text style={styles.primaryBtnText}>Đăng nhập ngay</Text></Pressable>
             </Link>
           </View>
         </View>
       )}
 
       {loading ? (
-        <View style={{ padding: 16 }}>
-          <ActivityIndicator size="large" color="#1088ff" />
+        <View style={{ padding: 24, alignItems: 'center' }}>
+          <ActivityIndicator size="large" color={colors.accentText} />
         </View>
       ) : (
         <FlatList
           data={items}
           keyExtractor={(it) => it.id}
-          contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(false)} />}
+          contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(false)} tintColor={colors.accent} />}
           renderItem={renderItem}
-          ListEmptyComponent={<Text style={styles.muted}>{empty}</Text>}
+          ListEmptyComponent={<EmptyState icon="notifications-outline" title={empty} />}
         />
       )}
     </SafeAreaView>
   )
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f7f9fc' },
+const createStyles = (colors: AppColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.bg },
   header: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6 },
-  title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
+  title: { fontSize: 22, fontWeight: '800', color: colors.text },
 
   loginCard: {
     marginHorizontal: 16,
-    marginTop: 8,
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 2,
+    marginTop: 12,
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    ...cardShadowSm,
   },
 
   item: {
     flexDirection: 'row',
     gap: 12,
-    padding: 12,
-    backgroundColor: '#fff',
-    borderRadius: 14,
+    padding: 14,
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
     marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 2,
-    elevation: 1,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    ...cardShadowSm,
   },
-  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#b3d7ff' },
+  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.accentSoft },
   avatarFallback: { alignItems: 'center', justifyContent: 'center' },
   unreadDot: {
     position: 'absolute',
@@ -274,16 +288,16 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: '#ef4444',
+    backgroundColor: colors.danger,
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: colors.surface,
   },
-  msg: { color: '#0f172a', fontWeight: '700', fontSize: 14, lineHeight: 20 },
-  meta: { color: '#64748b', fontSize: 12 },
-  metaLink: { color: '#1088ff', fontSize: 12, fontWeight: '800' },
-  note: { color: '#334155', fontStyle: 'italic', marginTop: 6 },
-  muted: { color: '#475569' },
+  msg: { color: colors.text, fontWeight: '700', fontSize: 14, lineHeight: 20 },
+  meta: { color: colors.textMuted, fontSize: 12 },
+  metaLink: { color: colors.accentText, fontSize: 12, fontWeight: '700' },
+  note: { color: colors.textSecondary, fontStyle: 'italic', marginTop: 6 },
+  muted: { color: colors.textSecondary, fontSize: 14 },
 
-  primaryBtn: { backgroundColor: '#1088ff', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12 },
-  primaryBtnText: { color: '#fff', fontWeight: '800' },
+  primaryBtn: { backgroundColor: colors.accent, paddingVertical: 10, paddingHorizontal: 16, borderRadius: radius.full },
+  primaryBtnText: { color: colors.onAccent, fontWeight: '700' },
 })

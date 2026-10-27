@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            admin-dashboard/server/package-lock.json
+            admin-dashboard/frontend/package-lock.json
+
+      - name: Install mobile app dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        run: npm ci --prefix admin-dashboard/server
+
+      - name: Install admin dashboard dependencies
+        run: npm ci --prefix admin-dashboard/frontend
+
+      - name: Run automated tests
+        run: npm test
+
+      - name: Check TypeScript
+        run: npm run typecheck
+
+      - name: Build admin dashboard
+        run: npm --prefix admin-dashboard/frontend run build

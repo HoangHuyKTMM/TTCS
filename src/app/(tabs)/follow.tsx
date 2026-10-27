@@ -1,14 +1,18 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useThemeStyles } from '../../components/AppTheme'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { ActivityIndicator, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, FlatList, Image, Platform, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native'
 import { useFocusEffect } from '@react-navigation/native'
 import { useRouter } from 'expo-router'
 import { useDebouncedNavigation } from '../../lib/navigation'
+import { pickHomeRecommendations } from '../../lib/homeFeed'
 import * as Auth from '../../lib/auth'
-import { API_BASE, apiFetchAuthors, apiFetchPublicFeed, apiFollowAuthor, apiUnfollowAuthor, type AuthorItem, type FollowingFeedItem } from '../../lib/api'
+import { API_BASE, apiFetchAuthors, apiFetchFollowingFeed, apiFollowAuthor, apiUnfollowAuthor, type AuthorItem, type FollowingFeedItem } from '../../lib/api'
 import CustomAlert from '../../components/CustomAlert'
 import AdInterstitial from '../../components/AdInterstitial'
 import { shouldShowAds } from '../../lib/ads'
+import { radius, cardShadow, cardShadowSm, type AppColors } from '../../theme'
+import { Cover, EmptyState } from '../../components/ui'
 
 type UiAuthor = {
   id: string
@@ -37,7 +41,10 @@ type UiFeedItem = {
 }
 
 export default function FollowScreen() {
+  const { colors, styles } = useThemeStyles(createStyles)
+
   const [authors, setAuthors] = useState<UiAuthor[]>([])
+  const [suggestedAuthorIds, setSuggestedAuthorIds] = useState<string[]>([])
   const [feed, setFeed] = useState<UiFeedItem[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -55,7 +62,32 @@ export default function FollowScreen() {
   const [alertButtons, setAlertButtons] = useState<any[] | undefined>(undefined)
 
   const router = useRouter()
-  const { navigate } = useDebouncedNavigation()
+  const { navigate: navigateTo } = useDebouncedNavigation()
+
+  const selectAuthorSuggestions = useCallback((pool: UiAuthor[]) => {
+    setSuggestedAuthorIds(previous => pickHomeRecommendations(pool, previous.map(id => ({ id })), 4).map(author => author.id))
+  }, [])
+
+  const refreshAuthorSuggestions = useCallback(() => selectAuthorSuggestions(authors), [authors, selectAuthorSuggestions])
+  const suggestionScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handleSuggestionScroll = useCallback(() => {
+    // React Native Web emits onScroll, but not the native drag/momentum end events.
+    if (suggestionScrollTimer.current) clearTimeout(suggestionScrollTimer.current)
+    suggestionScrollTimer.current = setTimeout(refreshAuthorSuggestions, 200)
+  }, [refreshAuthorSuggestions])
+  useEffect(() => () => {
+    if (suggestionScrollTimer.current) clearTimeout(suggestionScrollTimer.current)
+  }, [])
+
+  const suggestedAuthors = useMemo(() => {
+    const byId = new Map(authors.map(author => [author.id, author]))
+    return suggestedAuthorIds.map(id => byId.get(id)).filter((author): author is UiAuthor => !!author)
+  }, [authors, suggestedAuthorIds])
+
+  const navigate = useCallback((path: string, params?: Record<string, string>) => {
+    refreshAuthorSuggestions()
+    navigateTo(path, params)
+  }, [navigateTo, refreshAuthorSuggestions])
 
   const fmtNum = useCallback((n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0), [])
 
@@ -129,21 +161,29 @@ export default function FollowScreen() {
           isFollowing: !!(a as any).is_following,
         }))
         setAuthors(mapped)
+        selectAuthorSuggestions(mapped)
       } else {
         setAuthors([])
+        setSuggestedAuthorIds([])
       }
     } catch (e) {
       console.error(e)
       setAuthors([])
+      setSuggestedAuthorIds([])
     } finally {
       if (showSpinner) setLoading(false)
       setRefreshing(false)
     }
-  }, [])
+  }, [selectAuthorSuggestions])
 
   const loadFeed = useCallback(async () => {
     try {
-      const res: any = await apiFetchPublicFeed({ limit: 30, offset: 0 })
+      const feedToken = await Auth.getToken()
+      if (!feedToken) {
+        setFeed([])
+        return
+      }
+      const res: any = await apiFetchFollowingFeed(feedToken, { limit: 30, offset: 0 })
       if (!Array.isArray(res)) {
         setFeed([])
         return
@@ -199,6 +239,7 @@ export default function FollowScreen() {
     try {
       const t = token || await Auth.getToken()
       if (!t) {
+        refreshAuthorSuggestions()
         showAlert('Cần đăng nhập', 'Vui lòng đăng nhập để theo dõi tác giả.', [
           { text: 'Để sau' },
           { text: 'Đăng nhập', onPress: () => navigate('/(auth)/login') },
@@ -240,7 +281,7 @@ export default function FollowScreen() {
       loadAuthors(false)
       loadFeed()
     }
-  }, [authors, token, loadAuthors, loadFeed, me, navigate, showAlert])
+  }, [authors, token, loadAuthors, loadFeed, me, navigate, showAlert, refreshAuthorSuggestions])
 
   const openBookNow = useCallback((id: string) => {
     navigate('/book/[id]', { id })
@@ -271,7 +312,12 @@ export default function FollowScreen() {
     const isSelf = !!(me && item.user_id && String(item.user_id) === String(me.id || me.user_id))
     return (
       <View style={styles.authorCard}>
-        <Pressable onPress={() => navigate('/author/[id]', { id: item.id, name: item.name })} style={{ flex: 1 }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Xem tác giả ${item.name}`}
+          onPress={() => navigate('/author/[id]', { id: item.id, name: item.name })}
+          style={{ flex: 1, width: '100%' }}
+        >
           <View style={styles.authorAvatar}>
             {item.avatarUrl ? (
               <Image source={{ uri: item.avatarUrl }} style={styles.authorAvatarImg} />
@@ -279,9 +325,11 @@ export default function FollowScreen() {
               <Text style={styles.authorAvatarText}>{initials}</Text>
             )}
           </View>
-          <Text style={styles.authorName} numberOfLines={1}>{item.name}</Text>
+          <Text style={styles.authorName} numberOfLines={2}>{item.name}</Text>
         </Pressable>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={isSelf ? 'Tác giả là bạn' : `${item.isFollowing ? 'Bỏ theo dõi' : 'Theo dõi'} ${item.name}`}
           onPress={() => handleToggleFollow(item.id, !item.isFollowing)}
           style={[styles.authorBtn, item.isFollowing ? styles.authorBtnFollowing : styles.authorBtnFollow]}
           disabled={!userLoaded || isSelf}
@@ -292,7 +340,7 @@ export default function FollowScreen() {
         </Pressable>
       </View>
     )
-  }, [handleToggleFollow, me, navigate, userLoaded])
+  }, [handleToggleFollow, me, navigate, userLoaded, styles])
 
   const renderFeedItem = useCallback(({ item }: { item: UiFeedItem }) => {
     const headerRight = timeAgo(item.created_at)
@@ -311,11 +359,7 @@ export default function FollowScreen() {
         <Text style={styles.postText}>{message}</Text>
 
         <Pressable onPress={() => handleOpenBook(item.storyId)} style={styles.storyCard}>
-          {item.cover ? (
-            <Image source={{ uri: item.cover }} style={styles.storyCover} />
-          ) : (
-            <View style={styles.storyCover} />
-          )}
+          <Cover uri={item.cover} width={48} height={64} radius={10} />
           <View style={{ flex: 1 }}>
             <Text style={styles.storyTitle} numberOfLines={2}>{item.storyTitle}</Text>
             <Text style={styles.storyMeta} numberOfLines={1}>
@@ -326,14 +370,14 @@ export default function FollowScreen() {
         </Pressable>
       </View>
     )
-  }, [fmtNum, handleOpenBook, router, timeAgo])
+  }, [fmtNum, handleOpenBook, router, timeAgo, styles])
 
   const keyAuthor = useCallback((it: UiAuthor) => it.id, [])
   const keyFeed = useCallback((it: UiFeedItem) => it.id, [])
 
   const listEmpty = useMemo(() => (
     <View style={{ padding: 16 }}>
-      <Text style={{ color: '#6b7280' }}>Chưa có bài đăng.</Text>
+      <EmptyState icon="people-outline" title="Chưa có bài đăng" subtitle="Theo dõi tác giả để thấy truyện và chương mới." />
     </View>
   ), [])
 
@@ -341,45 +385,56 @@ export default function FollowScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" color="#1088ff" />
+          <ActivityIndicator size="large" color={colors.accentText} />
         </View>
       </SafeAreaView>
     )
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <FlatList
         contentContainerStyle={styles.list}
         data={feed}
         keyExtractor={keyFeed}
         renderItem={renderFeedItem}
+        onScrollEndDrag={refreshAuthorSuggestions}
+        onMomentumScrollEnd={refreshAuthorSuggestions}
+        onScroll={Platform.OS === 'web' ? handleSuggestionScroll : undefined}
+        scrollEventThrottle={100}
         ListEmptyComponent={listEmpty}
         ListHeaderComponent={
           <View>
             <View style={styles.header}>
-              <Text style={styles.headerTitle}>Theo dõi</Text>
+              <Text style={styles.headerTitle}>Theo Dõi</Text>
+              <Text style={styles.headerSub}>Cập nhật mới từ các tác giả bạn quan tâm</Text>
             </View>
 
             <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>Tác giả</Text>
+              <View style={styles.sectionAccentBar} />
+              <Text style={styles.sectionTitle}>Tác giả đề xuất</Text>
             </View>
 
             <FlatList
-              data={authors}
+              data={suggestedAuthors}
               keyExtractor={keyAuthor}
               renderItem={renderAuthorCard}
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.authorList}
+              onScrollEndDrag={refreshAuthorSuggestions}
+              onMomentumScrollEnd={refreshAuthorSuggestions}
+              onScroll={Platform.OS === 'web' ? handleSuggestionScroll : undefined}
+              scrollEventThrottle={100}
             />
 
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>Bài đăng mới</Text>
+            <View style={[styles.sectionHeaderRow, { marginTop: 14 }]}>
+              <View style={styles.sectionAccentBar} />
+              <Text style={styles.sectionTitle}>Bảng tin hoạt động</Text>
             </View>
           </View>
         }
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { loadAuthors(false); loadFeed() }} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { loadAuthors(false); loadFeed() }} tintColor={colors.accent} />}
       />
 
       <AdInterstitial
@@ -402,52 +457,179 @@ export default function FollowScreen() {
   )
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  header: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 10 },
-  headerTitle: { fontSize: 18, fontWeight: '800', color: '#111827' },
+const createStyles = (colors: AppColors) => StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: colors.text,
+    letterSpacing: -0.4,
+  },
+  headerSub: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 2,
+    fontWeight: '500',
+  },
 
-  list: { paddingBottom: 24 },
-  sectionHeaderRow: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 8 },
-  sectionTitle: { fontSize: 14, fontWeight: '900', color: '#111827' },
+  list: {
+    paddingBottom: 32,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 10,
+  },
+  sectionAccentBar: {
+    width: 4,
+    height: 16,
+    borderRadius: 2,
+    backgroundColor: colors.accent,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: colors.text,
+    letterSpacing: -0.3,
+  },
 
-  authorList: { paddingHorizontal: 16, paddingBottom: 8, gap: 10 },
+  authorList: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    gap: 12,
+  },
   authorCard: {
     width: 140,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#eef2f7',
-    borderRadius: 14,
-    padding: 12,
-    backgroundColor: '#fff',
-    marginRight: 10,
+    borderRadius: radius.xl,
+    padding: 14,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    ...cardShadow,
   },
-  authorAvatar: { width: 44, height: 44, borderRadius: 22, overflow: 'hidden', backgroundColor: '#1088ff22', alignItems: 'center', justifyContent: 'center' },
-  authorAvatarImg: { width: '100%', height: '100%' },
-  authorAvatarText: { color: '#1088ff', fontWeight: '900', fontSize: 18 },
-  authorName: { marginTop: 8, fontSize: 13, fontWeight: '900', color: '#111827' },
-  authorBtn: { marginTop: 10, paddingVertical: 7, borderRadius: 999, alignItems: 'center' },
-  authorBtnFollow: { backgroundColor: '#1088ff' },
-  authorBtnFollowing: { backgroundColor: '#f3f4f6' },
-  authorBtnText: { fontSize: 11, fontWeight: '900' },
-  authorBtnTextFollow: { color: '#fff' },
-  authorBtnTextFollowing: { color: '#111827' },
+  authorAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    overflow: 'hidden',
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    borderWidth: 2,
+    borderColor: colors.surface,
+    ...cardShadowSm,
+  },
+  authorAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  authorAvatarText: {
+    color: colors.accentText,
+    fontWeight: '800',
+    fontSize: 20,
+  },
+  authorName: {
+    marginTop: 8,
+    minHeight: 36,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: colors.text,
+    textAlign: 'center',
+  },
+  authorBtn: {
+    marginTop: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    width: '100%',
+  },
+  authorBtnFollow: {
+    backgroundColor: colors.accent,
+    ...cardShadowSm,
+  },
+  authorBtnFollowing: {
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  authorBtnText: { color: colors.text,
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  authorBtnTextFollow: {
+    color: colors.onDark,
+  },
+  authorBtnTextFollowing: {
+    color: colors.textSecondary,
+  },
 
   postCard: {
     marginHorizontal: 16,
     marginBottom: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#eef2f7',
-    borderRadius: 14,
-    padding: 12,
-    backgroundColor: '#fff',
+    borderRadius: radius.xl,
+    padding: 14,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    ...cardShadow,
   },
-  postHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  postAuthor: { fontSize: 14, fontWeight: '900', color: '#111827' },
-  postTime: { fontSize: 12, color: '#6b7280' },
-  postText: { marginTop: 6, fontSize: 13, color: '#374151' },
+  postHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  postAuthor: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.text,
+  },
+  postTime: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  postText: {
+    marginTop: 6,
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
 
-  storyCard: { marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderRadius: 12, backgroundColor: '#f8fafc' },
-  storyCover: { width: 44, height: 58, borderRadius: 10, backgroundColor: '#e5e7eb' },
-  storyTitle: { fontSize: 13, fontWeight: '900', color: '#111827' },
-  storyMeta: { marginTop: 3, fontSize: 12, color: '#6b7280' },
+  storyCard: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 10,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  storyTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.text,
+    lineHeight: 19,
+  },
+  storyMeta: {
+    marginTop: 3,
+    fontSize: 12,
+    color: colors.textMuted,
+  },
 })

@@ -1,72 +1,80 @@
-import React from "react";
-import { Tabs } from "expo-router";
-import { View, Text } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import React from 'react'
+import { Platform } from 'react-native'
+import { Tabs } from 'expo-router'
+import { Ionicons } from '@expo/vector-icons'
+import { cardShadow } from '../../theme'
+import { useAppTheme } from '../../components/AppTheme'
 
 export default function TabsLayout() {
+  const { colors } = useAppTheme()
   return (
     <Tabs
       initialRouteName="explore"
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: "#1088ff",
-        tabBarInactiveTintColor: "#94a3b8",
-        tabBarLabelStyle: { fontSize: 11 },
+        tabBarActiveTintColor: colors.accentText,
+        tabBarInactiveTintColor: colors.textSecondary,
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '600',
+          marginTop: -2,
+        },
         tabBarStyle: {
-          backgroundColor: "#fff",
+          backgroundColor: colors.surface,
           borderTopWidth: 1,
-          borderTopColor: "#e5e7eb",
+          borderTopColor: colors.borderLight,
           paddingTop: 8,
-          paddingBottom: 8,
-          height: 60,
+          paddingBottom: Platform.OS === 'ios' ? 24 : 10,
+          height: Platform.OS === 'ios' ? 84 : 66,
+          ...cardShadow,
         },
       }}
     >
       <Tabs.Screen
         name="explore"
         options={{
-          title: "Khám phá",
+          title: 'Khám phá',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "compass" : "compass-outline"} size={20} color={color as string} />
+            <Ionicons name={focused ? 'compass' : 'compass-outline'} size={22} color={color as string} />
           ),
         }}
       />
       <Tabs.Screen
         name="follow"
         options={{
-          title: "Theo dõi",
+          title: 'Theo dõi',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "people" : "people-outline"} size={20} color={color as string} />
+            <Ionicons name={focused ? 'people' : 'people-outline'} size={22} color={color as string} />
           ),
         }}
       />
       <Tabs.Screen
         name="library"
         options={{
-          title: "Thư viện",
+          title: 'Thư viện',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "library" : "library-outline"} size={20} color={color as string} />
+            <Ionicons name={focused ? 'library' : 'library-outline'} size={22} color={color as string} />
           ),
         }}
       />
       <Tabs.Screen
         name="rank"
         options={{
-          title: "Diễn đàn",
+          title: 'Xếp hạng',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "chatbubbles" : "chatbubbles-outline"} size={20} color={color as string} />
+            <Ionicons name={focused ? 'trophy' : 'trophy-outline'} size={22} color={color as string} />
           ),
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          title: "Tôi",
+          title: 'Tài khoản',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "person" : "person-outline"} size={20} color={color as string} />
+            <Ionicons name={focused ? 'person' : 'person-outline'} size={22} color={color as string} />
           ),
         }}
       />
     </Tabs>
-  );
+  )
 }

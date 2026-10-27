@@ -1,13 +1,15 @@
 import { Stack } from "expo-router";
 import { StyleSheet, View } from "react-native";
+import { useAppTheme } from '../../components/AppTheme'
 
 export default function AuthLayout() {
+  const { colors } = useAppTheme()
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: "#fff" },
+          contentStyle: { backgroundColor: colors.bg },
           animation: "slide_from_right",
         }}
       >
@@ -21,6 +23,5 @@ export default function AuthLayout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
 });

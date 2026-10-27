@@ -1,0 +1,64 @@
+{
+  "auditDate": "2026-10-02",
+  "regressionPassed": 32,
+  "integrationPassed": 26,
+  "dashboardBuild": "passed",
+  "nodeSyntax": "passed",
+  "typescript": {
+    "status": "passed",
+    "remainingErrors": 0
+  },
+  "migration": "applied",
+  "localCounts": {
+    "stories": 10,
+    "chapters": 291,
+    "conversations": 5,
+    "messages": 14
+  },
+  "newTables": [
+    "ai_moderation_jobs",
+    "ai_request_quotas",
+    "ai_usage_logs"
+  ],
+  "temporaryTestDatabasesRemaining": 0,
+  "paidAiCallsDuringFixes": 0,
+  "clientAuthPassed": 5,
+  "totalPassed": 63,
+  "mobileWebExport": "passed",
+  "firebaseColumnsPresent": [
+    "firebase_uid",
+    "auth_method",
+    "avatar_url"
+  ],
+  "limitations": [
+    "Native device and real Google/Facebook OAuth not exercised",
+    "Real bank payments and paid AI provider not exercised",
+    "Firebase account-link fixtures inject verified claims; SDK rejection uses real verifier"
+  ],
+  "previousValidation": {
+    "auditDate": "2026-10-01",
+    "regressionPassed": 26,
+    "integrationPassed": 16,
+    "dashboardBuild": "passed",
+    "nodeSyntax": "passed",
+    "typescript": {
+      "status": "failed",
+      "remainingErrors": 3,
+      "file": "src/app/(auth)/register.tsx"
+    },
+    "migration": "applied",
+    "localCounts": {
+      "stories": 10,
+      "chapters": 291,
+      "conversations": 5,
+      "messages": 14
+    },
+    "newTables": [
+      "ai_moderation_jobs",
+      "ai_request_quotas",
+      "ai_usage_logs"
+    ],
+    "temporaryTestDatabasesRemaining": 0,
+    "paidAiCallsDuringFixes": 0
+  }
+}

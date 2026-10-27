@@ -1,0 +1,81 @@
+{
+  "auditDate": "2026-10-01",
+  "method": "SELECT-only aggregate queries; no application helper functions or schema mutation",
+  "counts": [
+    {
+      "stories": 10,
+      "chapters": 291,
+      "fingerprints": 291,
+      "summaries": 1,
+      "conversations": 5,
+      "messages": 14,
+      "moderation_logs": 0
+    }
+  ],
+  "cache_lengths": [
+    {
+      "total": 1,
+      "over_650_chars": "0",
+      "shortest": 641,
+      "longest": 641
+    }
+  ],
+  "chapter_lengths": [
+    {
+      "total": 291,
+      "mean_chars": "1807",
+      "over_1200_chars": "234"
+    }
+  ],
+  "comment_status": [
+    {
+      "status": "shadowbanned",
+      "total": 1
+    }
+  ],
+  "coverage": [
+    {
+      "chapters_missing_fingerprints": 0
+    }
+  ],
+  "indexes": [
+    {
+      "INDEX_NAME": "ft_story_search",
+      "INDEX_TYPE": "FULLTEXT",
+      "columns_used": "title,description"
+    },
+    {
+      "INDEX_NAME": "idx_stories_author_id",
+      "INDEX_TYPE": "BTREE",
+      "columns_used": "author_id"
+    },
+    {
+      "INDEX_NAME": "idx_stories_created",
+      "INDEX_TYPE": "BTREE",
+      "columns_used": "created_at"
+    },
+    {
+      "INDEX_NAME": "idx_stories_hidden",
+      "INDEX_TYPE": "BTREE",
+      "columns_used": "is_hidden"
+    },
+    {
+      "INDEX_NAME": "PRIMARY",
+      "INDEX_TYPE": "BTREE",
+      "columns_used": "story_id"
+    }
+  ],
+  "existingFingerprintPairStats": {
+    "crossStoryPairs": 38070,
+    "rawGreen": 906,
+    "rawYellow": 37164,
+    "rawRed": 0,
+    "rawRedWithoutSnippet": 0,
+    "minHamming": 10
+  },
+  "recapCharacterRetention": {
+    "originalChars": 525701,
+    "retainedChars": 330856,
+    "retainedPct": 62.94
+  }
+}

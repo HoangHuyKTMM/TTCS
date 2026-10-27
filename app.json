@@ -16,20 +16,24 @@
     "android": {
       "package": "com.dinhhung1508.readerapp",
       "googleServicesFile": "./google-services.json",
+      "permissions": ["android.permission.POST_NOTIFICATIONS"],
       "adaptiveIcon": {
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#F8F9FA",
+        "foregroundImage": "./src/assets/welcome-characters.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "bundler": "metro"
+      "bundler": "metro",
+      "favicon": "./src/assets/welcome-characters.png"
     },
     "plugins": [
       "expo-router",
       "expo-font",
       "@react-native-firebase/app",
       "@react-native-firebase/auth",
+      "@react-native-firebase/messaging",
       "@react-native-google-signin/google-signin",
       [
         "react-native-fbsdk-next",
@@ -46,7 +50,7 @@
       "typedRoutes": true
     },
     "extra": {
-      "apiBase": "http://172.16.58.47:4000",
+      "apiBase": "http://192.168.1.241:4000",
       "googleExpoClientId": "",
       "googleAndroidClientId": "",
       "googleWebClientId": "",
@@ -55,6 +59,7 @@
       "eas": {
         "projectId": "4009c1a7-1787-4753-9490-717bd2b5df73"
       }
-    }
+    },
+    "icon": "./src/assets/welcome-characters.png"
   }
 }

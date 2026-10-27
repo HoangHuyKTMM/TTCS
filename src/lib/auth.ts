@@ -1,6 +1,6 @@
 import * as SecureStore from 'expo-secure-store'
 import { Platform } from 'react-native'
-import { apiLogin, apiRegister, API_BASE } from './api'
+import { apiLogin, apiRegister, apiRemovePushToken, API_BASE } from './api'
 
 const TOKEN_KEY = 'reader_app_token'
 const USER_KEY = 'reader_app_user'
@@ -38,7 +38,7 @@ async function initNativeModules() {
 }
 
 // Initialize on module load
-initNativeModules()
+const nativeModulesReady = initNativeModules()
 
 // Web Firebase imports
 let webAuth: any = null
@@ -46,16 +46,15 @@ let webSignInWithPopup: any = null
 let webGoogleAuthProvider: any = null
 let webFacebookAuthProvider: any = null
 
-if (Platform.OS === 'web') {
-  import('./firebase').then(module => {
-    webAuth = module.auth
-  })
-  import('firebase/auth').then(module => {
-    webSignInWithPopup = module.signInWithPopup
-    webGoogleAuthProvider = module.GoogleAuthProvider
-    webFacebookAuthProvider = module.FacebookAuthProvider
-  })
-}
+let webInitError: any = null
+const webModulesReady = Platform.OS === 'web'
+  ? Promise.all([import('./firebase'), import('firebase/auth')]).then(([firebase, sdk]) => {
+    webAuth = firebase.auth
+    webSignInWithPopup = sdk.signInWithPopup
+    webGoogleAuthProvider = sdk.GoogleAuthProvider
+    webFacebookAuthProvider = sdk.FacebookAuthProvider
+  }).catch(error => { webInitError = error })
+  : Promise.resolve()
 
 // Secure store wrapper for web compatibility
 async function setSecureItem(key: string, value: string) {
@@ -78,6 +77,15 @@ async function deleteSecureItem(key: string) {
     localStorage.removeItem(key)
   } else {
     await SecureStore.deleteItemAsync(key)
+  }
+}
+
+async function hydrateReadingAfterAuth() {
+  try {
+    const reading = await import('./reading')
+    await reading.hydrateReadingProgress()
+  } catch (e) {
+    console.log('[Auth] reading hydrate skipped')
   }
 }
 
@@ -128,33 +136,19 @@ async function syncFirebaseUserWithBackend(firebaseUser: any, authMethod: string
     const response = await fetch(`${API_BASE}/auth/firebase`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        idToken,
-        email: firebaseUser.email,
-        name: firebaseUser.displayName || firebaseUser.name || firebaseUser.email?.split('@')[0],
-        avatar_url: firebaseUser.photoURL || firebaseUser.photo,
-        firebase_uid: firebaseUser.uid,
-        auth_method: authMethod
-      })
+      body: JSON.stringify({ idToken })
     })
 
     const data = await response.json()
 
-    if (data.token) {
-      await saveToken(data.token)
-      if (data.user) await saveUser(data.user)
-      return data
+    if (!response.ok || typeof data.token !== 'string' || !data.token) {
+      throw new Error(data.message || data.error || 'Không nhận được phiên đăng nhập từ máy chủ')
     }
-
-    await saveToken(idToken)
-    await saveUser({
-      id: firebaseUser.uid,
-      email: firebaseUser.email,
-      name: firebaseUser.displayName || firebaseUser.name,
-      avatar_url: firebaseUser.photoURL || firebaseUser.photo
-    })
-
-    return { token: idToken, user: firebaseUser }
+    await saveToken(data.token)
+    if (data.user) await saveUser(data.user)
+    await setSecureItem(AUTH_METHOD_KEY, authMethod)
+    await hydrateReadingAfterAuth()
+    return data
   } catch (err) {
     console.error('Error syncing with backend:', err)
     throw err
@@ -171,6 +165,7 @@ export async function login(email: string, password: string) {
     await saveToken(res.token)
     await setSecureItem(AUTH_METHOD_KEY, 'email')
     if (res.user) await saveUser(res.user)
+    await hydrateReadingAfterAuth()
     return res
   }
   throw new Error('Đăng nhập thất bại - không nhận được token')
@@ -183,11 +178,12 @@ export async function loginWithGoogle() {
   if (Platform.OS === 'web') {
     // Web: use Firebase popup
     try {
+      await webModulesReady
+      if (webInitError) throw webInitError
       const provider = new webGoogleAuthProvider()
       provider.addScope('email')
       provider.addScope('profile')
       const result = await webSignInWithPopup(webAuth, provider)
-      await setSecureItem(AUTH_METHOD_KEY, 'google')
       return await syncFirebaseUserWithBackend(result.user, 'google')
     } catch (err: any) {
       console.error('[Auth] Web Google Sign In error:', err)
@@ -198,6 +194,7 @@ export async function loginWithGoogle() {
     }
   } else {
     // Mobile: use native Google Sign-In
+    await nativeModulesReady
     if (!GoogleSignin || !firebaseAuth) {
       throw new Error('Đang chạy trên Expo Go - Google Sign-In cần development build. Vui lòng dùng email/password.')
     }
@@ -217,7 +214,6 @@ export async function loginWithGoogle() {
       const googleCredential = firebaseAuth.GoogleAuthProvider.credential(idToken)
       const firebaseUserCredential = await firebaseAuth().signInWithCredential(googleCredential)
 
-      await setSecureItem(AUTH_METHOD_KEY, 'google')
       return await syncFirebaseUserWithBackend(firebaseUserCredential.user, 'google')
     } catch (err: any) {
       console.error('[Auth] Native Google Sign In error:', err)
@@ -243,11 +239,12 @@ export async function loginWithFacebook() {
 
   if (Platform.OS === 'web') {
     try {
+      await webModulesReady
+      if (webInitError) throw webInitError
       const provider = new webFacebookAuthProvider()
       provider.addScope('email')
       provider.addScope('public_profile')
       const result = await webSignInWithPopup(webAuth, provider)
-      await setSecureItem(AUTH_METHOD_KEY, 'facebook')
       return await syncFirebaseUserWithBackend(result.user, 'facebook')
     } catch (err: any) {
       console.error('[Auth] Web Facebook Sign In error:', err)
@@ -258,6 +255,7 @@ export async function loginWithFacebook() {
     }
   } else {
     // Mobile: use native Facebook Login
+    await nativeModulesReady
     if (!FacebookLogin || !firebaseAuth) {
       throw new Error('Đăng nhập Facebook cần development build. Vui lòng dùng email/password.')
     }
@@ -282,7 +280,6 @@ export async function loginWithFacebook() {
       const facebookCredential = firebaseAuth.FacebookAuthProvider.credential(data.accessToken)
       const firebaseUserCredential = await firebaseAuth().signInWithCredential(facebookCredential)
 
-      await setSecureItem(AUTH_METHOD_KEY, 'facebook')
       return await syncFirebaseUserWithBackend(firebaseUserCredential.user, 'facebook')
     } catch (err: any) {
       console.error('[Auth] Native Facebook Sign In error:', err)
@@ -298,6 +295,18 @@ export async function register(name: string, email: string, password: string) {
 
 // Logout
 export async function logout() {
+  if (Platform.OS === 'android') {
+    try {
+      const sessionToken = await getToken()
+      if (sessionToken) {
+        const messagingModule = await import('@react-native-firebase/messaging')
+        const deviceToken = await messagingModule.default().getToken()
+        if (deviceToken) void apiRemovePushToken(sessionToken, deviceToken)
+      }
+    } catch (e) {
+      console.log('[Auth] Push-token cleanup skipped:', e)
+    }
+  }
   try {
     if (Platform.OS === 'web') {
       const { firebaseSignOut } = await import('./firebase')

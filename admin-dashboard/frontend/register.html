@@ -6,77 +6,67 @@
     <title>Đăng ký quản trị</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Merriweather:wght@300;400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-      :root{--bg:#fbf7ef;--card:#fff;--accent:#8b5e34;--muted:#7a6f66}
-      *{box-sizing:border-box}
-      body{font-family:Inter,system-ui,Arial,Helvetica;background:linear-gradient(180deg,#fbf7ef,#f3efe6);display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}
-      .wrap{max-width:980px;width:100%;display:flex;gap:32px;align-items:center}
-      .art{flex:1;display:flex;align-items:center;justify-content:center}
-      .art .panel{background:linear-gradient(180deg,#fff,#fff7f0);padding:28px;border-radius:14px;box-shadow:0 12px 30px rgba(43,34,20,0.06);text-align:center}
-      .art h1{font-family:'Merriweather',serif;color:#2e2a21;margin:0 0 8px;font-size:26px}
-      .art p{color:var(--muted);margin:0}
-      /* Animations */
-      @keyframes fadeInUp { from {opacity:0; transform:translateY(12px)} to {opacity:1; transform:translateY(0)} }
-      @keyframes floaty { 0%{transform:translateY(0)}50%{transform:translateY(-6px)}100%{transform:translateY(0)} }
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; font-family: Inter, system-ui, sans-serif; color: #1c1917; background: #f4f1eb; }
+      .split { min-height: 100vh; display: grid; grid-template-columns: 1.15fr 0.85fr; }
+      .story { background: #1c1917; color: #fafaf9; padding: 48px 56px; display: flex; flex-direction: column; justify-content: space-between; }
+      .mark { width: 42px; height: 42px; border-radius: 10px; background: #fafaf9; color: #1c1917; display: grid; place-items: center; font-family: Fraunces, Georgia, serif; font-size: 22px; }
+      .story h1 { font-family: Fraunces, Georgia, serif; font-weight: 560; font-size: clamp(36px, 4vw, 56px); line-height: 1.05; letter-spacing: -0.03em; margin: 28px 0 12px; max-width: 12ch; }
+      .story p { margin: 0; color: #d6d3d1; max-width: 36ch; font-size: 16px; }
+      .fine { color: #a8a29e; font-size: 12px; }
+      .form-side { display: flex; align-items: center; justify-content: center; padding: 32px 24px; }
+      .card { width: min(400px, 100%); }
+      h2 { margin: 0; font-size: 24px; letter-spacing: -0.03em; }
+      .desc { color: #78716c; font-size: 14px; margin-top: 6px; }
+      label { display: block; margin-top: 14px; margin-bottom: 6px; font-size: 12px; font-weight: 650; }
+      input { width: 100%; padding: 12px 14px; border: 1px solid #d6d3d1; border-radius: 10px; background: #fff; font-size: 14px; }
+      input:focus { outline: none; border-color: #1c1917; box-shadow: 0 0 0 3px rgba(28,25,23,.08); }
+      button { width: 100%; margin-top: 18px; padding: 12px 14px; background: #1c1917; color: #fff; border: 0; border-radius: 10px; font-weight: 650; cursor: pointer; }
+      button:disabled { opacity: .6; cursor: wait; }
+      .spinner { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; vertical-align: -2px; margin-right: 8px; animation: spin .8s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
-      .card{background:var(--card);padding:28px;border-radius:14px;box-shadow:0 12px 40px rgba(17,17,17,0.06);width:380px;animation:fadeInUp 420ms ease both}
-      .brand{display:flex;align-items:center;gap:12px;margin-bottom:10px}
-      .logo{width:48px;height:48px;border-radius:8px;background:linear-gradient(180deg,#efe1c9,#f7efe6);display:flex;align-items:center;justify-content:center;font-family:'Merriweather',serif;color:var(--accent);font-weight:700;animation:floaty 5s ease-in-out infinite}
-      h2{margin:0;font-size:20px}
-      .desc{color:var(--muted);font-size:13px;margin-top:6px}
-      .field{margin-top:14px}
-      input{width:100%;padding:12px 14px;border:1px solid #efe6da;border-radius:10px;background:#fffefc;font-size:14px;transition:box-shadow .18s ease,transform .12s ease}
-      input:focus{outline:none;box-shadow:0 6px 18px rgba(139,94,52,0.08);transform:translateY(-2px)}
-      .actions{display:flex;gap:12px;align-items:center;margin-top:16px}
-      button{flex:1;padding:12px 14px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-weight:700;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease}
-      button:hover{transform:translateY(-2px);box-shadow:0 10px 22px rgba(139,94,52,0.1)}
-      button:active{transform:translateY(0)}
-      .spinner{display:inline-block;width:16px;height:16px;border-radius:50%;border:3px solid rgba(255,255,255,0.25);border-top-color:rgba(255,255,255,0.95);vertical-align:middle;margin-right:8px;animation:spin .8s linear infinite}
-      .link{color:var(--accent);text-decoration:none;font-weight:600}
-      .muted{color:var(--muted);font-size:13px;margin-top:12px}
-      .small{font-size:12px;color:#9a8f85;margin-top:8px;text-align:center}
-      @media (max-width:820px){.wrap{flex-direction:column;padding:12px}.art{order:2}.card{width:100%}}
+      .muted { color: #b91c1c; font-size: 13px; min-height: 18px; margin-top: 12px; }
+      .small { font-size: 13px; color: #78716c; margin-top: 16px; }
+      .link { color: #1c1917; font-weight: 650; }
+      @media (max-width: 860px) {
+        .split { grid-template-columns: 1fr; }
+        .story { padding: 28px 22px; }
+        .story h1 { font-size: 34px; }
+        .fine { display: none; }
+      }
     </style>
   </head>
   <body>
-    <div class="wrap">
-      <div class="art">
-        <div class="panel">
-          <h1>Trang quản trị Reader</h1>
-          <p>Tạo tài khoản admin để quản lý nội dung ứng dụng đọc truyện.</p>
+    <main class="split">
+      <section class="story">
+        <div>
+          <div class="mark">R</div>
+          <h1>Tài khoản chỉ dành cho quản trị.</h1>
+          <p>Cần mã bí mật admin. Sau khi tạo, bạn vào thẳng bảng điều khiển.</p>
         </div>
-      </div>
-
-      <div class="card">
-        <div class="brand">
-          <div class="logo">R</div>
-          <div>
-            <h2>Đăng ký Admin</h2>
-            <div class="desc">Chỉ dùng cho quản trị viên. Cần có Admin Secret.</div>
-          </div>
-        </div>
-
-        <div class="field">
-          <input id="email" placeholder="Email" autocomplete="email" />
-        </div>
-        <div class="field">
-          <input id="name" placeholder="Họ và tên" />
-        </div>
-        <div class="field">
-          <input id="password" placeholder="Mật khẩu" type="password" autocomplete="new-password" />
-        </div>
-        <div class="field">
-          <input id="secret" placeholder="Mã bí mật Admin" />
-        </div>
-
-        <div class="actions">
+        <div class="fine">Reader Admin</div>
+      </section>
+      <section class="form-side">
+        <div class="card">
+          <h2>Đăng ký admin</h2>
+          <div class="desc">Email, họ tên, mật khẩu và mã bí mật.</div>
+          <label for="email">Email</label>
+          <input id="email" autocomplete="email" />
+          <label for="name">Họ và tên</label>
+          <input id="name" />
+          <label for="password">Mật khẩu</label>
+          <input id="password" type="password" autocomplete="new-password" />
+          <label for="secret">Mã bí mật admin</label>
+          <input id="secret" />
           <button id="btn">Đăng ký</button>
+          <div id="msg" class="muted"></div>
+          <div class="small">Đã có tài khoản? <a class="link" href="/login.html">Đăng nhập</a></div>
         </div>
-        <div id="msg" class="muted"></div>
-        <div class="small">Đã có tài khoản? <a class="link" href="/login.html">Đăng nhập</a></div>
-      </div>
-    </div>
+      </section>
+    </main>
     <script>
       const API_BASE = (new URLSearchParams(location.search)).get('api') || '/';
       function setLoading(btn, loading){

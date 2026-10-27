@@ -1,11 +1,16 @@
+import { useThemeStyles } from '../../components/AppTheme'
+import { type AppColors } from '../../theme'
 import { useEffect, useState } from "react";
 import { Stack, Link, useRouter } from "expo-router";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Auth from '../../lib/auth'
 import CustomAlert from '../../components/CustomAlert'
+import KeyboardSafeScroll from '../../components/KeyboardSafe'
 
 export default function LoginScreen() {
+  const { colors, styles } = useThemeStyles(createStyles)
+
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -73,15 +78,12 @@ export default function LoginScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
+    <View style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
-      <ScrollView
+      <KeyboardSafeScroll
+        style={{ flex: 1 }}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
       >
         {/* Header */}
         <View style={styles.header}>
@@ -89,7 +91,7 @@ export default function LoginScreen() {
             style={styles.backButton}
             onPress={() => router.back()}
           >
-            <Ionicons name="arrow-back" size={24} color="#111827" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
         </View>
 
@@ -103,11 +105,11 @@ export default function LoginScreen() {
         <View style={styles.formContainer}>
           {/* Email Input */}
           <View style={styles.inputWrapper}>
-            <Ionicons name="mail-outline" size={20} color="#6b7280" style={styles.inputIcon} />
+            <Ionicons name="mail-outline" size={20} color={colors.textSecondary} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Email"
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={colors.textMuted}
               keyboardType="email-address"
               autoCapitalize="none"
               value={email}
@@ -118,18 +120,18 @@ export default function LoginScreen() {
 
           {/* Password Input */}
           <View style={styles.inputWrapper}>
-            <Ionicons name="lock-closed-outline" size={20} color="#6b7280" style={styles.inputIcon} />
+            <Ionicons name="lock-closed-outline" size={20} color={colors.textSecondary} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Mật khẩu"
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={colors.textMuted}
               secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
               editable={!loading}
             />
             <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}>
-              <Ionicons name={showPassword ? "eye-outline" : "eye-off-outline"} size={20} color="#6b7280" />
+              <Ionicons name={showPassword ? "eye-outline" : "eye-off-outline"} size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
@@ -145,7 +147,7 @@ export default function LoginScreen() {
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colors.onAccent} />
             ) : (
               <Text style={styles.primaryButtonText}>Đăng nhập</Text>
             )}
@@ -158,36 +160,34 @@ export default function LoginScreen() {
             <View style={styles.dividerLine} />
           </View>
 
-          {/* Social Buttons */}
-          <View style={styles.socialContainer}>
-            <TouchableOpacity
-              style={[styles.socialButton, googleLoading && styles.socialButtonLoading]}
-              disabled={googleLoading}
-              onPress={handleGoogleLogin}
-            >
-              {googleLoading ? (
-                <ActivityIndicator color="#111827" size="small" />
-              ) : (
-                <Ionicons name="logo-google" size={22} color="#111827" />
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.socialButton, fbLoading && styles.socialButtonLoading]}
-              disabled={fbLoading}
-              onPress={handleFacebookLogin}
-            >
-              {fbLoading ? (
-                <ActivityIndicator color="#1877F2" size="small" />
-              ) : (
-                <Ionicons name="logo-facebook" size={22} color="#1877F2" />
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity style={[styles.socialButton, styles.socialButtonDisabled]} disabled>
-              <Ionicons name="logo-apple" size={22} color="#999" />
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            style={[styles.socialFull, googleLoading && styles.socialButtonLoading]}
+            disabled={googleLoading}
+            onPress={handleGoogleLogin}
+          >
+            {googleLoading ? (
+              <ActivityIndicator color={colors.text} size="small" />
+            ) : (
+              <>
+                <Ionicons name="logo-google" size={20} color={colors.text} />
+                <Text style={styles.socialFullText}>Tiếp tục với Google</Text>
+              </>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.socialFull, fbLoading && styles.socialButtonLoading]}
+            disabled={fbLoading}
+            onPress={handleFacebookLogin}
+          >
+            {fbLoading ? (
+              <ActivityIndicator color="#1877F2" size="small" />
+            ) : (
+              <>
+                <Ionicons name="logo-facebook" size={20} color="#1877F2" />
+                <Text style={styles.socialFullText}>Tiếp tục với Facebook</Text>
+              </>
+            )}
+          </TouchableOpacity>
         </View>
 
         {/* Footer */}
@@ -197,7 +197,7 @@ export default function LoginScreen() {
             <Text style={styles.footerLink}>Đăng ký ngay</Text>
           </Link>
         </View>
-      </ScrollView>
+      </KeyboardSafeScroll>
 
       <CustomAlert
         visible={alertVisible}
@@ -207,14 +207,14 @@ export default function LoginScreen() {
         buttons={alertConfig.buttons}
         onDismiss={() => setAlertVisible(false)}
       />
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: AppColors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
   },
   scrollContent: {
     flexGrow: 1,
@@ -228,7 +228,7 @@ const styles = StyleSheet.create({
   backButton: {
     width: 40,
     height: 40,
-    backgroundColor: "#f2f4f7",
+    backgroundColor: colors.surfaceSubtle,
     borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
@@ -239,12 +239,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: "700",
-    color: "#111827",
+    color: colors.text,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 15,
-    color: "#6b7280",
+    color: colors.textSecondary,
     lineHeight: 22,
   },
   formContainer: {
@@ -253,7 +253,7 @@ const styles = StyleSheet.create({
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f2f4f7",
+    backgroundColor: colors.surfaceSubtle,
     borderRadius: 12,
     paddingHorizontal: 14,
     height: 52,
@@ -264,7 +264,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 15,
-    color: "#111827",
+    color: colors.text,
   },
   eyeButton: {
     padding: 4,
@@ -274,14 +274,14 @@ const styles = StyleSheet.create({
     marginTop: -6,
   },
   forgotText: {
-    color: "#1088ff",
+    color: colors.accentText,
     fontSize: 13,
     fontWeight: "500",
   },
   primaryButton: {
     height: 52,
-    backgroundColor: "#111827",
-    borderRadius: 12,
+    backgroundColor: colors.accent,
+    borderRadius: 14,
     justifyContent: "center",
     alignItems: "center",
     marginTop: 8,
@@ -290,7 +290,7 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   primaryButtonText: {
-    color: "#fff",
+    color: colors.onAccent,
     fontSize: 16,
     fontWeight: "600",
   },
@@ -302,31 +302,26 @@ const styles = StyleSheet.create({
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: "#e5e7eb",
+    backgroundColor: colors.borderLight,
   },
   dividerText: {
     marginHorizontal: 14,
-    color: "#9ca3af",
+    color: colors.textMuted,
     fontSize: 13,
   },
-  socialContainer: {
+  socialFull: {
+    height: 50,
+    borderRadius: 14,
+    backgroundColor: colors.surfaceSubtle,
     flexDirection: "row",
-    justifyContent: "center",
-    gap: 14,
-  },
-  socialButton: {
-    width: 52,
-    height: 52,
-    backgroundColor: "#f2f4f7",
-    borderRadius: 12,
-    justifyContent: "center",
     alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    marginBottom: 10,
   },
+  socialFullText: { fontSize: 15, fontWeight: "700", color: colors.text },
   socialButtonLoading: {
     opacity: 0.7,
-  },
-  socialButtonDisabled: {
-    opacity: 0.5,
   },
   footer: {
     flexDirection: "row",
@@ -335,11 +330,11 @@ const styles = StyleSheet.create({
     marginTop: 40,
   },
   footerText: {
-    color: "#6b7280",
+    color: colors.textSecondary,
     fontSize: 14,
   },
   footerLink: {
-    color: "#1088ff",
+    color: colors.accentText,
     fontSize: 14,
     fontWeight: "600",
   },

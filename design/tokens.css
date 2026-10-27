@@ -1,0 +1,62 @@
+/* Generated from src/theme.ts. Run node scripts/export-design-tokens.cjs to update. */
+
+:root {
+  --color-brand-primary: #F97316;
+  --color-brand-primary-hover: #EA580C;
+  --color-brand-secondary: #0D9488;
+  --color-brand-vip: #EAB308;
+  --color-brand-vip-surface: #FEF3C7;
+  --color-status-success: #16A34A;
+  --color-status-warning: #D97706;
+  --color-status-danger: #DC2626;
+  --color-status-info: #2563EB;
+  --color-status-highlight: #FEF08A;
+  --color-status-highlight-dark: #713F12;
+  --app-bg-canvas: #F8F9FA;
+  --app-bg-surface: #FFFFFF;
+  --app-bg-surface-subtle: #F1F3F5;
+  --app-text-primary: #1A1D20;
+  --app-text-secondary: #59636E;
+  --app-text-tertiary: #8C95A0;
+  --app-border-subtle: #E9ECEF;
+  --app-border-strong: #CED4DA;
+}
+
+[data-theme="dark"] {
+  --app-bg-canvas: #0F1115;
+  --app-bg-surface: #181B20;
+  --app-bg-surface-subtle: #22262E;
+  --app-text-primary: #ECEFF4;
+  --app-text-secondary: #9AA0A6;
+  --app-text-tertiary: #636C76;
+  --app-border-subtle: #262B33;
+  --app-border-strong: #39414D;
+}
+
+.reader-theme-day {
+  --reader-bg: #F7F8FA;
+  --reader-text: #24292F;
+  --reader-meta: #6E7781;
+  --reader-overlay: rgba(247, 248, 250, 0.94);
+}
+
+.reader-theme-sepia {
+  --reader-bg: #F5EEDC;
+  --reader-text: #40301F;
+  --reader-meta: #806E5E;
+  --reader-overlay: rgba(245, 238, 220, 0.94);
+}
+
+.reader-theme-night {
+  --reader-bg: #14171A;
+  --reader-text: #BAC2CB;
+  --reader-meta: #68737D;
+  --reader-overlay: rgba(20, 23, 26, 0.92);
+}
+
+.reader-theme-oled {
+  --reader-bg: #000000;
+  --reader-text: #9DA7B3;
+  --reader-meta: #545D68;
+  --reader-overlay: rgba(0, 0, 0, 0.94);
+}

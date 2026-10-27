@@ -4,23 +4,39 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const fs = require('fs');
 const cors = require('cors');
+const cheerio = require('cheerio');
 const shortid = require('shortid');
+const integrity = require('./integrity');
+const giftsCatalog = require('./gifts');
+const chatAgent = require('./chat_agent');
+const aiRuntime = require('./ai_runtime');
+const { firebaseSession } = require('./firebase_auth');
+const { installSchema: installAiSchema } = require('./ai_store');
 
 const useMysql = (process.env.USE_MYSQL || 'false').toLowerCase() === 'true'
 
 const app = express();
-console.log('GROK_API_KEY loaded:', process.env.GROK_API_KEY ? 'YES (starts with ' + process.env.GROK_API_KEY.substring(0, 10) + '...)' : 'NO');
+app.set('trust proxy', process.env.TRUST_PROXY ? process.env.TRUST_PROXY.split(',').map(v => v.trim()).filter(Boolean) : false);
+app.use((req, res, next) => aiRuntime.withContext({ userId: optionalUserId(req) }, next));
 app.use(cors());
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 // increase JSON body size to allow JSON-based base64 uploads for covers
-app.use(express.json({ limit: '20mb' }));
+function requestBodyLimit(req) {
+  if (req.path.startsWith('/auth/')) return '16kb'
+  if (req.path === '/chat') return '16kb'
+  if (/^\/books\/[^/]+\/comments$/.test(req.path)) return '12kb'
+  if (req.path.startsWith('/integrity/')) return '350kb'
+  if (req.path === '/uploads/cover-json') return '12mb'
+  return '20mb'
+}
+app.use((req, res, next) => express.json({ limit: requestBodyLimit(req) })(req, res, next));
 
 // allow clients that send raw JSON without Content-Type header (e.g. Postman raw body without header)
 // We'll capture plain text bodies (but skip multipart) and attempt to JSON.parse when appropriate.
-app.use(express.text({
+app.use((req, res, next) => express.text({
   type: (req) => {
     const ct = req.headers['content-type'] || ''
     if (!ct) return true // no content-type -> try to capture raw
@@ -30,8 +46,8 @@ app.use(express.text({
     return ct.startsWith('text/') || false
   },
   // increase text body limit as well to handle larger payloads
-  limit: '20mb'
-}))
+  limit: requestBodyLimit(req)
+})(req, res, next))
 
 // coerce text body that looks like JSON into req.body object
 app.use((req, res, next) => {
@@ -83,7 +99,37 @@ const storage = multer.diskStorage({
     cb(null, name)
   }
 })
-const upload = multer({ storage })
+const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
+function imageFileFilter(req, file, cb) {
+  if (IMAGE_MIME_TYPES.has(String(file.mimetype || '').toLowerCase())) return cb(null, true)
+  return cb(Object.assign(new Error('invalid_image'), { code: 'INVALID_IMAGE' }))
+}
+function imageUploadMiddleware(middleware, field) {
+  return (req, res, next) => middleware.single(field)(req, res, err => {
+    if (!err) return next()
+    const tooLarge = err.code === 'LIMIT_FILE_SIZE'
+    return res.status(tooLarge ? 413 : 415).json({ error: tooLarge ? 'image_too_large' : 'invalid_image' })
+  })
+}
+const VIDEO_TYPES = new Map([['video/mp4', 'mp4'], ['video/webm', 'webm']])
+function videoFileFilter(req, file, cb) {
+  const expectedExt = VIDEO_TYPES.get(String(file.mimetype || '').toLowerCase())
+  const fileExt = path.extname(file.originalname || '').slice(1).toLowerCase()
+  if (expectedExt && expectedExt === fileExt) return cb(null, true)
+  return cb(Object.assign(new Error('invalid_video'), { code: 'INVALID_VIDEO' }))
+}
+function videoUploadMiddleware(middleware, field) {
+  return (req, res, next) => middleware.single(field)(req, res, err => {
+    if (!err) return next()
+    const tooLarge = err.code === 'LIMIT_FILE_SIZE'
+    return res.status(tooLarge ? 413 : 415).json({ error: tooLarge ? 'video_too_large' : 'invalid_video' })
+  })
+}
+function adminUploadGuard(req, res, next) {
+  if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+  next()
+}
+const upload = multer({ storage, limits: { fileSize: 8 * 1024 * 1024, files: 1, fields: 20 }, fileFilter: imageFileFilter })
 // separate storage for banners
 const bannerStorage = multer.diskStorage({
   destination: function (req, file, cb) { cb(null, bannersDir) },
@@ -93,7 +139,7 @@ const bannerStorage = multer.diskStorage({
     cb(null, name)
   }
 })
-const bannerUpload = multer({ storage: bannerStorage })
+const bannerUpload = multer({ storage: bannerStorage, limits: { fileSize: 8 * 1024 * 1024, files: 1, fields: 20 }, fileFilter: imageFileFilter })
 
 // separate storage for ad videos
 const adVideoStorage = multer.diskStorage({
@@ -107,7 +153,8 @@ const adVideoStorage = multer.diskStorage({
 })
 const adVideoUpload = multer({
   storage: adVideoStorage,
-  limits: { fileSize: 120 * 1024 * 1024 } // up to 120MB for short videos
+  limits: { fileSize: 120 * 1024 * 1024, files: 1, fields: 20 }, // up to 120MB for short videos
+  fileFilter: videoFileFilter
 })
 
 const DATA_PATH = path.join(__dirname, 'data.json');
@@ -117,15 +164,11 @@ function saveDataUrlToAvatar(dataUrl) {
   try {
     const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/i.exec(dataUrl || '')
     if (!match) return null
-    const mime = match[1]
-    const base64 = match[2]
-    const buf = Buffer.from(base64, 'base64')
-    // limit avatar size to 4MB
-    if (!buf || buf.length === 0 || buf.length > 4 * 1024 * 1024) return null
-    let ext = 'jpg'
-    if (mime === 'image/png') ext = 'png'
-    else if (mime === 'image/webp') ext = 'webp'
-    else if (mime === 'image/jpeg' || mime === 'image/jpg') ext = 'jpg'
+    const image = decodeImageBase64(match[2])
+    if (!image || image.buffer.length > 4 * 1024 * 1024) return null
+    const mimeExt = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }[match[1].toLowerCase()]
+    if (!mimeExt || mimeExt !== image.ext) return null
+    const { buffer: buf, ext } = image
     const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
     const full = path.join(avatarsDir, name)
     fs.writeFileSync(full, buf)
@@ -160,20 +203,73 @@ function writeData(data) {
   fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
 }
 
+function canEditFileBook(book, user) {
+  if (user?.role === 'admin') return true
+  if (user?.role !== 'author' || !book || !user.id) return false
+  const ownerIds = [book.author_user_id, book.user_id, book.owner_user_id, book.owner_id]
+    .filter(value => value != null && String(value).trim())
+  return ownerIds.some(id => String(id) === String(user.id))
+}
+
+function rasterImageExtension(buffer) {
+  if (!Buffer.isBuffer(buffer)) return null
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'png'
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'jpg'
+  if (buffer.length >= 6 && ['GIF87a', 'GIF89a'].includes(buffer.toString('ascii', 0, 6))) return 'gif'
+  if (buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return 'webp'
+  return null
+}
+
+function validateUploadedRaster(req, res) {
+  if (!req.file) return true
+  try {
+    const buffer = fs.readFileSync(req.file.path)
+    const detected = rasterImageExtension(buffer)
+    const named = path.extname(req.file.filename || '').slice(1).toLowerCase()
+    if (detected && detected === named) return true
+  } catch (e) { }
+  try { fs.unlinkSync(req.file.path) } catch (e) { }
+  res.status(400).json({ error: 'invalid_image' })
+  return false
+}
+
+function validateUploadedVideo(req, res) {
+  if (!req.file) return true
+  let descriptor = null
+  try {
+    descriptor = fs.openSync(req.file.path, 'r')
+    const header = Buffer.alloc(16)
+    const read = fs.readSync(descriptor, header, 0, header.length, 0)
+    const ext = path.extname(req.file.filename || '').slice(1).toLowerCase()
+    const isMp4 = ext === 'mp4' && read >= 12 && header.toString('ascii', 4, 8) === 'ftyp'
+    const isWebm = ext === 'webm' && read >= 4 && header.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))
+    if (isMp4 || isWebm) return true
+  } catch (e) { }
+  finally { if (descriptor != null) try { fs.closeSync(descriptor) } catch (e) { } }
+  try { fs.unlinkSync(req.file.path) } catch (e) { }
+  res.status(400).json({ error: 'invalid_video' })
+  return false
+}
+
+function decodeImageBase64(value) {
+  if (typeof value !== 'string' || !value || value.length > 12 * 1024 * 1024
+      || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) return null
+  const buffer = Buffer.from(value, 'base64')
+  if (!buffer.length || buffer.length > 8 * 1024 * 1024) return null
+  const ext = rasterImageExtension(buffer)
+  return ext ? { buffer, ext } : null
+}
+
 // Save data URL (base64) image to covers folder and return relative URL; returns null on failure
 function saveDataUrlToCover(dataUrl) {
   try {
     const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/i.exec(dataUrl || '')
     if (!match) return null
-    const mime = match[1]
-    const base64 = match[2]
-    const buf = Buffer.from(base64, 'base64')
-    // limit to 8MB to avoid abuse
-    if (!buf || buf.length === 0 || buf.length > 8 * 1024 * 1024) return null
-    let ext = 'jpg'
-    if (mime === 'image/png') ext = 'png'
-    else if (mime === 'image/webp') ext = 'webp'
-    else if (mime === 'image/jpeg' || mime === 'image/jpg') ext = 'jpg'
+    const image = decodeImageBase64(match[2])
+    if (!image) return null
+    const mimeExt = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }[match[1].toLowerCase()]
+    if (!mimeExt || mimeExt !== image.ext) return null
+    const { buffer: buf, ext } = image
     const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
     const full = path.join(coversDir, name)
     fs.writeFileSync(full, buf)
@@ -182,6 +278,54 @@ function saveDataUrlToCover(dataUrl) {
     console.error('saveDataUrlToCover err', e)
     return null
   }
+}
+
+function formatCoverUrl(req, coverUrl) {
+  if (!coverUrl) return null
+  const s = String(coverUrl).trim()
+  if (!s) return null
+  if (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('data:')) return s
+  if (s.startsWith('/')) return `${req.protocol}://${req.get('host')}${s}`
+  return `${req.protocol}://${req.get('host')}/${s}`
+}
+
+function chapterForReader(chapter) {
+  const result = { ...chapter }
+  const raw = String(result.content || '')
+  // Crawled chapters are stored as plain text, but the column default is html.
+  // Cheerio's element-only walk drops that text and the reader shows an empty chapter.
+  if (result.content_format === 'plain_text' || !/<\/?[a-z][^>]*>/i.test(raw)) {
+    result.content_format = 'plain_text'
+    return result
+  }
+  const html = raw
+  const $ = cheerio.load(html, {}, false)
+  $('script,style,iframe,ins,noscript,svg, .ads-holder, .ad-holder, .ad-slot, .ad-container, .adsbygoogle, .advertisement, .quangcao, [id*="ad-"], [id*="ads"], [class*="advert"], [class*="quangcao"], [data-ad], [data-advertisement]').remove()
+  const blockTags = new Set(['p', 'div', 'section', 'article', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'br', 'tr'])
+  const ignoredTag = new Set(['script', 'style', 'iframe', 'ins', 'noscript', 'svg', 'canvas', 'form'])
+  const readNode = node => {
+    if (node.type === 'text') return node.data || ''
+    if (node.type !== 'tag' && node.type !== 'root') return ''
+    const tag = String(node.name || '').toLowerCase()
+    const attrs = node.attribs || {}
+    const selectorText = `${attrs.id || ''} ${attrs.class || ''}`
+    if (ignoredTag.has(tag) || /(^|[\s_-])(ads?|advertisement|advert)([\s_-]|$)/i.test(selectorText)) return ''
+    if (tag === 'br') return '\n'
+    const text = (node.children || []).map(readNode).join('')
+    return blockTags.has(tag) ? `\n\n${text}\n\n` : text
+  }
+  const body = $.root().contents().toArray().map(readNode).join('')
+  result.content = body
+    .replace(/\u00a0/g, ' ')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(line => line.replace(/[\t ]+/g, ' ').trim())
+    .filter(line => !/^(quảng cáo|advertisement|xem quảng cáo)$/i.test(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  result.content_format = 'plain_text'
+  return result
 }
 
 // GET /books
@@ -206,6 +350,18 @@ app.get('/books', async (req, res) => {
       }
 
       const mineOnly = req.query && String(req.query.mine || '').toLowerCase() === 'true'
+      const wantsPage = req.query && ['limit', 'cursor', 'sort', 'genre', 'liked'].some(key => req.query[key] !== undefined)
+      if (wantsPage && !mineOnly) {
+        const page = await db.getBookPage({
+          limit: req.query.limit,
+          cursor: req.query.cursor,
+          sort: req.query.sort || 'recent',
+          genre: req.query.genre,
+          userId: currentUserId,
+          likedOnly: String(req.query.liked || '').toLowerCase() === 'true',
+        })
+        return res.json({ ...page, books: page.books.map(book => ({ ...book, cover_url: formatCoverUrl(req, book.cover_url) })) })
+      }
       const rows = await db.getBooks({ userId: currentUserId, mineOnly })
       console.log('[GET /books] Got', rows.length, 'rows')
 
@@ -242,7 +398,7 @@ app.get('/books', async (req, res) => {
             chapters: new Array(chapterCount),
             likes_count: typeof r.likes_count === 'number' ? r.likes_count : Number(r.likes_count || 0),
             views: typeof r.views === 'number' ? r.views : Number(r.views_count || r.views || 0),
-            cover_url: r.cover_url ? `${req.protocol}://${req.get('host')}${r.cover_url}` : null,
+            cover_url: formatCoverUrl(req, r.cover_url || r.cover_image),
             liked: likedSet ? likedSet.has(String(r.id || r.story_id)) : false
           }
           books.push(book)
@@ -260,10 +416,11 @@ app.get('/books', async (req, res) => {
       const likes_count = Number(b.likes_count || b.likes || b.favorites || 0)
       const views = Number(b.views || b.view_count || b.reads || b.total_views || 0)
       const chapters_count = Array.isArray(b.chapters) ? b.chapters.length : (Number(b.chapters_count || 0) || 0)
-      return Object.assign({}, b, { likes_count, views, chapters_count })
+      return Object.assign({}, b, { likes_count, views, chapters_count, cover_url: formatCoverUrl(req, b.cover_url || b.cover_image) })
     })
     res.json(books);
   } catch (err) {
+    if (err && (err.code === 'invalid_cursor' || err.code === 'invalid_sort')) return res.status(400).json({ error: err.code })
     console.error('[GET /books] Error:', err)
     res.status(500).json({ error: 'internal', message: err.message })
   }
@@ -280,6 +437,20 @@ app.get('/users', authMiddleware, async (req, res) => {
     console.error(err)
     if (process.env.ALLOW_DEV_TOKENS === 'true') return res.status(500).json({ error: 'internal', detail: String(err && (err.stack || err.message || err)) })
     res.status(500).json({ error: 'internal' })
+  }
+})
+
+// Cursor-paginated stories liked by the authenticated reader.
+app.get('/books/liked', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const page = await db.getBookPage({ limit: req.query.limit, cursor: req.query.cursor, userId: req.user.id, likedOnly: true })
+    return res.json({ ...page, books: page.books.map(book => ({ ...book, cover_url: formatCoverUrl(req, book.cover_url) })) })
+  } catch (err) {
+    const code = err && err.code
+    if (code === 'invalid_cursor') return res.status(400).json({ error: 'invalid_cursor' })
+    console.error('GET /books/liked err', err)
+    return res.status(500).json({ error: 'internal' })
   }
 })
 
@@ -300,13 +471,12 @@ app.put('/users/:id', authMiddleware, async (req, res) => {
   }
 })
 
-// Subscribe user to VIP (user self or admin)
+// Subscribe user to VIP (admin only)
 app.post('/users/:id/vip', authMiddleware, async (req, res) => {
   try {
     const id = req.params.id
-    // only allow the user themselves or admin to perform vip upgrade
     if (!req.user) return res.status(401).json({ error: 'missing authorization' })
-    if (String(req.user.id) !== String(id) && req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
 
     const { months, days, until } = req.body || {}
     if (!useMysql) {
@@ -393,8 +563,9 @@ app.delete('/users/:id', authMiddleware, async (req, res) => {
 
 // POST /books { title, author, description, cover_url, genre }
 // Accept JSON payload for easier clients. If you need to upload a file, use /books/upload
-app.post('/books', async (req, res) => {
+app.post('/books', authMiddleware, async (req, res) => {
   try {
+    if (!['admin', 'author'].includes(req.user.role)) return res.status(403).json({ error: 'forbidden' })
     const { title, author, description, genre } = req.body || {}
     let cover_url = req.body ? (req.body.cover_url || req.body.coverUrl || req.body.coverUrl) : undefined
     // If cover is base64 data URL, save to /covers and use short path to satisfy DB length constraints
@@ -416,36 +587,7 @@ app.post('/books', async (req, res) => {
     }
 
     if (useMysql) {
-      // require admin or author auth (or allow dev bypass)
-      const headerBypass = String(req.headers['x-bypass-auth'] || req.headers['x-dev-token'] || '').toLowerCase() === 'true'
-      const localReq = (req.hostname === 'localhost') || (req.ip === '::1') || (req.ip && req.ip.startsWith('127.')) || ((req.get && req.get('host') || '').startsWith('localhost'))
-      const bypass = headerBypass && (process.env.ALLOW_DEV_TOKENS === 'true' || localReq)
-      let payload = null
-      if (!bypass) {
-        const auth = req.headers.authorization
-        if (!auth) return res.status(401).json({ error: 'missing authorization' })
-        const parts = auth.split(' ')
-        if (parts.length !== 2 || parts[0] !== 'Bearer') return res.status(401).json({ error: 'invalid authorization format' })
-        const token = parts[1]
-        try {
-          payload = require('jsonwebtoken').verify(token, JWT_SECRET)
-          // Always trust latest role from DB (token may be stale after upgrade)
-          let effectiveRole = payload && payload.role
-          if (payload && payload.id) {
-            try {
-              const fresh = await db.getUserById(payload.id)
-              if (fresh && fresh.role) effectiveRole = fresh.role
-            } catch (err) {
-              console.error('refresh role failed', err)
-            }
-          }
-          if (!effectiveRole || (effectiveRole !== 'admin' && effectiveRole !== 'author')) return res.status(403).json({ error: 'forbidden' })
-          payload.role = effectiveRole
-        } catch (e) {
-          console.error('auth verify failed', e)
-          return res.status(401).json({ error: 'invalid token' })
-        }
-      }
+      const payload = req.user
       // proceed with MySQL creation
       let creatorAuthorId = null
       if (payload && payload.role === 'author') {
@@ -486,7 +628,8 @@ app.post('/books', async (req, res) => {
     const data = readData()
     data.books = data.books || []
     const id = shortid.generate()
-    const book = { id, title, author: author || null, description: description || null, chapters: [] }
+    const book = { id, title, author: author || null, description: description || null, chapters: [],
+      author_user_id: req.user.role === 'author' ? String(req.user.id) : null }
     if (cover_url) book.cover_url = cover_url
     if (genre) book.genre = genre
     data.books.unshift(book)
@@ -494,30 +637,21 @@ app.post('/books', async (req, res) => {
     return res.status(201).json(book)
   } catch (err) {
     console.error('POST /books err', err)
+    if (err && err.code === 'author_required') return res.status(400).json({ error: 'author required' })
     res.status(500).json({ error: err && err.message ? err.message : 'internal' })
   }
 })
 
 // POST /books/upload (multipart) - supports file upload for clients that need it
-app.post('/books/upload', upload.single('cover'), async (req, res) => {
+app.post('/books/upload', authMiddleware, (req, res, next) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+  next()
+}, imageUploadMiddleware(upload, 'cover'), async (req, res) => {
   try {
+    if (!validateUploadedRaster(req, res)) return
     const { title, author, description } = req.body || {}
     if (!title) return res.status(400).json({ error: 'title required' })
     if (useMysql) {
-      const headerBypass = String(req.headers['x-bypass-auth'] || req.headers['x-dev-token'] || '').toLowerCase() === 'true'
-      const localReq = (req.hostname === 'localhost') || (req.ip === '::1') || (req.ip && req.ip.startsWith('127.')) || ((req.get && req.get('host') || '').startsWith('localhost'))
-      const bypass = headerBypass && (process.env.ALLOW_DEV_TOKENS === 'true' || localReq)
-      if (!bypass) {
-        const auth = req.headers.authorization
-        if (!auth) return res.status(401).json({ error: 'missing authorization' })
-        const parts = auth.split(' ')
-        if (parts.length !== 2 || parts[0] !== 'Bearer') return res.status(401).json({ error: 'invalid authorization format' })
-        const token = parts[1]
-        try {
-          const payload = require('jsonwebtoken').verify(token, JWT_SECRET)
-          if (!payload || payload.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
-        } catch (e) { console.error('auth verify failed', e); return res.status(401).json({ error: 'invalid token' }) }
-      }
       const book = await db.createBook({ title, author, description })
       book.id = String(book.id)
       book.chapters = []
@@ -542,6 +676,7 @@ app.post('/books/upload', upload.single('cover'), async (req, res) => {
     return res.status(201).json(book)
   } catch (err) {
     console.error('POST /books/upload err', err)
+    if (err && err.code === 'author_required') return res.status(400).json({ error: 'author required' })
     res.status(500).json({ error: err && err.message ? err.message : 'internal' })
   }
 })
@@ -549,25 +684,63 @@ app.post('/books/upload', upload.single('cover'), async (req, res) => {
 // POST /books/import - import book from text content (auto-split chapters)
 app.post('/books/import', authMiddleware, async (req, res) => {
   try {
-    const { title, content, author, description, cover_url, genre } = req.body
-    if (!title || !content) return res.status(400).json({ error: 'title and content required' })
+    const { title, content, author, description, cover_url, genre } = req.body || {}
     
     const role = req.user.role
     if (role !== 'admin' && role !== 'author') {
       return res.status(403).json({ error: 'forbidden', message: 'Chỉ tác giả/admin mới được import truyện' })
     }
 
+    if (typeof title !== 'string' || !title.trim() || title.trim().length > 255
+        || typeof content !== 'string' || !content.trim()) {
+      return res.status(400).json({ error: 'invalid_title_or_content' })
+    }
+    if (content.length > 4_000_000) return res.status(413).json({ error: 'import_too_large' })
+    if (author != null && (typeof author !== 'string' || author.length > 255)
+        || description != null && (typeof description !== 'string' || description.length > 20000)
+        || cover_url != null && (typeof cover_url !== 'string' || cover_url.length > 500)
+        || genre != null && (typeof genre !== 'string' || genre.length > 255)) {
+      return res.status(400).json({ error: 'invalid_book_metadata' })
+    }
+
+    const chapterPattern = /(?:^|\n)(?:chương|chapter)\s*(\d+|[ivxlcdm]+)[:\s\-–—]*([^\n]*)/gi
+    const matches = [...content.matchAll(chapterPattern)]
+    const chapterPlans = []
+    if (matches.length > 0) {
+      for (let i = 0; i < matches.length; i++) {
+        const match = matches[i]
+        const chapterNum = match[1]
+        const chapterTitle = match[2].trim() || `Chương ${chapterNum}`
+        const startIndex = match.index + match[0].length
+        const endIndex = i < matches.length - 1 ? matches[i + 1].index : content.length
+        const chapterContent = content.substring(startIndex, endIndex).trim()
+        if (chapterContent) chapterPlans.push({ title: chapterTitle, content: chapterContent })
+      }
+    } else {
+      const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 0)
+      for (let i = 0; i < paragraphs.length; i += 50) {
+        chapterPlans.push({ title: `Chương ${chapterPlans.length + 1}`, content: paragraphs.slice(i, i + 50).join('\n\n') })
+      }
+    }
+    if (!chapterPlans.length) return res.status(400).json({ error: 'no_chapters_found' })
+    if (chapterPlans.length > 100 || chapterPlans.some(ch => ch.content.length > 80000 || ch.title.length > 255)) {
+      return res.status(413).json({ error: 'import_chapter_limit_exceeded', max_chapters: 100, max_chapter_chars: 80000 })
+    }
+
     if (useMysql) {
+      await aiReady
+      if (!await enforceAiQuota(req, res, 'book-import', 2)) return
       // Create book first
       let creatorAuthorId = null
       if (role === 'author') {
         try {
           creatorAuthorId = await db.getOrCreateAuthorIdByUserId(req.user.id)
         } catch (e) { console.error('get/create author id failed', e) }
+        if (!creatorAuthorId) return res.status(400).json({ error: 'author_profile_missing' })
       }
       
       const book = await db.createBook({ 
-        title: title.trim(), 
+        title: title.trim(),
         author: author || req.user.email || 'Tác giả', 
         description: description || '', 
         cover_url: cover_url || null,
@@ -575,51 +748,24 @@ app.post('/books/import', authMiddleware, async (req, res) => {
         author_id: creatorAuthorId
       })
       
-      // Auto-split content into chapters
-      // Method 1: Split by "Chương" or "Chapter" markers
-      const chapterPattern = /(?:^|\n)(?:chương|chapter)\s*(\d+|[ivxlcdm]+)[:\s\-–—]*([^\n]*)/gi
-      const matches = [...content.matchAll(chapterPattern)]
-      
-      if (matches.length > 0) {
-        // Content has chapter markers
-        for (let i = 0; i < matches.length; i++) {
-          const match = matches[i]
-          const chapterNum = match[1]
-          const chapterTitle = match[2].trim() || `Chương ${chapterNum}`
-          const startIndex = match.index + match[0].length
-          const endIndex = i < matches.length - 1 ? matches[i + 1].index : content.length
-          const chapterContent = content.substring(startIndex, endIndex).trim()
-          
-          if (chapterContent) {
-            try {
-              await db.createChapter(book.story_id || book.id, {
-                title: chapterTitle,
-                content: chapterContent
-              })
-            } catch (e) {
-              console.error('Failed to create chapter', e)
-            }
-          }
-        }
-      } else {
-        // No chapter markers - split by paragraph count (every 50 paragraphs = 1 chapter)
-        const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 0)
-        const PARAGRAPHS_PER_CHAPTER = 50
-        let chapterNum = 1
-        
-        for (let i = 0; i < paragraphs.length; i += PARAGRAPHS_PER_CHAPTER) {
-          const chapterParagraphs = paragraphs.slice(i, i + PARAGRAPHS_PER_CHAPTER)
-          const chapterContent = chapterParagraphs.join('\n\n')
-          
-          try {
-            await db.createChapter(book.story_id || book.id, {
-              title: `Chương ${chapterNum}`,
-              content: chapterContent
+      for (const plan of chapterPlans) {
+        try {
+          const createdCh = await db.createChapter(book.story_id || book.id, plan)
+          if (createdCh && (createdCh.chapter_id || createdCh.id)) {
+            const chId = String(createdCh.chapter_id || createdCh.id)
+            await integrity.reviewChapter(db, {
+              storyId: book.story_id || book.id,
+              chapterId: chId,
+              content: plan.content,
+              complete: chatAgent.chatCompletion
+            }).catch(async e => {
+              console.error('[integrity] import review error', e && e.message)
+              await db.insertModerationLog({ target_type: 'chapter', target_id: chId, violation_type: 'plagiarism', confidence_score: 0,
+                evidence_data: { zone: 'unknown', fallback_reason: 'review_failed', content_hash: require('./ai_store').hashText(plan.content) } }).catch(() => {})
             })
-            chapterNum++
-          } catch (e) {
-            console.error('Failed to create chapter', e)
           }
+        } catch (e) {
+          console.error('Failed to create chapter', e)
         }
       }
       
@@ -703,8 +849,9 @@ app.get('/ads/admin', authMiddleware, async (req, res) => {
 })
 
 // POST /ads (admin) - supports multipart/form-data with field 'video'
-app.post('/ads', authMiddleware, adVideoUpload.single('video'), async (req, res) => {
+app.post('/ads', authMiddleware, adminUploadGuard, videoUploadMiddleware(adVideoUpload, 'video'), async (req, res) => {
   try {
+    if (!validateUploadedVideo(req, res)) return
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
     const { title, link, enabled, placement } = req.body || {}
@@ -740,8 +887,9 @@ app.post('/ads', authMiddleware, adVideoUpload.single('video'), async (req, res)
 })
 
 // PUT /ads/:id (admin)
-app.put('/ads/:id', authMiddleware, adVideoUpload.single('video'), async (req, res) => {
+app.put('/ads/:id', authMiddleware, adminUploadGuard, videoUploadMiddleware(adVideoUpload, 'video'), async (req, res) => {
   try {
+    if (!validateUploadedVideo(req, res)) return
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
     const id = req.params.id
@@ -778,8 +926,9 @@ app.delete('/ads/:id', authMiddleware, async (req, res) => {
 })
 
 // POST /banners (admin) - supports multipart/form-data with field 'banner'
-app.post('/banners', authMiddleware, bannerUpload.single('banner'), async (req, res) => {
+app.post('/banners', authMiddleware, adminUploadGuard, imageUploadMiddleware(bannerUpload, 'banner'), async (req, res) => {
   try {
+    if (!validateUploadedRaster(req, res)) return
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
     const { title, link, enabled } = req.body
@@ -807,8 +956,9 @@ app.post('/banners', authMiddleware, bannerUpload.single('banner'), async (req, 
 })
 
 // PUT /banners/:id (admin)
-app.put('/banners/:id', authMiddleware, bannerUpload.single('banner'), async (req, res) => {
+app.put('/banners/:id', authMiddleware, adminUploadGuard, imageUploadMiddleware(bannerUpload, 'banner'), async (req, res) => {
   try {
+    if (!validateUploadedRaster(req, res)) return
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
     const id = req.params.id
@@ -926,7 +1076,13 @@ app.delete('/books/:id/genres/:genreId', authMiddleware, async (req, res) => {
 })
 
 // helper: parse bearer token if provided (optional)
-function getUserFromAuthHeader(req) {
+async function getUserFromAuthHeader(req) {
+  const bypassHeader = String(req.headers['x-bypass-auth'] || req.headers['x-dev-token'] || '').toLowerCase() === 'true'
+  const remoteAddress = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '')
+  const isLocal = remoteAddress === '::1' || remoteAddress.startsWith('127.')
+  if (bypassHeader && process.env.ALLOW_DEV_TOKENS === 'true' && process.env.NODE_ENV === 'development' && isLocal) {
+    return { id: 'dev_admin', email: 'dev@local', role: 'admin' }
+  }
   const auth = req.headers.authorization
   if (!auth) return null
   const parts = auth.split(' ')
@@ -934,21 +1090,53 @@ function getUserFromAuthHeader(req) {
   const token = parts[1]
   try {
     const payload = jwt.verify(token, JWT_SECRET)
-    return payload
+    if (!useMysql) return payload
+    if (!payload?.id) return null
+    const fresh = await db.getUserById(payload.id)
+    return fresh ? { ...payload, ...fresh } : null
   } catch (e) { return null }
 }
+
+// ==================== ADVANCED SEARCH ====================
+// GET /books/search - Cursor-paginated FULLTEXT title and description search.
+app.get('/books/search', async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const { q, genre, limit = 20, cursor } = req.query
+    if ([q, genre, cursor].some(v => v != null && (typeof v !== 'string' || v.length > 500))) return res.status(400).json({ error: 'invalid_search' })
+    const pageLimit = Number(limit)
+    if (!Number.isSafeInteger(pageLimit) || pageLimit < 1 || pageLimit > 50) return res.status(400).json({ error: 'invalid_pagination' })
+    const page = await db.searchStoriesFulltextPage({ query: q, genre, limit: pageLimit, cursor })
+    return res.json({ ...page, books: page.books.map(book => ({ ...book, cover_url: formatCoverUrl(req, book.cover_url) })) })
+  } catch (err) {
+    if (err && err.code === 'invalid_cursor') return res.status(400).json({ error: 'invalid_cursor' })
+    console.error('GET /books/search err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
 
 // GET /books/:id
 app.get('/books/:id', async (req, res) => {
   try {
-    const user = getUserFromAuthHeader(req)
+    const user = await getUserFromAuthHeader(req)
     if (useMysql) {
       const book = await db.getBookById(req.params.id)
       if (!book) return res.status(404).json({ error: 'not found' })
       // normalize id
       book.id = String(book.id)
-      if (book.cover_url && book.cover_url.startsWith('/')) {
-        book.cover_url = `${req.protocol}://${req.get('host')}${book.cover_url}`
+      book.cover_url = formatCoverUrl(req, book.cover_url || book.cover_image)
+
+      let role = user && user.role ? String(user.role).toLowerCase() : 'guest'
+      if (user && user.id) {
+        try {
+          const fresh = await db.getUserById(user.id)
+          if (fresh && fresh.role) role = String(fresh.role).toLowerCase()
+        } catch (e) {}
+      }
+      const isAuthorOwner = user && (String(book.author_user_id) === String(user.id) || String(book.user_id) === String(user.id))
+      if (role !== 'admin' && !isAuthorOwner) {
+        book.chapters = (book.chapters || []).filter(c => c.status === 'published').map(chapterMetadata)
+        book.chapters_count = book.chapters.length
       }
 
       // attach social metadata
@@ -968,6 +1156,7 @@ app.get('/books/:id', async (req, res) => {
     const book = data.books.find(b => b.id === req.params.id);
     if (!book) return res.status(404).json({ error: 'not found' });
     // file-mode: normalize stats fields
+    book.cover_url = formatCoverUrl(req, book.cover_url || book.cover_image)
     book.likes_count = Number(book.likes_count || book.likes || book.favorites || 0)
     book.views = Number(book.views || book.view_count || book.reads || book.total_views || 0)
     book.chapters_count = Array.isArray(book.chapters) ? book.chapters.length : (Number(book.chapters_count || 0) || 0)
@@ -990,11 +1179,25 @@ app.get('/stats', async (req, res) => {
   }
 })
 
+// Authors may see their own overlap and scores. Other books' prose stays in the moderation log for admins.
+function redactForeignChapterText(payload) {
+  if (!payload || typeof payload !== 'object') return payload
+  const snippets = Array.isArray(payload.matched_snippets)
+    ? payload.matched_snippets.map((snippet) => ({
+      similarity: snippet && snippet.similarity != null ? snippet.similarity : null,
+      snippetA: snippet && snippet.snippetA != null ? snippet.snippetA : null,
+    }))
+    : []
+  return Object.assign({}, payload, { matched_snippets: snippets, ai_analysis: null })
+}
+
 // POST /books/:id/chapters { title, content } - author/admin only
 app.post('/books/:id/chapters', authMiddleware, async (req, res) => {
   try {
     const { title, content } = req.body;
-    if (!title || !content) return res.status(400).json({ error: 'title and content required' });
+    if (typeof title !== 'string' || typeof content !== 'string' || !title.trim() || !content.trim()) return res.status(400).json({ error: 'title and content required' });
+    if (content.length > 80000) return res.status(413).json({ error: 'content_too_large' });
+    await aiReady
     if (useMysql) {
       const book = await db.getBookById(req.params.id)
       if (!book) return res.status(404).json({ error: 'book not found' })
@@ -1012,23 +1215,52 @@ app.post('/books/:id/chapters', authMiddleware, async (req, res) => {
         // allow if the story belongs to this author's user_id or author_id
         const isOwnerByUser = ownerUserId && String(req.user.id) === ownerUserId
         const isOwnerByAuthor = ownerAuthorId && currentAuthorId && String(currentAuthorId) === ownerAuthorId
-        const isLegacyMatch = ownerAuthorId && String(req.user.id) === ownerAuthorId // legacy schemas storing user_id in author_id
-        if (!isOwnerByUser && !isOwnerByAuthor && !isLegacyMatch) {
+        if (!isOwnerByUser && !isOwnerByAuthor) {
           return res.status(403).json({ error: 'not your story' })
         }
       }
       const chapter = await db.createChapter(req.params.id, { title, content })
       chapter.id = String(chapter.id)
+      try {
+        const verdict = await integrity.reviewChapter(db, {
+          storyId: req.params.id,
+          chapterId: chapter.id,
+          content,
+          complete: chatAgent.chatCompletion
+        })
+        chapter.status = verdict.status
+        chapter.moderation = {
+          zone: verdict.zone,
+          hamming: verdict.hamming,
+          similarity: verdict.similarity,
+          similarity_pct: verdict.similarity_pct,
+          matched_chapter_id: verdict.matched_chapter_id,
+          matched_story_title: verdict.matched_story_title,
+          matched_chapter_title: verdict.matched_chapter_title,
+          matched_snippets: verdict.matched_snippets,
+          ai_analysis: verdict.ai_analysis,
+          trace_id: verdict.trace_id
+        }
+        if (req.user.role !== 'admin') chapter.moderation = redactForeignChapterText(chapter.moderation)
+      } catch (reviewErr) {
+        console.error('[integrity] chapter', reviewErr && reviewErr.message)
+        chapter.status = 'pending_review'
+        chapter.moderation = { zone: 'unknown', fallback_reason: 'review_failed' }
+        await db.insertModerationLog({ target_type: 'chapter', target_id: chapter.id, violation_type: 'plagiarism', confidence_score: 0,
+          evidence_data: { zone: 'unknown', fallback_reason: 'review_failed', content_hash: require('./ai_store').hashText(content) } }).catch(() => {})
+      }
       return res.status(201).json(chapter)
     }
     // file-mode fallback (dev only)
     const data = readData();
     const book = data.books.find(b => b.id === req.params.id);
     if (!book) return res.status(404).json({ error: 'book not found' });
+    if (!canEditFileBook(book, req.user)) return res.status(403).json({ error: 'forbidden' });
     const chapter = {
       id: shortid.generate(),
       title,
       content,
+      status: 'pending_review',
       createdAt: new Date().toISOString()
     };
     book.chapters.push(chapter);
@@ -1046,14 +1278,121 @@ app.get('/', (req, res) => res.send('Admin server running'));
 
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
+const crypto = require('crypto')
+const aiCfg = chatAgent.resolveAiConfig()
+console.log(`AI chat: ${aiCfg.configured ? 'key ready' : 'missing AI_API_KEY'} base=${aiCfg.base} model=${aiCfg.model}`)
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me'
 
+function optionalUserId(req) {
+  const auth = req.headers.authorization
+  if (!auth || !String(auth).startsWith('Bearer ')) return null
+  try {
+    const payload = jwt.verify(String(auth).split(' ')[1], JWT_SECRET)
+    return payload && payload.id ? String(payload.id) : null
+  } catch (e) {
+    return null
+  }
+}
+const COIN_VND = Math.max(1, Number(process.env.COIN_VND || 100) || 100)
+const VIP_COST_COINS = Math.max(1, Number(process.env.VIP_COST_COINS || 500) || 500)
+const AUTHOR_COST_BASE = Math.max(1, Number(process.env.AUTHOR_COST_BASE || 800) || 800)
+const AUTHOR_COST_VIP = Math.max(1, Number(process.env.AUTHOR_COST_VIP || 300) || 300)
+const MIN_VIP_DAYS_FOR_DISCOUNT = Math.max(0, Number(process.env.MIN_VIP_DAYS_FOR_DISCOUNT || 15) || 15)
+
+function isProductionEnv() {
+  return String(process.env.NODE_ENV || '').toLowerCase() === 'production'
+}
+
+function generateTopupPaymentCode() {
+  return 'RD' + crypto.randomBytes(5).toString('hex').toUpperCase()
+}
+
+function extractSepayPaymentCode(body) {
+  const parts = [body && body.code, body && body.content, body && body.description]
+  for (const part of parts) {
+    const m = String(part || '').toUpperCase().match(/RD[0-9A-Z]{4,}/)
+    if (m) return m[0]
+  }
+  const full = parts.filter(Boolean).join(' ').toUpperCase()
+  const m = full.match(/RD[0-9A-Z]{4,}/)
+  return m ? m[0] : null
+}
+
+function isSepayLocal() {
+  if (isProductionEnv()) return false
+  const flag = String(process.env.SEPAY_LOCAL || '').trim().toLowerCase()
+  return flag === '1' || flag === 'true' || flag === 'yes'
+}
+
+function sepayLocalApiKey() {
+  return String(process.env.SEPAY_API_KEY || '').trim() || 'local-sepay'
+}
+
+function sepayWebhookAuthorized(req) {
+  const configuredApiKey = String(process.env.SEPAY_API_KEY || '').trim()
+  const authHeader = String(req.headers['authorization'] || '')
+  const token = authHeader.replace(/^(Apikey|Bearer)\s+/i, '').trim()
+  if (configuredApiKey && (token === configuredApiKey || authHeader === configuredApiKey)) return true
+  if (!isSepayLocal()) return false
+  const localKey = sepayLocalApiKey()
+  return token === localKey || authHeader === localKey
+}
+
+async function findMatchingBankTransfer(intent) {
+  const accountNo = process.env.SEPAY_ACCOUNT_NO || intent.account_no
+  const sepayApiToken = String(process.env.SEPAY_API_TOKEN || '').trim()
+  if (sepayApiToken) {
+    try {
+      const sepayRes = await fetch(`https://my.sepay.vn/userapi/transactions/list?account_number=${encodeURIComponent(accountNo)}&limit=50`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${sepayApiToken}`, 'Content-Type': 'application/json' }
+      })
+      const data = await sepayRes.json()
+      const txList = data && (data.transactions || data.data || [])
+      if (Array.isArray(txList) && txList.length) {
+        const code = String(intent.payment_code).toUpperCase()
+        const matched = txList.find((tx) => {
+          const content = String(tx.transaction_content || tx.content || tx.code || '').toUpperCase()
+          const amt = Number(tx.amount_in || tx.transferAmount || 0)
+          return content.includes(code) && amt >= Number(intent.amount)
+        })
+        if (matched) {
+          const amt = Number(matched.amount_in || matched.transferAmount || intent.amount)
+          return { paid: true, provider_ref: `sepay_${matched.id || matched.reference_number || intent.payment_code}`, amount: amt }
+        }
+      }
+    } catch (sepayErr) {
+      console.error('[verify-payment] SePay API query error:', sepayErr)
+    }
+  }
+
+  const bankApiUrl = process.env.BANK_API_URL || 'https://bank.dinhmanhhung.net/check-payment'
+  try {
+    const res = await fetch(bankApiUrl, {
+      method: 'POST',
+      headers: { accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        account_no: accountNo,
+        content: intent.payment_code,
+        amount: Number(intent.amount)
+      })
+    })
+    const data = await res.json()
+    if (data && data.paid) {
+      return { paid: true, provider_ref: String(intent.payment_code), amount: Number(intent.amount) }
+    }
+  } catch (bankErr) {
+    console.error('[verify-payment] bank API error:', bankErr)
+  }
+  return { paid: false }
+}
+
 async function authMiddleware(req, res, next) {
-  // Dev bypass: allow header 'x-bypass-auth: true' to act as admin when ALLOW_DEV_TOKENS=true
-  // or when the request originates from localhost (makes local dev easier)
+  // Local development bypass requires explicit configuration; Host is client input.
   const _hdr = String(req.headers['x-bypass-auth'] || req.headers['x-dev-token'] || '').toLowerCase() === 'true'
-  const _local = (req.hostname === 'localhost') || (req.ip === '::1') || (req.ip && req.ip.startsWith('127.')) || ((req.get && req.get('host') || '').startsWith('localhost'))
-  if (_hdr && (process.env.ALLOW_DEV_TOKENS === 'true' || _local)) {
+  const remoteAddress = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '')
+  const _local = remoteAddress === '::1' || remoteAddress.startsWith('127.')
+  if (_hdr && process.env.ALLOW_DEV_TOKENS === 'true' && process.env.NODE_ENV === 'development' && _local) {
     req.user = { id: 'dev_admin', email: 'dev@local', role: 'admin' }
     return next()
   }
@@ -1069,9 +1408,11 @@ async function authMiddleware(req, res, next) {
     if (useMysql && payload && payload.id) {
       try {
         const fresh = await db.getUserById(payload.id)
-        if (fresh && fresh.role) req.user.role = fresh.role
+        if (!fresh) return res.status(401).json({ error: 'account_unavailable' })
+        req.user.role = fresh.role
       } catch (err) {
         console.error('authMiddleware refresh role err', err)
+        return res.status(503).json({ error: 'authentication_unavailable' })
       }
     }
     next()
@@ -1081,10 +1422,18 @@ async function authMiddleware(req, res, next) {
 }
 
 // Auth endpoints
+function validCredentials(email, password) {
+  return typeof email === 'string' && email.trim().length <= 255 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+    && typeof password === 'string' && password.length > 0 && Buffer.byteLength(password, 'utf8') <= 72
+}
+
 app.post('/auth/register', async (req, res) => {
   try {
-    const { email, password, name } = req.body
-    if (!email || !password) return res.status(400).json({ error: 'email & password required' })
+    const { email: rawEmail, password, name } = req.body || {}
+    if (!validCredentials(rawEmail, password) || password.length < 6 || (name != null && (typeof name !== 'string' || !name.trim() || name.length > 100))) {
+      return res.status(400).json({ error: 'invalid_credentials', message: 'Email không hợp lệ hoặc mật khẩu cần ít nhất 6 ký tự và tối đa 72 byte.' })
+    }
+    const email = rawEmail.trim().toLowerCase()
     if (!useMysql) return res.status(400).json({ error: 'register requires MySQL mode' })
     const existing = await db.getUserByEmail(email)
     if (existing) return res.status(400).json({ error: 'email exists' })
@@ -1092,147 +1441,32 @@ app.post('/auth/register', async (req, res) => {
     const user = await db.createUser({ email, password_hash: hash, name, role: 'user' })
     res.status(201).json(user)
   } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'email exists' })
     console.error(err)
     res.status(500).json({ error: 'internal' })
   }
 })
 
-// Firebase Authentication endpoint - handles Google, Facebook, Email login from Firebase
+// Firebase identity comes exclusively from the verified ID token.
 app.post('/auth/firebase', async (req, res) => {
   try {
-    const { idToken, email, name, avatar_url, firebase_uid, auth_method } = req.body
-
-    if (!idToken || !firebase_uid) {
-      return res.status(400).json({ error: 'idToken and firebase_uid required' })
-    }
-
-    if (!useMysql) {
-      return res.status(400).json({ error: 'Firebase auth requires MySQL mode' })
-    }
-
-    console.log(`[Firebase Auth] ${auth_method || 'unknown'} login for ${email}`)
-
-    // Check if user already exists by firebase_uid or email
-    let user = null
-
-    // First try to find by firebase_uid
-    try {
-      const [rows] = await db.initPool().then(p => p.execute(
-        'SELECT * FROM users WHERE firebase_uid = ? LIMIT 1',
-        [firebase_uid]
-      ))
-      if (rows && rows.length > 0) {
-        user = rows[0]
-      }
-    } catch (e) {
-      console.log('[Firebase Auth] firebase_uid lookup failed, trying email')
-    }
-
-    // If not found by firebase_uid, try email
-    if (!user && email) {
-      user = await db.getUserByEmail(email)
-    }
-
-    if (user) {
-      // User exists - update firebase_uid if not set
-      if (!user.firebase_uid) {
-        try {
-          const pool = await db.initPool()
-          await pool.execute(
-            'UPDATE users SET firebase_uid = ?, auth_method = ? WHERE user_id = ?',
-            [firebase_uid, auth_method || 'firebase', user.user_id || user.id]
-          )
-        } catch (e) {
-          console.log('[Firebase Auth] Could not update firebase_uid:', e.message)
-        }
-      }
-
-      // Update avatar if provided and user doesn't have one
-      if (avatar_url && !user.avatar_url) {
-        try {
-          const pool = await db.initPool()
-          await pool.execute(
-            'UPDATE users SET avatar_url = ? WHERE user_id = ?',
-            [avatar_url, user.user_id || user.id]
-          )
-          user.avatar_url = avatar_url
-        } catch (e) {
-          console.log('[Firebase Auth] Could not update avatar:', e.message)
-        }
-      }
-
-      // Generate JWT token
-      const token = jwt.sign(
-        { id: user.user_id || user.id, email: user.email, role: user.role },
-        JWT_SECRET,
-        { expiresIn: '30d' }
-      )
-
-      return res.json({
-        token,
-        user: {
-          id: user.user_id || user.id,
-          email: user.email,
-          name: user.fullname || user.name,
-          role: user.role,
-          avatar_url: user.avatar_url
-        }
-      })
-    }
-
-    // Create new user
-    console.log('[Firebase Auth] Creating new user for', email)
-
-    // Generate a random password hash for Firebase users (they won't use password login)
-    const randomPassword = Math.random().toString(36).slice(-12) + Math.random().toString(36).slice(-12)
-    const hash = await bcrypt.hash(randomPassword, 10)
-
-    const newUser = await db.createUser({
-      email: email || `firebase_${firebase_uid}@noemail.local`,
-      password_hash: hash,
-      name: name || email?.split('@')[0] || 'User',
-      role: 'user',
-      avatar_url: avatar_url || null
-    })
-
-    // Update firebase_uid
-    try {
-      const pool = await db.initPool()
-      await pool.execute(
-        'UPDATE users SET firebase_uid = ?, auth_method = ? WHERE user_id = ?',
-        [firebase_uid, auth_method || 'firebase', newUser.id || newUser.user_id]
-      )
-    } catch (e) {
-      console.log('[Firebase Auth] Could not set firebase_uid:', e.message)
-    }
-
-    // Generate JWT token
-    const token = jwt.sign(
-      { id: newUser.id || newUser.user_id, email: newUser.email, role: newUser.role },
-      JWT_SECRET,
-      { expiresIn: '30d' }
-    )
-
-    return res.status(201).json({
-      token,
-      user: {
-        id: newUser.id || newUser.user_id,
-        email: newUser.email,
-        name: newUser.fullname || newUser.name || name,
-        role: newUser.role,
-        avatar_url: avatar_url || null
-      }
-    })
-
-  } catch (err) {
-    console.error('[Firebase Auth] Error:', err)
-    res.status(500).json({ error: 'internal', message: err.message })
+    if (!useMysql) return res.status(400).json({ error: 'Firebase auth requires MySQL mode' })
+    const session = await firebaseSession(db, req.body?.idToken)
+    const token = jwt.sign({ id: session.user.id, email: session.user.email, role: session.user.role }, JWT_SECRET, { expiresIn: '30d' })
+    return res.status(session.created ? 201 : 200).json({ token, user: session.user })
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ error: error.code, message: error.message })
+    console.error('[Firebase Auth]', error.code || 'internal')
+    return res.status(500).json({ error: 'internal', message: 'Không thể đăng nhập Firebase. Thử lại sau.' })
   }
 })
 
 // PUT /books/:bookId/chapters/:chapterId - admin or author edit chapter
 app.put('/books/:bookId/chapters/:chapterId', authMiddleware, async (req, res) => {
   try {
+    await aiReady
+    if (req.body?.content !== undefined && (typeof req.body.content !== 'string' || !req.body.content.trim())) return res.status(400).json({ error: 'invalid_content' })
+    if (req.body?.content?.length > 80000) return res.status(413).json({ error: 'content_too_large' })
     const id = req.params.chapterId
     const bookId = req.params.bookId
     const { title, content } = req.body
@@ -1256,18 +1490,54 @@ app.put('/books/:bookId/chapters/:chapterId', authMiddleware, async (req, res) =
         }
       }
       
+      if (!await db.getChapterById(bookId, id)) return res.status(404).json({ error: 'not found' })
       const updated = await db.updateChapter(id, { title, content })
       if (!updated) return res.status(404).json({ error: 'not found' })
+
+      if (content) {
+        try {
+          const verdict = await integrity.reviewChapter(db, {
+            storyId: bookId,
+            chapterId: id,
+            content,
+            complete: chatAgent.chatCompletion
+          })
+          updated.status = verdict.status
+          updated.moderation = {
+            zone: verdict.zone,
+            hamming: verdict.hamming,
+            similarity: verdict.similarity,
+            similarity_pct: verdict.similarity_pct,
+            matched_chapter_id: verdict.matched_chapter_id,
+            matched_story_title: verdict.matched_story_title,
+            matched_chapter_title: verdict.matched_chapter_title,
+            matched_snippets: verdict.matched_snippets,
+            ai_analysis: verdict.ai_analysis,
+            trace_id: verdict.trace_id
+          }
+          if (req.user.role !== 'admin') updated.moderation = redactForeignChapterText(updated.moderation)
+        } catch (reviewErr) {
+          console.error('[integrity] update chapter review error:', reviewErr && reviewErr.message)
+          updated.status = 'pending_review'
+          updated.moderation = { zone: 'unknown', fallback_reason: 'review_failed' }
+          await db.insertModerationLog({ target_type: 'chapter', target_id: id, violation_type: 'plagiarism', confidence_score: 0,
+            evidence_data: { zone: 'unknown', fallback_reason: 'review_failed', content_hash: require('./ai_store').hashText(content) } }).catch(() => {})
+        }
+      }
       return res.json(updated)
     }
     // file-mode: update chapter in data.json
     const data = readData()
     const book = data.books.find(b => b.id === bookId)
     if (!book) return res.status(404).json({ error: 'book not found' })
+    if (!canEditFileBook(book, req.user)) return res.status(403).json({ error: 'forbidden' })
     const ch = (book.chapters || []).find(c => String(c.id) === String(id))
     if (!ch) return res.status(404).json({ error: 'chapter not found' })
     if (title !== undefined) ch.title = title
-    if (content !== undefined) ch.content = content
+    if (content !== undefined) {
+      ch.content = content
+      ch.status = 'pending_review'
+    }
     writeData(data)
     return res.json(ch)
   } catch (err) {
@@ -1304,6 +1574,7 @@ app.delete('/books/:bookId/chapters/:chapterId', authMiddleware, async (req, res
       }
       
       try {
+        if (!await db.getChapterById(bookId, id)) return res.status(404).json({ error: 'not found' })
         const result = await db.deleteChapter(id)
         return res.json(result)
       } catch (err) {
@@ -1317,6 +1588,7 @@ app.delete('/books/:bookId/chapters/:chapterId', authMiddleware, async (req, res
     const data = readData()
     const book = data.books.find(b => b.id === bookId)
     if (!book) return res.status(404).json({ error: 'book not found' })
+    if (!canEditFileBook(book, req.user)) return res.status(403).json({ error: 'forbidden' })
     const idx = (book.chapters || []).findIndex(c => String(c.id) === String(id))
     if (idx === -1) return res.status(404).json({ error: 'chapter not found' })
     const removed = book.chapters.splice(idx, 1)
@@ -1338,64 +1610,37 @@ app.post('/books/:id/comments', authMiddleware, async (req, res) => {
     const bookId = req.params.id
     const { content, parent_id } = req.body || {}
 
-    if (!content || !content.trim()) {
+    if (typeof content !== 'string' || !content.trim()) {
       return res.status(400).json({ error: 'content required' })
     }
 
-    // Check content for negativity using Grok API (xAI)
-    let isNegative = false
-    let negativeProbability = 0
-    const GROK_KEY = process.env.GROK_API_KEY
-    if (GROK_KEY) {
-      console.log(`\n--- [Grok Check Start] ---`);
-      console.log(`[Grok] Input Content: "${content.trim()}"`);
-      try {
-        const grokRes = await fetch('https://api.x.ai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${GROK_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: "grok-4-1-fast-non-reasoning",
-            messages: [
-              { role: "system", content: "Bạn là robot kiểm duyệt bình luận thô tục cực kỳ khắt khe cho ứng dụng đọc truyện. Nếu bình luận chứa từ bậy, tiếng lóng thô lỗ, xúc phạm, toxic (ví dụ: lol, cút, xàm, ngu, đm, vcl, ...) hãy trả về duy nhất từ 'tieu cuc'. Nếu nội dung lịch sự hoặc bình thường, hãy trả về 'binh thuong'. KHÔNG giải thích gì thêm, chỉ trả về 1 trong 2 cụm từ trên." },
-              { role: "user", content: content.trim() }
-            ],
-            temperature: 0
-          })
-        })
-        const grokData = await grokRes.json()
-        console.log(`[Grok] Raw Response Data:`, JSON.stringify(grokData, null, 2));
-
-        if (grokData && grokData.choices && grokData.choices[0]) {
-          const answer = (grokData.choices[0].message.content || '').toLowerCase().trim()
-          console.log(`[Grok] Extracted Answer: "${answer}"`);
-
-          if (answer.includes('tieu cuc') || answer.includes('tiêu cực') || answer.includes('toxic')) {
-            isNegative = true
-            negativeProbability = 99
-          } else if (answer.includes('binh thuong') || answer.includes('bình thường')) {
-            isNegative = false
-          } else {
-            isNegative = !answer.includes('binh thuong');
-          }
-          console.log(`[Grok] Final Decision: ${isNegative ? 'NEGATIVE (Tieu cuc)' : 'POSITIVE (Binh thuong)'}`);
-        } else {
-          console.warn('[Grok] Unexpected response format or empty choices.');
-        }
-      } catch (e) {
-        console.error('[Grok] Fetch failed:', e.message)
-      }
-      console.log(`--- [Grok Check End] ---\n`);
+    const gate = integrity.intakeComment(content)
+    if (!gate.insert) {
+      return res.status(gate.httpStatus).json({ error: gate.error, message: gate.message })
     }
+    if (!await db.getVisibleBookById(bookId)) return res.status(404).json({ error: 'book not found' })
+    if (parent_id != null) {
+      if (!/^[1-9]\d*$/.test(String(parent_id))) return res.status(400).json({ error: 'invalid_parent' })
+      const parent = await db.getCommentById(parent_id)
+      if (!parent || String(parent.story_id) !== String(bookId) || !parent.enabled
+          || (parent.status !== 'approved' && !(String(parent.user_id) === String(userId) && ['pending', 'shadowbanned'].includes(parent.status)))) {
+        return res.status(400).json({ error: 'invalid_parent', message: 'Bình luận cha không tồn tại hoặc không thể trả lời.' })
+      }
+    }
+    if (!await enforceAiQuota(req, res, 'comment', 30)) return
 
     const comment = await db.createComment(bookId, {
       user_id: userId,
       content: content.trim(),
       parent_id: parent_id || null,
-      is_negative: isNegative ? 1 : 0,
-      negative_probability: negativeProbability
+      is_negative: 0,
+      negative_probability: 0,
+      status: 'pending'
+    })
+    await integrity.scheduleCommentScore({
+      db,
+      comment: { id: comment.id, content: content.trim() },
+      complete: chatAgent.chatCompletion
     })
     res.status(201).json(comment)
   } catch (err) {
@@ -1409,11 +1654,120 @@ app.get('/books/:id/comments', async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     const bookId = req.params.id
-    const list = await db.getComments(bookId, { status: 'approved' })
+    await aiReady
+    if (!await db.getVisibleBookById(bookId)) return res.status(404).json({ error: 'book not found' })
+    const list = await db.getComments(bookId, { publicFeed: true, viewerId: optionalUserId(req) })
     res.json(list)
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'internal' })
+  }
+})
+
+function requireAdmin(req, res) {
+  if (!req.user || req.user.role !== 'admin') {
+    res.status(403).json({ error: 'forbidden' })
+    return false
+  }
+  return true
+}
+
+app.get('/moderation/logs', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!requireAdmin(req, res)) return
+    const status = req.query.status || 'pending_review'
+    const rows = await db.listModerationLogs(status)
+    res.json(rows.map((row) => ({ ...row, trace_url: row.trace_id ? integrity.langfuseTraceUrl(row.trace_id) : null })))
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+app.get('/moderation/logs/:id', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!requireAdmin(req, res)) return
+    const log = await db.getModerationLog(req.params.id)
+    if (!log) return res.status(404).json({ error: 'not found' })
+    const diff = await integrity.buildModerationDiff(db, log)
+    res.json({
+      ...log,
+      trace_url: log.trace_id ? integrity.langfuseTraceUrl(log.trace_id) : null,
+      diff
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+app.post('/moderation/logs/:id/decision', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!requireAdmin(req, res)) return
+    const log = await db.getModerationLog(req.params.id)
+    if (!log) return res.status(404).json({ error: 'not found' })
+    const result = await integrity.applyModerationDecision(db, log, req.body && req.body.action, req.user.id)
+    res.json(result)
+  } catch (err) {
+    if (err.code === 'invalid_action') return res.status(400).json({ error: 'invalid_action' })
+    if (err.code === 'review_conflict') return res.status(409).json({ error: 'review_conflict', message: 'Nội dung hoặc quyết định đã thay đổi. Hãy tải lại.' })
+    console.error(err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+require('./langfuse_routes')(app, authMiddleware, requireAdmin)
+
+// POST /integrity/check-duplicate - Real-time AI duplicate analysis for authors & admin
+app.post('/integrity/check-duplicate', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!['author', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'forbidden' })
+    const { content, title, chapterId, storyId } = req.body || {}
+    if (!content || typeof content !== 'string' || !content.trim()) {
+      return res.status(400).json({ error: 'content is required' })
+    }
+    if (content.length > 80000) return res.status(413).json({ error: 'content_too_large' })
+    if (chapterId != null) {
+      if (!storyId) return res.status(400).json({ error: 'story_id_required' })
+      const book = await db.getBookById(storyId)
+      const chapter = book && await db.getChapterById(storyId, chapterId)
+      if (!chapter) return res.status(404).json({ error: 'chapter not found' })
+      if (req.user.role !== 'admin' && String(book.author_user_id) !== String(req.user.id)) return res.status(403).json({ error: 'not your story' })
+    }
+    if (!await enforceAiQuota(req, res, 'duplicate', 10)) return
+
+    const analysis = await integrity.analyzeContentSimilarity(db, {
+      storyId,
+      chapterId,
+      content: content.trim(),
+      title: title ? String(title).trim() : '',
+      complete: chatAgent.chatCompletion
+    })
+
+    const body = req.user.role === 'admin' ? analysis : redactForeignChapterText(analysis)
+    return res.json(body)
+  } catch (err) {
+    console.error('POST /integrity/check-duplicate err', err)
+    return res.status(500).json({ error: 'internal', message: err?.message || String(err) })
+  }
+})
+
+// POST /integrity/backfill - Backfill fingerprints for all existing chapters (Admin only)
+app.post('/integrity/backfill', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'forbidden', message: 'Chỉ Admin mới có quyền thực hiện' })
+    }
+    const result = await integrity.backfillFingerprints(db)
+    return res.json({ success: true, ...result })
+  } catch (err) {
+    console.error('POST /integrity/backfill err', err)
+    return res.status(500).json({ error: 'internal', message: err?.message || String(err) })
   }
 })
 
@@ -1441,6 +1795,11 @@ app.put('/comments/:id', authMiddleware, async (req, res) => {
     if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
     const id = req.params.id
     const { content, enabled, status } = req.body
+    if ((content !== undefined && (typeof content !== 'string' || !content.trim() || content.length > 2000))
+        || (enabled !== undefined && typeof enabled !== 'boolean')
+        || (status !== undefined && !['pending', 'approved', 'shadowbanned', 'rejected'].includes(status))) {
+      return res.status(400).json({ error: 'invalid_comment_update' })
+    }
     const updated = await db.updateComment(id, { content, enabled, status, reviewed_by: req.user.id })
     if (!updated) return res.status(404).json({ error: 'not found' })
     res.json(updated)
@@ -1471,9 +1830,12 @@ app.post('/comments/:id/reject', authMiddleware, async (req, res) => {
     if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
     const id = req.params.id
     const reason = req.body && req.body.reason ? String(req.body.reason) : null
+    if (req.body?.content !== undefined && (typeof req.body.content !== 'string' || !req.body.content.trim() || req.body.content.length > 2000)) {
+      return res.status(400).json({ error: 'invalid_comment_update' })
+    }
     const updated = await db.updateComment(id, { status: 'rejected', reviewed_by: req.user.id, content: req.body && req.body.content ? req.body.content : undefined })
-    if (reason) updated.admin_reason = reason
     if (!updated) return res.status(404).json({ error: 'not found' })
+    if (reason) updated.admin_reason = reason
     res.json(updated)
   } catch (err) {
     console.error(err)
@@ -1557,7 +1919,7 @@ app.get('/books/:id/likes', async (req, res) => {
   try {
     if (useMysql) {
       const bookId = req.params.id
-      const user = getUserFromAuthHeader(req)
+      const user = await getUserFromAuthHeader(req)
       const [cnt, liked] = await Promise.all([
         db.getLikesCount(bookId),
         user ? db.hasUserLiked(user.id, bookId) : false
@@ -1608,7 +1970,7 @@ app.delete('/books/:id/follow', authMiddleware, async (req, res) => {
 app.get('/authors', async (req, res) => {
   try {
     if (useMysql) {
-      const user = getUserFromAuthHeader(req)
+      const user = await getUserFromAuthHeader(req)
       const rows = await db.getAuthors({ userId: user ? user.id : null })
       const authors = (rows || []).map(r => ({
         id: String(r.author_id),
@@ -1660,7 +2022,7 @@ app.get('/authors/:id/books', async (req, res) => {
         chapters: new Array(chapterCount),
         likes_count: typeof r.likes_count === 'number' ? r.likes_count : Number(r.likes_count || 0),
         views: typeof r.views === 'number' ? r.views : Number(r.views_count || r.views || 0),
-        cover_url: r.cover_url ? `${req.protocol}://${req.get('host')}${r.cover_url}` : null,
+        cover_url: formatCoverUrl(req, r.cover_url || r.cover_image),
       }
     })
     res.json(books)
@@ -1734,7 +2096,7 @@ app.get('/following/feed', authMiddleware, async (req, res) => {
       chapter_id: r.chapter_id,
       chapter_no: r.chapter_no,
       chapter_title: r.chapter_title,
-      cover_url: r.cover_image ? `${req.protocol}://${req.get('host')}${r.cover_image}` : null,
+      cover_url: formatCoverUrl(req, r.cover_image || r.cover_url),
     }))
 
     res.json(items)
@@ -1766,7 +2128,7 @@ app.get('/feed', async (req, res) => {
         chapter_id: r.chapter_id,
         chapter_no: r.chapter_no,
         chapter_title: r.chapter_title,
-        cover_url: r.cover_image ? `${req.protocol}://${req.get('host')}${r.cover_image}` : null,
+        cover_url: formatCoverUrl(req, r.cover_image || r.cover_url),
       }))
       return res.json(items)
     }
@@ -1788,7 +2150,7 @@ app.get('/feed', async (req, res) => {
       chapter_id: null,
       chapter_no: null,
       chapter_title: null,
-      cover_url: b.cover_url || null,
+      cover_url: formatCoverUrl(req, b.cover_url || b.cover_image),
     }))
     return res.json(books)
   } catch (err) {
@@ -1854,7 +2216,7 @@ app.delete('/follows/:id', authMiddleware, async (req, res) => {
 })
 
 // Update book (admin only) - accepts JSON { title, author, description, cover_url, genre }
-app.put('/books/:id', async (req, res) => {
+app.put('/books/:id', authMiddleware, async (req, res) => {
   try {
     const id = req.params.id
     const { title, author, description, genre } = req.body || {}
@@ -1863,42 +2225,11 @@ app.put('/books/:id', async (req, res) => {
     const cover_url = req.body ? (req.body.cover_url || req.body.coverUrl || req.body.coverUrl) : undefined
     // If using MySQL, require admin or author auth
     if (useMysql) {
-      const headerBypass = String(req.headers['x-bypass-auth'] || req.headers['x-dev-token'] || '').toLowerCase() === 'true'
-      const localReq = (req.hostname === 'localhost') || (req.ip === '::1') || (req.ip && req.ip.startsWith('127.')) || ((req.get && req.get('host') || '').startsWith('localhost'))
-      const bypass = headerBypass && (process.env.ALLOW_DEV_TOKENS === 'true' || localReq)
-      
-      let userPayload = null
-      if (!bypass) {
-        const auth = req.headers.authorization
-        if (!auth) return res.status(401).json({ error: 'missing authorization' })
-        const parts = auth.split(' ')
-        if (parts.length !== 2 || parts[0] !== 'Bearer') return res.status(401).json({ error: 'invalid authorization format' })
-        const token = parts[1]
-        try {
-          userPayload = require('jsonwebtoken').verify(token, JWT_SECRET)
-          const userRole = userPayload?.role
-          
-          // Allow admin or author
-          if (userRole !== 'admin' && userRole !== 'author') {
-            return res.status(403).json({ error: 'forbidden' })
-          }
-          
-          // If author, check ownership
-          if (userRole === 'author') {
-            const book = await db.getBookById(id)
-            if (!book) return res.status(404).json({ error: 'book not found' })
-            
-            const bookOwnerId = book.author_user_id || book.user_id
-            if (String(bookOwnerId) !== String(userPayload.id)) {
-              return res.status(403).json({ error: 'not your book' })
-            }
-          }
-          
-          console.log(`[PUT] /books/${id} by user=${userPayload.email || userPayload.id || 'unknown'}`)
-        } catch (e) {
-          console.error('auth verify failed', e)
-          return res.status(401).json({ error: 'invalid token' })
-        }
+      if (!['admin', 'author'].includes(req.user.role)) return res.status(403).json({ error: 'forbidden' })
+      if (req.user.role === 'author') {
+        const book = await db.getBookById(id)
+        if (!book) return res.status(404).json({ error: 'book not found' })
+        if (String(book.author_user_id || book.user_id) !== String(req.user.id)) return res.status(403).json({ error: 'not your book' })
       }
       console.log('payload:', { title: title || null, author: author || null, cover_url: cover_url || null, genre: genre || null })
       const updated = await db.updateBook(id, { title, author, description, genre })
@@ -1932,18 +2263,15 @@ app.put('/books/:id', async (req, res) => {
 })
 
 // POST /books/:id/upload - multipart update for cover file
-app.post('/books/:id/upload', upload.single('cover'), async (req, res) => {
+app.post('/books/:id/upload', authMiddleware, (req, res, next) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+  next()
+}, imageUploadMiddleware(upload, 'cover'), async (req, res) => {
   try {
+    if (!validateUploadedRaster(req, res)) return
     const id = req.params.id
     if (useMysql) {
-      const auth = req.headers.authorization
-      if (!auth) return res.status(401).json({ error: 'missing authorization' })
-      const parts = auth.split(' ')
-      if (parts.length !== 2 || parts[0] !== 'Bearer') return res.status(401).json({ error: 'invalid authorization format' })
-      const token = parts[1]
       try {
-        const payload = require('jsonwebtoken').verify(token, JWT_SECRET)
-        if (!payload || payload.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
         if (!req.file) return res.status(400).json({ error: 'file required' })
         const coverUrl = `/covers/${req.file.filename}`
         await db.updateBookCover(id, coverUrl)
@@ -1968,15 +2296,17 @@ app.post('/books/:id/upload', upload.single('cover'), async (req, res) => {
 })
 
 // POST /uploads/cover-json - accept JSON { filename, data } where data is base64 (no data: prefix)
-app.post('/uploads/cover-json', async (req, res) => {
+app.post('/uploads/cover-json', authMiddleware, async (req, res) => {
   try {
+    if (!['admin', 'author'].includes(req.user.role)) return res.status(403).json({ error: 'forbidden' })
     const { filename, data } = req.body || {}
-    if (!filename || !data) return res.status(400).json({ error: 'filename and data (base64) required' })
-    // sanitize filename a bit
-    const safeName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${filename.replace(/[^a-zA-Z0-9.\-]/g, '')}`
+    if (typeof filename !== 'string' || !filename.trim() || typeof data !== 'string' || !data) return res.status(400).json({ error: 'filename and data (base64) required' })
+    if (data.length > 12 * 1024 * 1024) return res.status(413).json({ error: 'image_too_large' })
+    const image = decodeImageBase64(data)
+    if (!image) return res.status(400).json({ error: 'invalid_image' })
+    const safeName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${image.ext}`
     const outPath = path.join(coversDir, safeName)
-    const buffer = Buffer.from(data, 'base64')
-    fs.writeFileSync(outPath, buffer)
+    fs.writeFileSync(outPath, image.buffer)
     const coverUrl = `/covers/${safeName}`
     return res.json({ url: `${req.protocol}://${req.get('host')}${coverUrl}`, path: coverUrl })
   } catch (err) {
@@ -2100,13 +2430,39 @@ app.post('/notifications/seen', authMiddleware, async (req, res) => {
   }
 })
 
+app.post('/push/device', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : ''
+    const platform = req.body?.platform === 'android' ? 'android' : null
+    if (!token || token.length > 512 || !platform) return res.status(400).json({ error: 'invalid_device_token' })
+    return res.json(await db.registerFcmToken(req.user.id, token, platform))
+  } catch (err) {
+    console.error('POST /push/device err', err)
+    return res.status(500).json({ error: 'internal' })
+  }
+})
+
+app.delete('/push/device', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : ''
+    if (!token || token.length > 512) return res.status(400).json({ error: 'invalid_device_token' })
+    return res.json(await db.removeFcmToken(req.user.id, token))
+  } catch (err) {
+    console.error('DELETE /push/device err', err)
+    return res.status(500).json({ error: 'internal' })
+  }
+})
+
 app.post('/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body
-    if (!email || !password) return res.status(400).json({ error: 'email & password required' })
+    const { email: rawEmail, password } = req.body || {}
+    if (!validCredentials(rawEmail, password)) return res.status(400).json({ error: 'invalid credentials' })
+    const email = rawEmail.trim().toLowerCase()
     if (!useMysql) return res.status(400).json({ error: 'login requires MySQL mode' })
     const user = await db.getUserByEmail(email)
-    if (!user) return res.status(400).json({ error: 'invalid credentials' })
+    if (!user || !user.password_hash) return res.status(400).json({ error: 'invalid credentials' })
     const ok = await bcrypt.compare(password, user.password_hash)
     if (!ok) return res.status(400).json({ error: 'invalid credentials' })
     const payload = { id: String(user.user_id || user.id || ''), email: user.email, role: user.role }
@@ -2118,26 +2474,26 @@ app.post('/auth/login', async (req, res) => {
   }
 })
 
-// Payments: client notifies server of successful payment -> record and upgrade to VIP
+// Payments: admin records a payment (optional VIP upgrade when months/days provided)
 app.post('/payments', authMiddleware, async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-    const userId = req.user && req.user.id
-    if (!userId) return res.status(401).json({ error: 'missing authorization' })
-    const { amount, provider, provider_ref, months, days } = req.body || {}
-    // record payment
-    const payment = await db.createPayment({ user_id: userId, amount: amount || 0, provider: provider || null, provider_ref: provider_ref || null, months: months || null, days: days || null })
-    // upgrade user to VIP based on months/days (or default 1 month)
-    const m = months || (days ? undefined : 1)
-    const d = days || undefined
-    try {
-      const ok = await db.updateUserVip(userId, { months: m, days: d, role: 'vip' })
-      const updated = await db.getUserById(userId)
-      return res.json({ success: true, payment, user: updated })
-    } catch (e) {
-      console.error('vip upgrade after payment failed', e)
-      return res.status(500).json({ error: 'upgrade_failed', payment })
+    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    const { user_id, amount, provider, provider_ref, months, days } = req.body || {}
+    const targetUserId = user_id || (req.user && req.user.id)
+    if (!targetUserId) return res.status(400).json({ error: 'user_id required' })
+    const payment = await db.createPayment({ user_id: targetUserId, amount: amount || 0, provider: provider || null, provider_ref: provider_ref || null, months: months || null, days: days || null })
+    if (months || days) {
+      try {
+        await db.updateUserVip(targetUserId, { months: months || undefined, days: days || undefined, role: 'vip' })
+        const updated = await db.getUserById(targetUserId)
+        return res.json({ success: true, payment, user: updated })
+      } catch (e) {
+        console.error('vip upgrade after payment failed', e)
+        return res.status(500).json({ error: 'upgrade_failed', payment })
+      }
     }
+    return res.json({ success: true, payment })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'internal' })
@@ -2208,9 +2564,11 @@ app.post('/wallet/topup-request', authMiddleware, async (req, res) => {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     const userId = req.user && req.user.id
     if (!userId) return res.status(401).json({ error: 'missing authorization' })
-    const { coins, amount, method, note, evidence_url, provider_ref } = req.body || {}
-    if (!coins || Number(coins) <= 0) return res.status(400).json({ error: 'coins required' })
-    const reqRow = await db.createTopupRequest({ user_id: userId, coins: Number(coins), amount: amount || null, method: method || 'manual', note, evidence_url, provider_ref })
+    const { coins, method, note, evidence_url, provider_ref } = req.body || {}
+    const coinsNum = Math.floor(Number(coins))
+    if (!Number.isFinite(coinsNum) || coinsNum <= 0) return res.status(400).json({ error: 'coins required' })
+    const amountNum = coinsNum * COIN_VND
+    const reqRow = await db.createTopupRequest({ user_id: userId, coins: coinsNum, amount: amountNum, method: method || 'manual', note, evidence_url, provider_ref })
     res.status(201).json(reqRow)
   } catch (err) {
     console.error('topup-request err', err)
@@ -2240,15 +2598,13 @@ app.post('/wallet/topup-requests/:id/approve', authMiddleware, async (req, res) 
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
     const id = req.params.id
-    const existing = await db.getTopupRequestById(id)
-    if (!existing) return res.status(404).json({ error: 'not found' })
-    if (existing.status !== 'pending') return res.status(400).json({ error: 'already_processed', status: existing.status })
-    const coins = req.body && req.body.coins ? Number(req.body.coins) : Number(existing.coins || 0)
     const admin_note = req.body && req.body.admin_note ? req.body.admin_note : null
-    const updated = await db.setTopupRequestStatus(id, { status: 'approved', admin_id: req.user.id, admin_note, coins })
-    const wallet = await db.creditWallet(existing.user_id, coins)
-    try { await db.createPayment({ user_id: existing.user_id, amount: existing.amount || 0, coins, provider: existing.method || 'manual', provider_ref: existing.provider_ref || `topup#${id}`, months: null, days: null }) } catch (e) { console.error('record payment err', e) }
-    res.json({ success: true, request: updated, wallet })
+    const coins = req.body && req.body.coins != null ? Number(req.body.coins) : undefined
+    const result = await db.approvePendingTopupRequest(id, { admin_id: req.user.id, admin_note, coins })
+    if (result && result.error === 'not_found') return res.status(404).json({ error: 'not found' })
+    if (result && result.error === 'already_processed') return res.status(400).json({ error: 'already_processed', status: result.status })
+    if (result && result.error) return res.status(400).json({ error: result.error })
+    res.json({ success: true, request: result.request, wallet: result.wallet })
   } catch (err) {
     console.error('approve topup err', err)
     res.status(500).json({ error: 'internal' })
@@ -2263,9 +2619,10 @@ app.post('/wallet/topup-requests/:id/reject', authMiddleware, async (req, res) =
     const id = req.params.id
     const existing = await db.getTopupRequestById(id)
     if (!existing) return res.status(404).json({ error: 'not found' })
-    if (existing.status !== 'pending') return res.status(400).json({ error: 'already_processed', status: existing.status })
     const admin_note = req.body && req.body.admin_note ? req.body.admin_note : null
     const updated = await db.setTopupRequestStatus(id, { status: 'rejected', admin_id: req.user.id, admin_note })
+    if (updated && updated.error === 'already_processed') return res.status(400).json({ error: 'already_processed', status: updated.status })
+    if (updated && updated.error === 'not_found') return res.status(404).json({ error: 'not found' })
     res.json({ success: true, request: updated })
   } catch (err) {
     console.error('reject topup err', err)
@@ -2273,19 +2630,18 @@ app.post('/wallet/topup-requests/:id/reject', authMiddleware, async (req, res) =
   }
 })
 
-// POST /wallet/topup - credit coins to wallet (client-side: after successful bank payment, or admin credit)
+// POST /wallet/topup - admin credits coins (self-serve mint is forbidden)
 app.post('/wallet/topup', authMiddleware, async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-    const userId = req.user && req.user.id
-    const { coins, amount, provider, provider_ref } = req.body || {}
-    if (!userId) return res.status(401).json({ error: 'missing authorization' })
-    if (!coins || Number(coins) <= 0) return res.status(400).json({ error: 'coins required' })
-    // record payment (coins purchase) if amount/provider provided
-    if (amount || provider) {
-      try { await db.createPayment({ user_id: userId, amount: amount || 0, coins: Number(coins), provider: provider || 'bank', provider_ref: provider_ref || null, months: null, days: null }) } catch (e) { console.error('createPayment err', e) }
-    }
-    const w = await db.creditWallet(userId, Number(coins))
+    if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    const { user_id, coins, amount, provider, provider_ref } = req.body || {}
+    const targetUserId = user_id || (req.user && req.user.id)
+    const coinsNum = Math.floor(Number(coins))
+    if (!targetUserId) return res.status(400).json({ error: 'user_id required' })
+    if (!Number.isFinite(coinsNum) || coinsNum <= 0) return res.status(400).json({ error: 'coins required' })
+    try { await db.createPayment({ user_id: targetUserId, amount: amount || (coinsNum * COIN_VND), coins: coinsNum, provider: provider || 'admin', provider_ref: provider_ref || 'admin-topup', months: null, days: null }) } catch (e) { console.error('createPayment err', e) }
+    const w = await db.creditWallet(targetUserId, coinsNum)
     res.json(w)
   } catch (err) {
     console.error(err)
@@ -2293,86 +2649,303 @@ app.post('/wallet/topup', authMiddleware, async (req, res) => {
   }
 })
 
-// POST /wallet/verify-payment - verify payment via bank API and auto-credit coins
-// Content format: "RD<userId><shortCode>" e.g. "RD123A7B2" (sent from client)
+// POST /wallet/topup-intent - create a payment intent for SePay automated bank topup
+app.post('/wallet/topup-intent', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const userId = req.user && req.user.id
+    if (!userId) return res.status(401).json({ error: 'missing authorization' })
+
+    const { coins } = req.body || {}
+    const coinsNum = Math.floor(Number(coins))
+    if (!Number.isFinite(coinsNum) || coinsNum <= 0) return res.status(400).json({ error: 'coins required' })
+    if (coinsNum > 1000000) return res.status(400).json({ error: 'coins too large' })
+    const amountNum = coinsNum * COIN_VND
+
+    const bankName = process.env.SEPAY_BANK_NAME || 'MBBank'
+    const accountNo = process.env.SEPAY_ACCOUNT_NO || '123406072004'
+    const accountName = process.env.SEPAY_ACCOUNT_NAME || 'Hoang Van Huy'
+
+    let intent = null
+    let paymentCode = null
+    for (let attempt = 0; attempt < 5; attempt++) {
+      paymentCode = generateTopupPaymentCode()
+      try {
+        intent = await db.createTopupIntent({
+          user_id: userId,
+          coins: coinsNum,
+          amount: amountNum,
+          payment_code: paymentCode,
+          account_no: accountNo,
+          expires_in_minutes: 15
+        })
+        if (intent) break
+      } catch (e) {
+        if (e && e.code === 'ER_DUP_ENTRY') continue
+        throw e
+      }
+    }
+    if (!intent) return res.status(500).json({ error: 'internal' })
+
+    // SePay QR image URL
+    const qrUrl = `https://qr.sepay.vn/img?acc=${encodeURIComponent(accountNo)}&bank=${encodeURIComponent(bankName)}&amount=${amountNum}&des=${encodeURIComponent(paymentCode)}`
+    // VietQR fallback image URL
+    const vietQrUrl = `https://img.vietqr.io/image/${encodeURIComponent(bankName)}-${encodeURIComponent(accountNo)}-compact2.jpg?amount=${amountNum}&addInfo=${encodeURIComponent(paymentCode)}&accountName=${encodeURIComponent(accountName)}`
+
+    res.status(201).json({
+      success: true,
+      intent: {
+        ...intent,
+        bank_name: bankName,
+        account_no: accountNo,
+        account_name: accountName,
+        qr_url: qrUrl,
+        vietqr_url: vietQrUrl,
+        local_mode: isSepayLocal()
+      }
+    })
+  } catch (err) {
+    console.error('[topup-intent] Error:', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// GET /wallet/topup-intent/:code/status - check status of topup intent (used for client polling)
+app.get('/wallet/topup-intent/:code/status', authMiddleware, async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const { code } = req.params
+    if (!code) return res.status(400).json({ error: 'code required' })
+
+    const intent = await db.getTopupIntentByCode(code)
+    if (!intent) return res.status(404).json({ error: 'intent not found' })
+
+    if (req.user && req.user.role !== 'admin' && String(req.user.id) !== String(intent.user_id)) {
+      return res.status(403).json({ error: 'forbidden' })
+    }
+
+    let status = intent.status
+    if (status === 'pending' && intent.expires_at && new Date(intent.expires_at).getTime() <= Date.now()) {
+      status = 'expired'
+    }
+    let wallet = null
+    const isPaid = status === 'consumed'
+    if (isPaid) {
+      wallet = await db.getWallet(intent.user_id)
+    }
+
+    res.json({
+      success: true,
+      status,
+      is_paid: isPaid,
+      coins: intent.coins,
+      amount: intent.amount,
+      wallet: wallet
+    })
+  } catch (err) {
+    console.error('[topup-intent status] Error:', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// POST /sepay/local-pay - credit a pending intent on this machine. Ignored in production.
+app.post('/sepay/local-pay', authMiddleware, async (req, res) => {
+  try {
+    if (!isSepayLocal()) return res.status(404).json({ success: false, paid: false, error: 'not_found' })
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const userId = req.user && req.user.id
+    if (!userId) return res.status(401).json({ error: 'missing authorization' })
+    const paymentCode = String((req.body || {}).paymentCode || '').trim().toUpperCase()
+    if (!paymentCode) return res.status(400).json({ success: false, paid: false, message: 'Mã thanh toán không hợp lệ' })
+
+    const intent = await db.getTopupIntentByCode(paymentCode)
+    if (!intent) return res.status(404).json({ success: false, paid: false, message: 'Không tìm thấy yêu cầu nạp' })
+    if (req.user.role !== 'admin' && String(intent.user_id) !== String(userId)) {
+      return res.status(403).json({ success: false, paid: false, message: 'Không có quyền xác nhận giao dịch này' })
+    }
+
+    const result = await db.consumeAndCreditIntent({
+      payment_code: paymentCode,
+      user_id: intent.user_id,
+      min_amount: Number(intent.amount),
+      provider: 'sepay',
+      provider_ref: `local_${paymentCode}`,
+      amount_received: Number(intent.amount)
+    })
+    if (result && result.ok) {
+      console.log(`[SePay local] Credited ${result.coins} xu to user ${intent.user_id} for ${paymentCode}`)
+      return res.json({
+        success: true,
+        paid: true,
+        already_credited: !!result.already_credited,
+        local_mode: true,
+        message: `Đã cộng ${intent.coins} xu (SePay local, không qua ngân hàng).`,
+        wallet: result.wallet,
+        coins: result.coins
+      })
+    }
+    if (result && result.code === 'expired') {
+      return res.json({ success: false, paid: false, message: 'Mã thanh toán đã hết hạn. Vui lòng tạo mã QR mới.' })
+    }
+    return res.json({ success: false, paid: false, message: 'Không cộng được xu cho mã này.' })
+  } catch (err) {
+    console.error('[SePay local] Error:', err)
+    res.status(500).json({ success: false, paid: false, message: 'Lỗi hệ thống' })
+  }
+})
+
+// POST /sepay/webhook - Automated Webhook from SePay gateway
+app.post('/sepay/webhook', async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    if (!sepayWebhookAuthorized(req)) {
+      console.warn('[SePay Webhook] Unauthorized access attempt')
+      return res.status(401).json({ success: false, message: 'Unauthorized SePay API key' })
+    }
+
+    const {
+      id,
+      gateway,
+      accountNumber,
+      content,
+      transferType,
+      transferAmount,
+      referenceCode,
+      description
+    } = req.body || {}
+
+    console.log('[SePay Webhook] Received:', { id, gateway, accountNumber, content, transferType, transferAmount, referenceCode })
+
+    if (transferType && String(transferType).toLowerCase() !== 'in') {
+      return res.json({ success: true, message: 'Ignored outgoing transfer' })
+    }
+
+    const amountReceived = Number(transferAmount || 0)
+    if (!Number.isFinite(amountReceived) || amountReceived <= 0) {
+      return res.json({ success: true, message: 'Ignored zero/negative transfer amount' })
+    }
+
+    const paymentCode = extractSepayPaymentCode(req.body || {})
+    if (!paymentCode) {
+      console.warn('[SePay Webhook] No payment code in transfer content:', { content, amountReceived })
+      return res.json({ success: false, message: 'No matching intent found for transaction' })
+    }
+
+    const intent = await db.getTopupIntentByCode(paymentCode)
+    if (!intent) {
+      console.warn('[SePay Webhook] No matching intent:', { paymentCode, amountReceived })
+      return res.json({ success: false, message: 'No matching intent found for transaction' })
+    }
+
+    if (amountReceived < Number(intent.amount)) {
+      console.warn('[SePay Webhook] Amount mismatch:', { paymentCode, amountReceived, expected: intent.amount })
+      return res.json({ success: false, message: 'Transfer amount is below intent amount' })
+    }
+
+    const providerRef = id ? `sepay_${id}` : (referenceCode ? `sepay_ref_${referenceCode}` : paymentCode)
+    const result = await db.consumeAndCreditIntent({
+      payment_code: paymentCode,
+      min_amount: amountReceived,
+      provider: 'sepay',
+      provider_ref: providerRef,
+      amount_received: amountReceived
+    })
+
+    if (result && result.ok && result.already_credited) {
+      return res.json({ success: true, message: 'Transaction already processed', user_id: intent.user_id, coins: Number(intent.coins), wallet: result.wallet })
+    }
+    if (!result || !result.ok) {
+      const code = result && result.code
+      if (code === 'expired') return res.json({ success: false, message: 'Intent expired' })
+      if (code === 'amount_mismatch') return res.json({ success: false, message: 'Transfer amount is below intent amount' })
+      return res.json({ success: false, message: 'Unable to credit intent' })
+    }
+
+    console.log(`[SePay Webhook] SUCCESS: Credited ${result.coins} coins to user ${intent.user_id}.`)
+    return res.json({
+      success: true,
+      message: 'Topup credited successfully',
+      user_id: intent.user_id,
+      coins: result.coins,
+      wallet: result.wallet
+    })
+  } catch (err) {
+    console.error('[SePay Webhook] Error:', err)
+    res.status(500).json({ success: false, message: 'Internal server error' })
+  }
+})
+
+// POST /wallet/verify-payment - verify payment against bank/SePay then credit stored intent coins
 app.post('/wallet/verify-payment', authMiddleware, async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     const userId = req.user && req.user.id
     if (!userId) return res.status(401).json({ error: 'missing authorization' })
 
-    const { coins, amount, paymentCode } = req.body || {}
-    if (!coins || Number(coins) <= 0) return res.status(400).json({ error: 'coins required', success: false, paid: false, message: 'Số xu không hợp lệ' })
-    if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'amount required', success: false, paid: false, message: 'Số tiền không hợp lệ' })
+    const paymentCode = String((req.body || {}).paymentCode || '').trim().toUpperCase()
     if (!paymentCode) return res.status(400).json({ error: 'paymentCode required', success: false, paid: false, message: 'Mã thanh toán không hợp lệ' })
 
-    // Use paymentCode from client (format: "RD<userId><shortCode>")
-    const BANK_ACCOUNT_NO = '123406072004'
-    const BANK_API_URL = 'https://bank.dinhmanhhung.net/check-payment'
+    const intent = await db.getTopupIntentByCode(paymentCode)
+    if (!intent) return res.status(404).json({ error: 'not found', success: false, paid: false, message: 'Không tìm thấy yêu cầu nạp' })
+    if (req.user.role !== 'admin' && String(intent.user_id) !== String(userId)) {
+      return res.status(403).json({ error: 'forbidden', success: false, paid: false, message: 'Không có quyền xác thực giao dịch này' })
+    }
 
-    // Call bank API to verify payment
-    let bankResult
-    try {
-      const bankRes = await fetch(BANK_API_URL, {
-        method: 'POST',
-        headers: {
-          'accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          account_no: BANK_ACCOUNT_NO,
-          content: paymentCode,
-          amount: Number(amount)
-        })
-      })
-      bankResult = await bankRes.json()
-      console.log(`[verify-payment] user=${userId} paymentCode="${paymentCode}" amount=${amount} bankResult:`, bankResult)
-    } catch (bankErr) {
-      console.error('[verify-payment] Bank API error:', bankErr)
-      return res.status(500).json({
-        success: false,
-        paid: false,
-        message: 'Không thể kết nối đến hệ thống ngân hàng. Vui lòng thử lại.',
-        error: 'bank_api_error'
+    if (String(intent.status) === 'consumed') {
+      const wallet = await db.getWallet(intent.user_id)
+      return res.json({
+        success: true,
+        paid: true,
+        already_credited: true,
+        message: `Thanh toán thành công! Đã cộng ${intent.coins} xu vào tài khoản.`,
+        wallet
       })
     }
 
-    // Check if payment was found
-    if (!bankResult || !bankResult.paid) {
+    if (String(intent.status) === 'expired' || (intent.expires_at && new Date(intent.expires_at).getTime() <= Date.now())) {
+      return res.json({ success: false, paid: false, message: 'Mã thanh toán đã hết hạn. Vui lòng tạo mã QR mới.' })
+    }
+
+    const bank = await findMatchingBankTransfer(intent)
+    if (!bank.paid) {
       return res.json({
         success: false,
         paid: false,
-        message: bankResult?.message || 'Chưa tìm thấy giao dịch thanh toán phù hợp. Vui lòng kiểm tra lại nội dung chuyển khoản.'
+        message: 'Chưa tìm thấy giao dịch chuyển khoản phù hợp. Vui lòng kiểm tra lại nội dung chuyển khoản hoặc đợi hệ thống xử lý trong giây lát.'
       })
     }
 
-    // Payment verified! Credit coins to user's wallet
-    const wallet = await db.creditWallet(userId, Number(coins))
-
-    // Record payment for audit
-    try {
-      await db.createPayment({
-        user_id: userId,
-        amount: Number(amount),
-        coins: Number(coins),
-        provider: 'bank_auto',
-        provider_ref: `auto_verify_${Date.now()}`,
-        months: null,
-        days: null
-      })
-    } catch (e) {
-      console.error('[verify-payment] createPayment err', e)
-    }
-
-    console.log(`[verify-payment] SUCCESS user=${userId} credited ${coins} coins, new balance=${wallet.coins || wallet.balance}`)
-
-    return res.json({
-      success: true,
-      paid: true,
-      message: `Thanh toán thành công! Đã cộng ${coins} xu vào tài khoản.`,
-      wallet: wallet
+    const result = await db.consumeAndCreditIntent({
+      payment_code: paymentCode,
+      user_id: intent.user_id,
+      min_amount: bank.amount,
+      provider: 'sepay',
+      provider_ref: bank.provider_ref,
+      amount_received: bank.amount
     })
 
+    if (result && result.ok) {
+      return res.json({
+        success: true,
+        paid: true,
+        already_credited: !!result.already_credited,
+        message: `Thanh toán thành công! Đã cộng ${intent.coins} xu vào tài khoản.`,
+        wallet: result.wallet
+      })
+    }
+
+    if (result && result.code === 'expired') {
+      return res.json({ success: false, paid: false, message: 'Mã thanh toán đã hết hạn. Vui lòng tạo mã QR mới.' })
+    }
+    if (result && result.code === 'amount_mismatch') {
+      return res.json({ success: false, paid: false, message: 'Số tiền chuyển khoản chưa đủ so với yêu cầu nạp.' })
+    }
+
+    return res.json({
+      success: false,
+      paid: false,
+      message: 'Chưa tìm thấy giao dịch chuyển khoản phù hợp. Vui lòng kiểm tra lại nội dung chuyển khoản hoặc đợi hệ thống xử lý trong giây lát.'
+    })
   } catch (err) {
     console.error('[verify-payment] Error:', err)
     res.status(500).json({ success: false, paid: false, message: 'Lỗi hệ thống', error: 'internal' })
@@ -2384,25 +2957,24 @@ app.post('/wallet/buy-vip', authMiddleware, async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     const userId = req.user && req.user.id
-    const { cost_coins } = req.body || {}
     if (!userId) return res.status(401).json({ error: 'missing authorization' })
-    if (!cost_coins || Number(cost_coins) <= 0) return res.status(400).json({ error: 'cost_coins required' })
-    // attempt debit
-    const debit = await db.debitWallet(userId, Number(cost_coins))
-    if (debit && debit.error) return res.status(400).json({ error: 'insufficient_funds', balance: debit.balance })
-    // record payment using provider 'coin'
-    try { await db.createPayment({ user_id: userId, amount: 0, coins: -Number(cost_coins), provider: 'coin', provider_ref: null, months: 1, days: null }) } catch (e) { console.error('createPayment err', e) }
-    // upgrade to vip
+    const cost = VIP_COST_COINS
+    const debit = await db.debitWallet(userId, cost)
+    if (debit && debit.error) return res.status(400).json({ error: 'insufficient_funds', balance: debit.balance, expected_cost: cost })
+    let ok = false
     try {
-      await db.updateUserVip(userId, { role: 'vip' })
-      const updated = await db.getUserById(userId)
-      return res.json({ success: true, wallet: debit, user: updated })
+      ok = await db.updateUserVip(userId, { months: 1, role: 'vip' })
     } catch (e) {
       console.error('upgrade via coins failed', e)
-      // refund coins on failure
-      try { await db.creditWallet(userId, Number(cost_coins)) } catch (ee) { console.error('refund err', ee) }
+      ok = false
+    }
+    if (!ok) {
+      try { await db.creditWallet(userId, cost) } catch (ee) { console.error('refund err', ee) }
       return res.status(500).json({ error: 'upgrade_failed' })
     }
+    try { await db.createPayment({ user_id: userId, amount: 0, coins: -cost, provider: 'coin', provider_ref: null, months: 1, days: null }) } catch (e) { console.error('createPayment err', e) }
+    const updated = await db.getUserById(userId)
+    return res.json({ success: true, wallet: debit, user: updated, cost_coins: cost })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'internal' })
@@ -2414,67 +2986,92 @@ app.post('/wallet/buy-author', authMiddleware, async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     const userId = req.user && req.user.id
-    const { cost_coins } = req.body || {}
     if (!userId) return res.status(401).json({ error: 'missing authorization' })
-    if (!cost_coins || Number(cost_coins) <= 0) return res.status(400).json({ error: 'cost_coins required' })
-    
-    // Validate pricing based on VIP status and remaining time
-    const AUTHOR_COST_BASE = 800
-    const AUTHOR_COST_VIP = 300
-    const MIN_VIP_DAYS_FOR_DISCOUNT = 15 // VIP must have at least 15 days remaining
-    
+
     const currentUser = await db.getUserById(userId)
     if (!currentUser) return res.status(404).json({ error: 'user not found' })
-    
+
     let expectedCost = AUTHOR_COST_BASE
     let vipDaysLeft = 0
-    
+
     if (currentUser.vip_until) {
       const vipUntilTime = new Date(currentUser.vip_until).getTime()
       const now = Date.now()
       if (vipUntilTime > now) {
         vipDaysLeft = Math.ceil((vipUntilTime - now) / (1000 * 60 * 60 * 24))
-        // Only apply VIP discount if user has enough VIP days remaining
         if (vipDaysLeft >= MIN_VIP_DAYS_FOR_DISCOUNT) {
           expectedCost = AUTHOR_COST_VIP
         }
       }
     }
-    
-    // Validate client sent correct price
-    if (Number(cost_coins) !== expectedCost) {
-      return res.status(400).json({ 
-        error: 'invalid_price', 
+
+    const debit = await db.debitWallet(userId, expectedCost)
+    if (debit && debit.error) {
+      return res.status(400).json({
+        error: 'insufficient_funds',
+        balance: debit.balance,
         expected_cost: expectedCost,
-        vip_days_left: vipDaysLeft,
-        message: vipDaysLeft > 0 && vipDaysLeft < MIN_VIP_DAYS_FOR_DISCOUNT 
-          ? `VIP của bạn còn ${vipDaysLeft} ngày (cần ít nhất ${MIN_VIP_DAYS_FOR_DISCOUNT} ngày để được giảm giá). Giá: ${AUTHOR_COST_BASE} xu`
-          : `Giá không hợp lệ. Giá đúng: ${expectedCost} xu`
+        vip_days_left: vipDaysLeft
       })
     }
-    
-    const debit = await db.debitWallet(userId, Number(cost_coins))
-    if (debit && debit.error) return res.status(400).json({ error: 'insufficient_funds', balance: debit.balance })
-    try { await db.createPayment({ user_id: userId, amount: 0, coins: -Number(cost_coins), provider: 'coin', provider_ref: 'buy-author', months: 1, days: null }) } catch (e) { console.error('createPayment err', e) }
-    try { await db.promoteUserToAuthor(userId, { pen_name: null, bio: null }) } catch (e) { console.error('promote author err', e) }
-    try { await db.updateUserVip(userId, { role: 'author' }) } catch (e) { console.error('author vip err', e) }
+    let authorRowId = null
+    let vipOk = false
+    try {
+      authorRowId = await db.promoteUserToAuthor(userId, { pen_name: null, bio: null })
+      vipOk = await db.updateUserVip(userId, { role: 'author' })
+    } catch (e) {
+      console.error('promote author err', e)
+    }
     const updated = await db.getUserById(userId)
-    return res.json({ success: true, wallet: debit, user: updated })
+    const roleNow = updated && String(updated.role || '').toLowerCase()
+    if (!authorRowId || vipOk !== true || roleNow !== 'author') {
+      try { await db.creditWallet(userId, expectedCost) } catch (ee) { console.error('refund err', ee) }
+      if (roleNow === 'author' && String(currentUser.role || '').toLowerCase() !== 'author') {
+        try { await db.updateUser(userId, { role: currentUser.role || 'user' }) } catch (ee) { console.error('revert author role err', ee) }
+      }
+      return res.status(500).json({ error: 'upgrade_failed' })
+    }
+    try { await db.createPayment({ user_id: userId, amount: 0, coins: -expectedCost, provider: 'coin', provider_ref: 'buy-author', months: 1, days: null }) } catch (e) { console.error('createPayment err', e) }
+    return res.json({ success: true, wallet: debit, user: updated, cost_coins: expectedCost, vip_days_left: vipDaysLeft })
   } catch (err) {
     console.error('buy-author err', err)
     res.status(500).json({ error: 'internal' })
   }
 })
 
-// Donate coins to a story's author
+app.get('/gifts', (req, res) => {
+  res.json(giftsCatalog.GIFTS)
+})
+
+app.get('/books/:id/gifts', async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const storyId = req.params.id
+    const book = await db.getBookById(storyId)
+    if (!book) return res.status(404).json({ error: 'story not found' })
+    const list = await db.getRecentStoryGifts(storyId, req.query.limit)
+    res.json(list)
+  } catch (err) {
+    console.error('recent gifts err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// Send a catalog gift. Price is server-side; the client cannot choose the coin amount.
 app.post('/books/:id/donate', authMiddleware, async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     const donorId = req.user && req.user.id
-    if (!donorId) return res.status(401).json({ error: 'missing authorization' })
+    if (!donorId) return res.status(401).json({ error: 'missing authorization', message: 'Đăng nhập để tặng quà.' })
     const storyId = req.params.id
-    const { coins, message } = req.body || {}
-    if (!coins || Number(coins) <= 0) return res.status(400).json({ error: 'coins required' })
+    const { gift_code, quantity } = req.body || {}
+    const gift = giftsCatalog.getGift(gift_code)
+    if (!gift) return res.status(400).json({ error: 'unknown_gift', message: 'Quà không hợp lệ.' })
+    const qty = Number(quantity == null ? 1 : quantity)
+    if (!Number.isInteger(qty) || qty < giftsCatalog.MIN_QTY || qty > giftsCatalog.MAX_QTY) {
+      return res.status(400).json({ error: 'invalid_quantity', message: 'Số lượng quà từ 1 đến 20.' })
+    }
+    const coins = gift.coins * qty
     const book = await db.getBookById(storyId)
     if (!book) return res.status(404).json({ error: 'story not found' })
 
@@ -2497,16 +3094,27 @@ app.post('/books/:id/donate', authMiddleware, async (req, res) => {
         return res.status(400).json({ error: 'recipient_not_allowed', message: 'Không thể tặng xu cho tài khoản admin.' })
       }
     } catch (e) { /* ignore */ }
-    // debit donor
-    const debit = await db.debitWallet(donorId, Number(coins))
-    if (debit && debit.error) return res.status(400).json({ error: 'insufficient_funds', balance: debit.balance })
-    // credit author
-    const credit = await db.creditWallet(recipientUserId, Number(coins))
-    // record donation
-    const donation = await db.createDonation({ donor_id: donorId, story_id: storyId, author_id: recipientUserId, coins: Number(coins), message: message || null })
-    // record payment row for audit (negative coins spent by donor)
-    try { await db.createPayment({ user_id: donorId, amount: 0, coins: -Number(coins), provider: 'donation', provider_ref: JSON.stringify({ donation_id: donation.donation_id }), months: null, days: null }) } catch (e) { console.error('createPayment err', e) }
-    return res.json({ success: true, donation, donor_wallet: debit, author_wallet: credit })
+    const transferred = await db.transferGift({
+      donor_id: donorId,
+      story_id: storyId,
+      author_id: recipientUserId,
+      coins,
+      message: null,
+      gift_code: gift.code,
+      gift_name: gift.name,
+      quantity: qty,
+    })
+    if (transferred && transferred.error) {
+      return res.status(400).json({ error: 'insufficient_funds', balance: transferred.balance, message: 'Số xu không đủ để tặng quà này.' })
+    }
+    const donation = transferred && transferred.donation
+    try { await db.createPayment({ user_id: donorId, amount: 0, coins: -coins, provider: 'donation', provider_ref: JSON.stringify({ donation_id: donation && donation.donation_id, gift_code: gift.code, quantity: qty }), months: null, days: null }) } catch (e) { console.error('createPayment err', e) }
+    return res.json({
+      success: true,
+      donation,
+      gift: { code: gift.code, name: gift.name, emoji: gift.emoji, coins: gift.coins, quantity: qty, total_coins: coins },
+      donor_wallet: transferred.donor_wallet,
+    })
   } catch (err) {
     console.error('donate err', err)
     res.status(500).json({ error: 'internal' })
@@ -2590,15 +3198,9 @@ app.post('/withdrawals', authMiddleware, async (req, res) => {
     if (!(req.user.role === 'author' || req.user.role === 'admin')) return res.status(403).json({ error: 'forbidden' })
     const { coins, method, details } = req.body || {}
     if (!coins || Number(coins) <= 0) return res.status(400).json({ error: 'coins required' })
-    // check balance
-    const bal = await db.getWallet(userId)
-    if (!bal || Number(bal.balance) < Number(coins)) return res.status(400).json({ error: 'insufficient_funds', balance: bal ? bal.balance : 0 })
-    // debit wallet immediately to reserve funds
-    const debit = await db.debitWallet(userId, Number(coins))
-    if (debit && debit.error) return res.status(400).json({ error: 'insufficient_funds', balance: debit.balance })
-    // record withdrawal request
-    const w = await db.createWithdrawal({ user_id: userId, coins: Number(coins), method: method || 'bank', details: details || null })
-    return res.json({ success: true, withdrawal: w, wallet: debit })
+    const reserved = await db.createWithdrawalReserved({ user_id: userId, coins: Number(coins), method: method || 'bank', details: details || null })
+    if (reserved && reserved.error) return res.status(400).json({ error: 'insufficient_funds', balance: reserved.balance })
+    return res.json({ success: true, withdrawal: reserved.withdrawal, wallet: reserved.wallet })
   } catch (err) {
     console.error('withdrawal err', err)
     res.status(500).json({ error: 'internal' })
@@ -2629,18 +3231,12 @@ app.put('/withdrawals/:id', authMiddleware, async (req, res) => {
     const id = req.params.id
     const { status } = req.body || {}
     if (!status) return res.status(400).json({ error: 'status required' })
-    // fetch current withdrawal
-    const all = await db.getWithdrawals()
-    const found = all.find(r => String(r.withdrawal_id) === String(id))
-    if (!found) return res.status(404).json({ error: 'not found' })
-    // if declining, refund coins
-    if (status === 'declined') {
-      try { await db.creditWallet(found.user_id, Number(found.coins || 0)) } catch (e) { console.error('refund err', e) }
-    }
-    const updated = await db.updateWithdrawalStatus(id, { status })
-    // if approved/processed, record a payout payment row for bookkeeping
-    if (status === 'processed' || status === 'approved') {
-      try { await db.createPayment({ user_id: found.user_id, amount: 0, coins: -Number(found.coins || 0), provider: 'payout', provider_ref: JSON.stringify({ withdrawal_id: id }), months: null, days: null }) } catch (e) { console.error('createPayment err', e) }
+    const decided = await db.decideWithdrawal(id, { status })
+    if (decided && decided.error === 'not_found') return res.status(404).json({ error: 'not found' })
+    if (decided && decided.error === 'already_processed') return res.status(409).json({ error: 'already_processed' })
+    const updated = decided && decided.withdrawal
+    if (updated && (status === 'processed' || status === 'approved')) {
+      try { await db.createPayment({ user_id: updated.user_id, amount: 0, coins: -Number(updated.coins || 0), provider: 'payout', provider_ref: JSON.stringify({ withdrawal_id: id }), months: null, days: null }) } catch (e) { console.error('createPayment err', e) }
     }
     res.json(updated)
   } catch (err) {
@@ -2652,18 +3248,19 @@ app.put('/withdrawals/:id', authMiddleware, async (req, res) => {
 // Optional: provider webhook (public) that can be used by payment provider to notify server
 app.post('/payments/webhook', async (req, res) => {
   try {
-    // For providers, validate signature in production. Here we accept JSON body with user_id and months/days/amount/provider_ref
-    const { user_id, amount, provider, provider_ref, months, days, secret } = req.body || {}
-    // optional shared secret for basic validation
-    if (process.env.PAYMENT_WEBHOOK_SECRET && process.env.PAYMENT_WEBHOOK_SECRET !== String(secret || '')) {
+    const configured = String(process.env.PAYMENT_WEBHOOK_SECRET || '').trim()
+    const provided = String((req.body && req.body.secret) || req.headers['x-webhook-secret'] || '')
+    if (!configured || configured !== provided) {
       return res.status(403).json({ error: 'invalid secret' })
     }
+    const { user_id, amount, provider, provider_ref, months, days } = req.body || {}
     if (!user_id) return res.status(400).json({ error: 'user_id required' })
     const payment = await db.createPayment({ user_id, amount: amount || 0, provider: provider || null, provider_ref: provider_ref || null, months: months || null, days: days || null })
-    // upgrade
-    try {
-      await db.updateUserVip(user_id, { months: months || undefined, days: days || undefined, role: 'vip' })
-    } catch (e) { console.error('webhook upgrade err', e) }
+    if (months || days) {
+      try {
+        await db.updateUserVip(user_id, { months: months || undefined, days: days || undefined, role: 'vip' })
+      } catch (e) { console.error('webhook upgrade err', e) }
+    }
     return res.json({ success: true, payment })
   } catch (err) {
     console.error('payments webhook err', err)
@@ -2672,16 +3269,49 @@ app.post('/payments/webhook', async (req, res) => {
 })
 
 // Chapters endpoints
+function chapterMetadata(chapter) {
+  return { id: String(chapter.id || chapter.chapter_id), chapter_no: chapter.chapter_no,
+    title: chapter.title, status: chapter.status, created_at: chapter.created_at }
+}
+
 app.get('/books/:id/chapters', async (req, res) => {
   try {
     if (useMysql) {
-      const chapters = await db.getChaptersByBook(req.params.id)
+      const book = await db.getVisibleBookById(req.params.id)
+      if (!book) return res.status(404).json({ error: 'not found' })
+      let chapters = await db.getChaptersByBook(req.params.id)
+      const user = await getUserFromAuthHeader(req)
+      let role = user && user.role ? String(user.role).toLowerCase() : 'guest'
+      if (user && user.id) {
+        try {
+          const fresh = await db.getUserById(user.id)
+          if (fresh && fresh.role) role = String(fresh.role).toLowerCase()
+        } catch (e) {}
+      }
+
+      let isAuthorOwner = false
+      if (user && user.id) {
+        try {
+          const bookOwnerId = book?.author_user_id || book?.user_id
+          if (bookOwnerId && String(bookOwnerId) === String(user.id)) {
+            isAuthorOwner = true
+          }
+        } catch (e) {}
+      }
+
+      if (role !== 'admin' && !isAuthorOwner) {
+        chapters = (chapters || []).filter(c => c.status === 'published').map(chapterMetadata)
+      }
+
       return res.json(chapters)
     }
     const data = readData();
     const book = data.books.find(b => b.id === req.params.id);
     if (!book) return res.status(404).json({ error: 'not found' });
-    res.json(book.chapters || []);
+    const user = await getUserFromAuthHeader(req)
+    const canSeePending = canEditFileBook(book, user)
+    const chapters = Array.isArray(book.chapters) ? book.chapters : []
+    return res.json(canSeePending ? chapters : chapters.filter(c => !c.status || c.status === 'published'))
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'internal' })
@@ -2713,31 +3343,35 @@ app.get('/books/:bookId/chapters/:chapterId', async (req, res) => {
       }
 
       if (!chapter) return res.status(404).json({ error: 'not found' })
+      if (chapter.status && chapter.status !== 'published') {
+        const user = await getUserFromAuthHeader(req)
+        if (!canEditFileBook(book, user)) return res.status(403).json({ error: 'chapter_pending_moderation', status: chapter.status })
+      }
 
       // increment views
       book.views = Number(book.views || 0) + 1
       writeData(data)
 
-      return res.json({
+      return res.json(chapterForReader({
         id: String(chapter.id || raw),
         chapter_no: chapter.chapter_no || chapter.chapterNo || chapterNo || null,
         title: chapter.title || (chapterNo ? `Chương ${chapterNo}` : 'Chương'),
         content: chapter.content || chapter.body || chapter.text || '',
-        ad_required: false
-      })
+        content_format: chapter.content_format || 'plain_text',
+        ad_required: false,
+      }))
     }
     // optional auth: guests may access up to 3 chapters
-    let user = null
-    const auth = req.headers.authorization
-    if (auth && String(auth).startsWith('Bearer ')) {
-      const token = auth.split(' ')[1]
-      try { user = require('jsonwebtoken').verify(token, JWT_SECRET) } catch (e) { user = null }
-    }
+    const visibleStory = await db.getVisibleBookById(req.params.bookId)
+    if (!visibleStory) return res.status(404).json({ error: 'not found' })
+    const user = await getUserFromAuthHeader(req)
     let foundBy = null
-    let chapter = await db.getChapterById(req.params.bookId, req.params.chapterId)
+    const byNumber = req.query.by === 'number'
+    if (byNumber && !/^[1-9]\d*$/.test(req.params.chapterId)) return res.status(400).json({ error: 'invalid_chapter_number' })
+    let chapter = byNumber ? await db.getChapterByNumber(req.params.bookId, Number(req.params.chapterId)) : await db.getChapterById(req.params.bookId, req.params.chapterId)
     if (chapter) foundBy = 'id'
     // If not found by primary chapter_id, try treating the param as a chapter number (chapter_no)
-    if (!chapter) {
+    if (!chapter && !byNumber) {
       const maybeNum = Number(req.params.chapterId)
       if (!isNaN(maybeNum)) {
         try {
@@ -2746,27 +3380,6 @@ app.get('/books/:bookId/chapters/:chapterId', async (req, res) => {
         } catch (e) {
           console.error('fallback getChapterByNumber err', e)
         }
-      }
-    }
-    // Fallback: if chapter still missing or has empty content, try loading from chapters list
-    if ((!chapter || !chapter.content) && useMysql) {
-      try {
-        const list = await db.getChaptersByBook(req.params.bookId)
-        if (Array.isArray(list) && list.length) {
-          // try find by chapter_no or by index
-          const maybeNum = Number(req.params.chapterId)
-          let found = null
-          if (!isNaN(maybeNum)) {
-            found = list.find(c => Number(c.chapter_no || c.chapterNo || c.chapter_no) === maybeNum) || list[maybeNum - 1]
-          }
-          if (!found) found = list[0]
-          if (found) {
-            chapter = found
-            foundBy = 'list'
-          }
-        }
-      } catch (e) {
-        console.error('fallback getChaptersByBook err', e)
       }
     }
     // debug log to help troubleshoot missing content
@@ -2788,47 +3401,72 @@ app.get('/books/:bookId/chapters/:chapterId', async (req, res) => {
       }
     }
 
-    // Guest: allow a limited number of distinct chapters per day based on visitor (IP-based)
-    if (role === 'guest') {
-      try {
-        const guestLimit = Number(process.env.GUEST_DAILY_LIMIT || 3)
-        // derive a visitor key from IP / forwarded-for header
-        const ip = String(req.headers['x-forwarded-for'] || req.ip || req.connection && req.connection.remoteAddress || 'unknown')
-        const visitorKey = `visitor:${ip}`
-        const already = await db.hasViewedChapterToday(visitorKey, String(chapter.id))
-        const count = await db.countUserDistinctChapterViewsToday(visitorKey)
-        if (!already && count >= guestLimit) {
-          return res.status(429).json({ error: 'guest_limit_reached', message: `Guests can read ${guestLimit} chapters per day`, allowed_chapters: guestLimit, ad_required: true })
-        }
-        // record a view for guests using the visitor key
-        try { await db.recordChapterView(visitorKey, req.params.bookId, String(chapter.id)) } catch (e) { console.error('record guest view err', e) }
-        return res.json(Object.assign({}, chapter, { ad_required: true }))
-      } catch (e) {
-        console.error('guest chapter access err', e)
-        return res.status(500).json({ error: 'internal' })
+    let isAuthorOwner = false
+    if (user && user.id) {
+      const bookOwnerId = visibleStory.author_user_id || visibleStory.user_id
+      if (bookOwnerId && String(bookOwnerId) === String(user.id)) isAuthorOwner = true
+    }
+
+    // Check moderation status: only the book owner or admin can view pending_review / rejected chapters
+    if (useMysql && chapter.status && chapter.status !== 'published') {
+      if (role !== 'admin' && !isAuthorOwner) {
+        return res.status(403).json({
+          error: 'chapter_pending_moderation',
+          status: chapter.status,
+          message: chapter.status === 'rejected'
+            ? 'Chương này đã bị từ chối xuất bản do vi phạm tiêu chuẩn cộng đồng.'
+            : 'Chương này đang trong hàng chờ duyệt của Quản trị viên (Human-in-the-loop).'
+        })
       }
     }
 
-    // Regular user: allow but enforce daily limit of 10 distinct chapters (ads required)
-    if (role === 'user') {
-      const userId = String(user.id)
-      const already = await db.hasViewedChapterToday(userId, String(chapter.id))
-      const count = await db.countUserDistinctChapterViewsToday(userId)
-      if (!already && count >= 10) return res.status(429).json({ error: 'limit_reached', message: 'Daily limit of 10 chapters reached' })
-      // record view if not already
-      try { await db.recordChapterView(userId, req.params.bookId, String(chapter.id)) } catch (e) { console.error('record view err', e) }
-      return res.json(Object.assign({}, chapter, { ad_required: true }))
+    const privileged = role === 'vip' || role === 'author' || role === 'admin' || isAuthorOwner
+    const freeCount = Math.max(0, Number(visibleStory.free_chapters != null ? visibleStory.free_chapters : 3) || 0)
+    const chapterNumber = Number(chapter.chapter_no || chapter.chapterNo || 0)
+    if (!privileged && chapterNumber > freeCount) {
+      return res.status(403).json({
+        error: 'chapter_locked',
+        message: `Chương này cần VIP. ${freeCount} chương đầu được đọc miễn phí.`,
+        free_chapters: freeCount,
+      })
     }
 
-    // VIP / author / admin: full access without ads
-    // Still record views for accurate story view totals.
+    if (!privileged && (role === 'guest' || role === 'user')) {
+      const guestLimit = Number(process.env.GUEST_DAILY_LIMIT || 3)
+      const limit = role === 'guest' ? guestLimit : 10
+      const viewerId = role === 'guest' ? `visitor:${String(req.ip || 'unknown')}` : String(user.id)
+      let reserved
+      try {
+        reserved = await db.reserveChapterRead({
+          userId: viewerId,
+          bookId: req.params.bookId,
+          chapterId: String(chapter.id),
+          limit,
+        })
+      } catch (e) {
+        console.error('reserve chapter read err', e)
+        return res.status(500).json({ error: 'internal' })
+      }
+      if (!reserved || reserved.error === 'busy') {
+        return res.status(503).json({ error: 'busy', message: 'Hệ thống đang bận. Thử lại sau.' })
+      }
+      if (reserved.error === 'limit') {
+        if (role === 'guest') {
+          return res.status(429).json({ error: 'guest_limit_reached', message: `Guests can read ${guestLimit} chapters per day`, allowed_chapters: guestLimit, ad_required: true })
+        }
+        return res.status(429).json({ error: 'limit_reached', message: 'Daily limit of 10 chapters reached' })
+      }
+      return res.json(Object.assign(chapterForReader(chapter), { ad_required: true }))
+    }
+
+    // VIP, author, admin, and the book owner skip the paywall and the daily cap.
     try {
       const uid = user && user.id ? String(user.id) : 'unknown'
       await db.recordChapterView(uid, req.params.bookId, String(chapter.id))
     } catch (e) {
-      console.error('record vip/author/admin view err', e)
+      console.error('record privileged view err', e)
     }
-    return res.json(Object.assign({}, chapter, { ad_required: false }))
+    return res.json(Object.assign(chapterForReader(chapter), { ad_required: false }))
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'internal' })
@@ -2862,15 +3500,37 @@ app.get('/users/:userId/bookmarks', authMiddleware, async (req, res) => {
   }
 })
 
-// Reading progress
+async function sendUserProgress(req, res, userId) {
+  if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+  const bookId = req.query.book_id
+  if (bookId) {
+    const row = await db.getProgressByUserBook(userId, bookId)
+    return res.json(row || {})
+  }
+  const rows = await db.getProgressByUser(userId)
+  return res.json(rows)
+}
+
+// Reading progress (current user)
 app.post('/progress', authMiddleware, async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
     const userId = req.user.id
-    const { book_id, chapter_id, progress } = req.body
+    const { book_id, chapter_id, chapter_no, progress } = req.body || {}
     if (!book_id) return res.status(400).json({ error: 'book_id required' })
-    const row = await db.upsertProgress({ user_id: userId, book_id, chapter_id, progress })
+    const row = await db.upsertProgress({ user_id: userId, book_id, chapter_id, chapter_no, progress })
     res.json(row)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+app.get('/progress', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user && req.user.id
+    if (!userId) return res.status(401).json({ error: 'missing authorization' })
+    await sendUserProgress(req, res, userId)
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'internal' })
@@ -2880,18 +3540,8 @@ app.post('/progress', authMiddleware, async (req, res) => {
 app.get('/users/:userId/progress', authMiddleware, async (req, res) => {
   try {
     const userId = req.params.userId
-    if (req.user.id !== userId && req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
-    // optional query param book_id
-    const bookId = req.query.book_id
-    if (bookId) {
-      const row = await db.getProgressByUserBook(userId, bookId)
-      return res.json(row || {})
-    }
-    // otherwise fetch all progress rows for user
-    // simple query via pool
-    const p = await require('./mysql').initPool()
-    const [rows] = await p.execute('SELECT * FROM reading_progress WHERE user_id = ? ORDER BY updated_at DESC', [userId])
-    res.json(rows)
+    if (String(req.user.id) !== String(userId) && req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' })
+    await sendUserProgress(req, res, userId)
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'internal' })
@@ -2899,6 +3549,16 @@ app.get('/users/:userId/progress', authMiddleware, async (req, res) => {
 })
 
 const PORT = process.env.PORT || 4000;
+if (isProductionEnv()) {
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'dev_secret_change_me') {
+    console.error('[boot] JWT_SECRET must be set to a strong value in production')
+    process.exit(1)
+  }
+  if (!String(process.env.PAYMENT_WEBHOOK_SECRET || '').trim()) {
+    console.error('[boot] PAYMENT_WEBHOOK_SECRET is required in production')
+    process.exit(1)
+  }
+}
 // show a quick debug summary on start
 console.log(`Server starting on port ${PORT} (USE_MYSQL=${useMysql})`)
 if (process.env.JWT_SECRET) console.log(`JWT_SECRET set (${String(process.env.JWT_SECRET).length} chars)`)
@@ -3004,209 +3664,112 @@ app.post('/users/:id/avatar', authMiddleware, async (req, res) => {
 })
 
 // ==================== AI CHATBOT ====================
-// POST /chat - Chat with AI for book recommendations
-app.post('/chat', async (req, res) => {
-  try {
-    const { message } = req.body || {}
-    if (!message || !message.trim()) {
-      return res.status(400).json({ error: 'message required' })
-    }
-
-    const GROK_KEY = process.env.GROK_API_KEY
-    if (!GROK_KEY) {
-      return res.status(500).json({ error: 'AI service not configured' })
-    }
-
-    // Get available books for context
-    let booksContext = ''
-    let allBooks = []
-    if (useMysql) {
-      try {
-        allBooks = await db.getBooks({}) || []
-        const booksList = allBooks.slice(0, 50).map(b =>
-          `- "${b.title}" (${b.genre || 'Không rõ thể loại'}, ${b.chapters_count || 0} chương)`
-        ).join('\n')
-        booksContext = `\n\nDanh sách truyện hiện có:\n${booksList}`
-      } catch (e) {
-        console.log('[Chat] Could not load books for context')
-      }
-    }
-
-    console.log(`\n--- [Chat] User: "${message.trim()}" ---`)
-
-    const systemPrompt = `Bạn là AI tư vấn truyện cho ứng dụng đọc truyện Reader App. Nhiệm vụ của bạn:
-1. Gợi ý truyện phù hợp với sở thích người dùng
-2. Giới thiệu tóm tắt nội dung truyện
-3. Phân loại truyện theo thể loại (Ngôn tình, Hiện đại, Cổ đại, Huyền huyễn, Xuyên không, Đam mỹ, etc.)
-4. Trả lời câu hỏi về truyện một cách thân thiện
-
-Bạn có thể sử dụng markdown để format text:
-- Dùng **text** để in đậm tên truyện
-- Dùng danh sách có dấu - để liệt kê
-- Dùng emoji phù hợp để tạo cảm xúc
-
-Khi gợi ý truyện, hãy đề cập TÊN TRUYỆN CHÍNH XÁC từ danh sách có sẵn.
-Trả lời ngắn gọn, thân thiện bằng tiếng Việt.
-Nếu không tìm thấy truyện phù hợp, hãy gợi ý người dùng thử thể loại khác.
-${booksContext}`
-
-    const grokRes = await fetch('https://api.x.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${GROK_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: "grok-4-1-fast-non-reasoning",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: message.trim() }
-        ],
-        temperature: 0.7
-      })
-    })
-
-    const grokData = await grokRes.json()
-    let reply = 'Xin lỗi, tôi không thể trả lời lúc này.'
-
-    if (grokData && grokData.choices && grokData.choices[0]) {
-      reply = grokData.choices[0].message.content || reply
-      console.log(`[Chat] AI Reply: "${reply.substring(0, 100)}..."`)
-    } else {
-      console.log('[Chat] Grok error:', JSON.stringify(grokData))
-    }
-
-    // Try to extract mentioned book titles and match with database
-    const mentionedBooks = []
-    if (allBooks.length > 0) {
-      for (const book of allBooks) {
-        if (reply.toLowerCase().includes(book.title.toLowerCase())) {
-          mentionedBooks.push({
-            id: String(book.id || book.story_id),
-            title: book.title,
-            genre: book.genre,
-            cover_url: book.cover_url,
-            chapters_count: book.chapters_count || 0
-          })
-        }
-      }
-    }
-
-    // If AI mentioned genres but no specific books, search by genre
-    if (mentionedBooks.length === 0) {
-      const genres = ['ngôn tình', 'hiện đại', 'cổ đại', 'huyền huyễn', 'xuyên không', 'đam mỹ']
-      const messageLower = message.toLowerCase()
-      const replyLower = reply.toLowerCase()
-
-      for (const genre of genres) {
-        if (messageLower.includes(genre) || replyLower.includes(genre)) {
-          const matched = allBooks.filter(b =>
-            b.genre && b.genre.toLowerCase().includes(genre)
-          ).slice(0, 5)
-
-          for (const book of matched) {
-            if (!mentionedBooks.find(mb => mb.id === String(book.id || book.story_id))) {
-              mentionedBooks.push({
-                id: String(book.id || book.story_id),
-                title: book.title,
-                genre: book.genre,
-                cover_url: book.cover_url,
-                chapters_count: book.chapters_count || 0
-              })
-            }
-          }
-          break
-        }
-      }
-    }
-
-    res.json({
-      reply,
-      books: mentionedBooks.slice(0, 5)
-    })
-  } catch (err) {
-    console.error('POST /chat err', err)
-    res.status(500).json({ error: 'internal', message: err.message })
+async function enforceAiQuota(req, res, scope, limit, userId = req.user?.id) {
+  await aiReady
+  const ip = req.ip || 'unknown'
+  const allowedIp = await db.consumeAiQuota(scope + '-ip', ip, userId ? limit * 4 : limit, 900000)
+  if (!allowedIp) {
+    res.status(429).json({ error: 'rate_limited', message: 'Đã đạt giới hạn yêu cầu. Thử lại sau.' })
+    return false
   }
+  const allowedUser = !userId || await db.consumeAiQuota(scope + '-user', String(userId), limit, 900000)
+  if (!allowedUser) {
+    res.status(429).json({ error: 'rate_limited', message: 'Đã đạt giới hạn yêu cầu. Thử lại sau.' })
+    return false
+  }
+  return true
+}
+
+app.get('/moderation/ai-usage', authMiddleware, async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return
+    await aiReady
+    res.json({ period_days: 30, usage: await db.getAiUsageStats() })
+  } catch (e) { res.status(503).json({ error: 'ai_usage_unavailable' }) }
 })
 
-// ==================== ADVANCED SEARCH ====================
-// GET /books/search - Search books with SQL LIKE
-app.get('/books/search', async (req, res) => {
+function readerIdFromAuth(req) {
+  const auth = req.headers.authorization
+  if (!auth || !String(auth).startsWith('Bearer ')) return null
+  try {
+    const payload = jwt.verify(String(auth).split(' ')[1], JWT_SECRET)
+    return payload && payload.id ? String(payload.id) : null
+  } catch (e) {
+    return null
+  }
+}
+
+app.get('/chat/conversations', async (req, res) => {
   try {
     if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
-
-    const { q, genre, author, sort, limit = 20, offset = 0 } = req.query
-
-    const pool = await db.initPool()
-    const params = []
-    const where = []
-
-    // Search by title or description
-    if (q && q.trim()) {
-      const searchTerm = `%${q.trim()}%`
-      where.push('(s.title LIKE ? OR s.description LIKE ?)')
-      params.push(searchTerm, searchTerm)
-    }
-
-    // Filter by genre
-    if (genre && genre.trim() && genre !== 'Tất cả') {
-      where.push('s.genre LIKE ?')
-      params.push(`%${genre.trim()}%`)
-    }
-
-    // Filter by author
-    if (author && author.trim()) {
-      where.push('(a.pen_name LIKE ? OR a.author_name LIKE ?)')
-      params.push(`%${author.trim()}%`, `%${author.trim()}%`)
-    }
-
-    const whereSql = where.length > 0 ? 'WHERE ' + where.join(' AND ') : ''
-
-    // Sorting
-    let orderBy = 'ORDER BY s.created_at DESC'
-    if (sort === 'views') orderBy = 'ORDER BY s.views DESC'
-    else if (sort === 'likes') orderBy = 'ORDER BY s.likes_count DESC'
-    else if (sort === 'chapters') orderBy = 'ORDER BY s.chapters_count DESC'
-    else if (sort === 'title') orderBy = 'ORDER BY s.title ASC'
-
-    const sql = `
-      SELECT s.story_id as id, s.title, s.description, s.genre, s.cover_url, 
-             s.chapters_count, s.views, s.likes_count, s.created_at,
-             a.pen_name as author, a.author_id
-      FROM stories s
-      LEFT JOIN authors a ON s.author_id = a.author_id
-      ${whereSql}
-      ${orderBy}
-      LIMIT ? OFFSET ?
-    `
-    params.push(parseInt(limit), parseInt(offset))
-
-    const [rows] = await pool.execute(sql, params)
-
-    // Also get total count
-    const countSql = `
-      SELECT COUNT(*) as total
-      FROM stories s
-      LEFT JOIN authors a ON s.author_id = a.author_id
-      ${whereSql}
-    `
-    const [countRows] = await pool.execute(countSql, params.slice(0, -2))
-    const total = countRows[0]?.total || 0
-
-    res.json({
-      books: rows,
-      total,
-      limit: parseInt(limit),
-      offset: parseInt(offset)
-    })
+    const userId = readerIdFromAuth(req)
+    if (!userId) return res.status(401).json({ error: 'login_required', message: 'Đăng nhập để xem lịch sử chat.' })
+    const conversations = await db.listConversations(userId)
+    return res.json({ conversations })
   } catch (err) {
-    console.error('GET /books/search err', err)
-    res.status(500).json({ error: 'internal', message: err.message })
+    console.error('GET /chat/conversations err', err)
+    res.status(500).json({ error: 'internal' })
   }
 })
 
-const server = app.listen(PORT, () => console.log(`Server listening on ${PORT}`))
+app.get('/chat/conversations/:id/messages', async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const userId = readerIdFromAuth(req)
+    if (!userId) return res.status(401).json({ error: 'login_required', message: 'Đăng nhập để xem lịch sử chat.' })
+    const id = String(req.params.id || '')
+    if (!/^[1-9]\d{0,18}$/.test(id)) return res.status(400).json({ error: 'invalid_conversation' })
+    const owned = await db.getConversationForReader(id, userId)
+    if (!owned) return res.status(404).json({ error: 'conversation_not_found' })
+    const messages = await db.listMessages(id, 40)
+    return res.json({ messages })
+  } catch (err) {
+    console.error('GET /chat/conversations/:id/messages err', err)
+    res.status(500).json({ error: 'internal' })
+  }
+})
+
+// POST /chat - recommend books or recap previous chapters
+app.post('/chat', async (req, res) => {
+  try {
+    if (!useMysql) return res.status(400).json({ error: 'requires MySQL mode' })
+    const ip = String(req.ip || 'unknown')
+    let userId = null
+    const auth = req.headers.authorization
+    if (auth && String(auth).startsWith('Bearer ')) {
+      try {
+        const payload = jwt.verify(auth.split(' ')[1], JWT_SECRET)
+        userId = payload && payload.id ? String(payload.id) : null
+      } catch (e) { }
+    }
+    if (!await enforceAiQuota(req, res, 'chat', 30, userId)) return
+    const result = await aiRuntime.withContext({ userId }, () => chatAgent.handleChatRequest({
+      db, userId, readerKey: userId || ('visitor:' + ip), body: req.body || {}
+    }))
+    return res.status(result.status || 200).json(result.payload)
+  } catch (err) {
+    console.error('POST /chat err', err)
+    res.status(500).json({ error: 'internal', message: 'Agent chưa trả lời được. Thử lại sau.' })
+  }
+})
+
+const aiReady = useMysql ? installAiSchemaPromise() : Promise.resolve()
+async function installAiSchemaPromise() {
+  const pool = await db.initPool()
+  await installAiSchema(pool)
+  aiRuntime.configure(db)
+  if (process.env.AI_WORKER_ENABLED !== 'false') integrity.startCommentWorker({ db, complete: chatAgent.chatCompletion })
+}
+aiReady.catch(e => console.error('[ai-schema]', e.code || 'migration_failed'))
+
+const server = app.listen(PORT, () => {
+  console.log(`Server listening on ${PORT}`)
+  if (isSepayLocal()) {
+    console.log(`[SePay local] Webhook http://127.0.0.1:${PORT}/sepay/webhook`)
+    console.log('[SePay local] Header Authorization: Apikey ' + sepayLocalApiKey())
+    console.log('[SePay local] App dùng nút xác nhận trên QR để cộng xu, không gọi ngân hàng.')
+  }
+})
 
 server.on('error', (err) => {
   if (err && err.code === 'EADDRINUSE') {

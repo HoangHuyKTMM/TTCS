@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-02T14:53:20.428Z",
+  "model": "ngovutuananh/gpt-5.5-xhigh",
+  "provider": "api.xah.io",
+  "budgetVnd": 4000,
+  "pricing": {
+    "completion": 1440,
+    "input": 960,
+    "min_charge_per_request": 37.44,
+    "output": 1440,
+    "prompt": 960,
+    "unit": "VND"
+  },
+  "costUnit": "VND",
+  "results": [
+    {
+      "id": "LC01",
+      "name": "Văn minh",
+      "role": "readerB",
+      "input": "Mình thích cách tác giả xây dựng nhân vật, mong chương sau giải thích rõ hơn.",
+      "expected": "green",
+      "actual": "green",
+      "matched": true,
+      "score": 0.10000000149011612,
+      "status": "approved",
+      "source": "model",
+      "latencyMs": 5604
+    }
+  ],
+  "status": "probe_complete",
+  "billing": {
+    "enabled": true,
+    "budgetVnd": 4000,
+    "spentVnd": 37.44,
+    "reservedVnd": 0,
+    "blocked": false,
+    "records": [
+      {
+        "requestedModel": "ngovutuananh/gpt-5.5-xhigh",
+        "maxTokens": 64,
+        "inputBytes": 718,
+        "reservedVnd": 250,
+        "httpStatus": 200,
+        "model": "gpt-5.5-xhigh",
+        "usage": {
+          "prompt_tokens": 249,
+          "completion_tokens": 74,
+          "total_tokens": 323,
+          "cost": 37.44
+        },
+        "finishReason": "stop",
+        "content": "{\"score\":0.1}",
+        "latencyMs": 4305,
+        "costVnd": 37.44
+      }
+    ]
+  },
+  "passed": 1,
+  "failed": 0
+}

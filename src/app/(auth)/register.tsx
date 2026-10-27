@@ -1,18 +1,16 @@
-import { useEffect, useState } from "react";
+import { useThemeStyles } from '../../components/AppTheme'
+import { type AppColors } from '../../theme'
+import { useState } from "react";
 import { Stack, Link, useRouter } from "expo-router";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import Constants from "expo-constants";
-import * as WebBrowser from "expo-web-browser";
-import * as Google from "expo-auth-session/providers/google";
-import * as Facebook from "expo-auth-session/providers/facebook";
 import * as Auth from '../../lib/auth'
-import { GOOGLE_WEB_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID } from '../../lib/firebase'
 import CustomAlert from '../../components/CustomAlert'
-
-WebBrowser.maybeCompleteAuthSession();
+import KeyboardSafeScroll from '../../components/KeyboardSafe'
 
 export default function RegisterScreen() {
+  const { colors, styles } = useThemeStyles(createStyles)
+
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -25,22 +23,10 @@ export default function RegisterScreen() {
   const [fbLoading, setFbLoading] = useState(false);
   const [alertVisible, setAlertVisible] = useState(false);
   const [alertConfig, setAlertConfig] = useState<any>({ type: 'info', title: '', message: '' });
-  const extra = (Constants.expoConfig?.extra || {}) as any;
-
-  // Google Auth - use Firebase client IDs
-  const [googleRequest, googleResponse, googlePromptAsync] = Google.useAuthRequest({
-    clientId: GOOGLE_WEB_CLIENT_ID,
-    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
-    webClientId: GOOGLE_WEB_CLIENT_ID,
-  });
-
-  // Facebook Auth
-  const [fbRequest, fbResponse, fbPromptAsync] = Facebook.useAuthRequest({
-    clientId: extra.facebookAppId,
-  });
 
   async function handleRegister() {
-    if (!name || !email || !password) {
+    if (loading || googleLoading || fbLoading) return;
+    if (!name.trim() || !email.trim() || !password) {
       setAlertConfig({ type: 'error', title: 'Lỗi', message: 'Vui lòng điền đầy đủ thông tin' });
       setAlertVisible(true);
       return;
@@ -60,36 +46,14 @@ export default function RegisterScreen() {
 
     setLoading(true);
     try {
-      // Try Firebase registration first
-      try {
-        const res = await Auth.registerWithFirebase(name, email, password);
-        if (res && res.token) {
-          setAlertConfig({
-            type: 'success',
-            title: 'Thành công',
-            message: 'Đăng ký thành công!',
-            buttons: [{ text: 'OK', onPress: () => router.replace('/(tabs)/explore') }]
-          });
-          setAlertVisible(true);
-          return;
-        }
-      } catch (firebaseErr: any) {
-        // If Firebase fails, try backend registration
-        const res: any = await Auth.register(name, email, password);
-        if (res && res.error) {
-          throw new Error(res.error);
-        } else if (res && res.id) {
-          setAlertConfig({
-            type: 'success',
-            title: 'Thành công',
-            message: 'Đăng ký thành công! Vui lòng đăng nhập.',
-            buttons: [{ text: 'OK', onPress: () => router.replace('/(auth)/login') }]
-          });
-          setAlertVisible(true);
-          return;
-        }
-        throw firebaseErr;
-      }
+      const res: any = await Auth.register(name.trim(), email.trim(), password);
+      if (res?.error || !res?.id) throw new Error(res?.message || res?.error || 'Đăng ký thất bại');
+      setAlertConfig({
+        type: 'success', title: 'Thành công',
+        message: 'Đăng ký thành công! Vui lòng đăng nhập.',
+        buttons: [{ text: 'OK', onPress: () => router.replace('/(auth)/login') }]
+      });
+      setAlertVisible(true);
     } catch (err: any) {
       setAlertConfig({ type: 'error', title: 'Lỗi', message: err.message || 'Đăng ký thất bại' });
       setAlertVisible(true);
@@ -98,80 +62,41 @@ export default function RegisterScreen() {
     }
   }
 
-  // Handle Google sign in response
-  useEffect(() => {
-    async function handleGoogleResponse() {
-      if (googleResponse?.type === "success") {
-        setGoogleLoading(true);
-        try {
-          const { authentication } = googleResponse;
-          if (authentication?.idToken) {
-            await Auth.loginWithGoogle(authentication.idToken);
-            router.replace('/(tabs)/explore');
-          }
-        } catch (err: any) {
-          setAlertConfig({ type: 'error', title: 'Lỗi Google', message: err.message || 'Đăng ký Google thất bại' });
-          setAlertVisible(true);
-        } finally {
-          setGoogleLoading(false);
-        }
-      }
-    }
-    handleGoogleResponse();
-  }, [googleResponse]);
-
-  // Handle Facebook sign in response
-  useEffect(() => {
-    async function handleFacebookResponse() {
-      if (fbResponse?.type === "success") {
-        setFbLoading(true);
-        try {
-          const { authentication } = fbResponse;
-          if (authentication?.accessToken) {
-            await Auth.loginWithFacebook(authentication.accessToken);
-            router.replace('/(tabs)/explore');
-          }
-        } catch (err: any) {
-          setAlertConfig({ type: 'error', title: 'Lỗi Facebook', message: err.message || 'Đăng ký Facebook thất bại' });
-          setAlertVisible(true);
-        } finally {
-          setFbLoading(false);
-        }
-      }
-    }
-    handleFacebookResponse();
-  }, [fbResponse]);
-
   const handleGoogleLogin = async () => {
-    if (googleLoading) return;
+    if (loading || googleLoading || fbLoading) return;
+    setGoogleLoading(true);
     try {
-      await googlePromptAsync();
+      const res = await Auth.loginWithGoogle();
+      if (res?.token) router.replace('/(tabs)/explore');
     } catch (err: any) {
-      setAlertConfig({ type: 'error', title: 'Lỗi', message: 'Không thể mở Google Sign In' });
+      setAlertConfig({ type: 'error', title: 'Lỗi Google', message: err.message || 'Đăng ký Google thất bại' });
       setAlertVisible(true);
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
   const handleFacebookLogin = async () => {
-    if (fbLoading) return;
+    if (loading || googleLoading || fbLoading) return;
+    setFbLoading(true);
     try {
-      await fbPromptAsync();
+      const res = await Auth.loginWithFacebook();
+      if (res?.token) router.replace('/(tabs)/explore');
     } catch (err: any) {
-      setAlertConfig({ type: 'error', title: 'Lỗi', message: 'Không thể mở Facebook Login' });
+      setAlertConfig({ type: 'error', title: 'Lỗi Facebook', message: err.message || 'Đăng ký Facebook thất bại' });
       setAlertVisible(true);
+    } finally {
+      setFbLoading(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
+    <View style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
-      <ScrollView
+      <KeyboardSafeScroll
+        style={{ flex: 1 }}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
       >
         {/* Header */}
         <View style={styles.header}>
@@ -179,25 +104,25 @@ export default function RegisterScreen() {
             style={styles.backButton}
             onPress={() => router.back()}
           >
-            <Ionicons name="arrow-back" size={24} color="#111827" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
         </View>
 
         {/* Title */}
         <View style={styles.titleContainer}>
           <Text style={styles.title}>Tạo tài khoản</Text>
-          <Text style={styles.subtitle}>Đăng ký để bắt đầu hành trình đọc sách</Text>
+          <Text style={styles.subtitle}>Đăng ký để khám phá truyện và theo dõi chương mới</Text>
         </View>
 
         {/* Form */}
         <View style={styles.formContainer}>
           {/* Name Input */}
           <View style={styles.inputWrapper}>
-            <Ionicons name="person-outline" size={20} color="#6b7280" style={styles.inputIcon} />
+            <Ionicons name="person-outline" size={20} color={colors.textSecondary} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Họ và tên"
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={colors.textMuted}
               value={name}
               onChangeText={setName}
               editable={!loading}
@@ -206,11 +131,11 @@ export default function RegisterScreen() {
 
           {/* Email Input */}
           <View style={styles.inputWrapper}>
-            <Ionicons name="mail-outline" size={20} color="#6b7280" style={styles.inputIcon} />
+            <Ionicons name="mail-outline" size={20} color={colors.textSecondary} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Email"
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={colors.textMuted}
               keyboardType="email-address"
               autoCapitalize="none"
               value={email}
@@ -221,35 +146,35 @@ export default function RegisterScreen() {
 
           {/* Password Input */}
           <View style={styles.inputWrapper}>
-            <Ionicons name="lock-closed-outline" size={20} color="#6b7280" style={styles.inputIcon} />
+            <Ionicons name="lock-closed-outline" size={20} color={colors.textSecondary} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Mật khẩu"
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={colors.textMuted}
               secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
               editable={!loading}
             />
             <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}>
-              <Ionicons name={showPassword ? "eye-outline" : "eye-off-outline"} size={20} color="#6b7280" />
+              <Ionicons name={showPassword ? "eye-outline" : "eye-off-outline"} size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
           {/* Confirm Password Input */}
           <View style={styles.inputWrapper}>
-            <Ionicons name="lock-closed-outline" size={20} color="#6b7280" style={styles.inputIcon} />
+            <Ionicons name="lock-closed-outline" size={20} color={colors.textSecondary} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Nhập lại mật khẩu"
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={colors.textMuted}
               secureTextEntry={!showConfirmPassword}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
               editable={!loading}
             />
             <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={styles.eyeButton}>
-              <Ionicons name={showConfirmPassword ? "eye-outline" : "eye-off-outline"} size={20} color="#6b7280" />
+              <Ionicons name={showConfirmPassword ? "eye-outline" : "eye-off-outline"} size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
@@ -260,7 +185,7 @@ export default function RegisterScreen() {
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colors.onAccent} />
             ) : (
               <Text style={styles.primaryButtonText}>Đăng ký</Text>
             )}
@@ -273,36 +198,34 @@ export default function RegisterScreen() {
             <View style={styles.dividerLine} />
           </View>
 
-          {/* Social Buttons */}
-          <View style={styles.socialContainer}>
-            <TouchableOpacity
-              style={[styles.socialButton, googleLoading && styles.socialButtonLoading]}
-              disabled={!googleRequest || googleLoading}
-              onPress={handleGoogleLogin}
-            >
-              {googleLoading ? (
-                <ActivityIndicator color="#111827" size="small" />
-              ) : (
-                <Ionicons name="logo-google" size={22} color="#111827" />
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.socialButton, fbLoading && styles.socialButtonLoading]}
-              disabled={!fbRequest || fbLoading}
-              onPress={handleFacebookLogin}
-            >
-              {fbLoading ? (
-                <ActivityIndicator color="#1877F2" size="small" />
-              ) : (
-                <Ionicons name="logo-facebook" size={22} color="#1877F2" />
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity style={[styles.socialButton, styles.socialButtonDisabled]} disabled>
-              <Ionicons name="logo-apple" size={22} color="#999" />
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            style={[styles.socialFull, googleLoading && styles.socialButtonLoading]}
+            disabled={loading || googleLoading || fbLoading}
+            onPress={handleGoogleLogin}
+          >
+            {googleLoading ? (
+              <ActivityIndicator color={colors.text} size="small" />
+            ) : (
+              <>
+                <Ionicons name="logo-google" size={20} color={colors.text} />
+                <Text style={styles.socialFullText}>Đăng ký với Google</Text>
+              </>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.socialFull, fbLoading && styles.socialButtonLoading]}
+            disabled={loading || googleLoading || fbLoading}
+            onPress={handleFacebookLogin}
+          >
+            {fbLoading ? (
+              <ActivityIndicator color="#1877F2" size="small" />
+            ) : (
+              <>
+                <Ionicons name="logo-facebook" size={20} color="#1877F2" />
+                <Text style={styles.socialFullText}>Đăng ký với Facebook</Text>
+              </>
+            )}
+          </TouchableOpacity>
         </View>
 
         {/* Footer */}
@@ -312,7 +235,7 @@ export default function RegisterScreen() {
             <Text style={styles.footerLink}>Đăng nhập</Text>
           </Link>
         </View>
-      </ScrollView>
+      </KeyboardSafeScroll>
 
       <CustomAlert
         visible={alertVisible}
@@ -322,14 +245,14 @@ export default function RegisterScreen() {
         buttons={alertConfig.buttons}
         onDismiss={() => setAlertVisible(false)}
       />
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: AppColors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
   },
   scrollContent: {
     flexGrow: 1,
@@ -343,7 +266,7 @@ const styles = StyleSheet.create({
   backButton: {
     width: 40,
     height: 40,
-    backgroundColor: "#f2f4f7",
+    backgroundColor: colors.surfaceSubtle,
     borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
@@ -354,12 +277,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: "700",
-    color: "#111827",
+    color: colors.text,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 15,
-    color: "#6b7280",
+    color: colors.textSecondary,
     lineHeight: 22,
   },
   formContainer: {
@@ -368,7 +291,7 @@ const styles = StyleSheet.create({
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f2f4f7",
+    backgroundColor: colors.surfaceSubtle,
     borderRadius: 12,
     paddingHorizontal: 14,
     height: 52,
@@ -379,15 +302,15 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 15,
-    color: "#111827",
+    color: colors.text,
   },
   eyeButton: {
     padding: 4,
   },
   primaryButton: {
     height: 52,
-    backgroundColor: "#111827",
-    borderRadius: 12,
+    backgroundColor: colors.accent,
+    borderRadius: 14,
     justifyContent: "center",
     alignItems: "center",
     marginTop: 8,
@@ -396,7 +319,7 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   primaryButtonText: {
-    color: "#fff",
+    color: colors.onAccent,
     fontSize: 16,
     fontWeight: "600",
   },
@@ -408,31 +331,26 @@ const styles = StyleSheet.create({
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: "#e5e7eb",
+    backgroundColor: colors.borderLight,
   },
   dividerText: {
     marginHorizontal: 14,
-    color: "#9ca3af",
+    color: colors.textMuted,
     fontSize: 13,
   },
-  socialContainer: {
+  socialFull: {
+    height: 50,
+    borderRadius: 14,
+    backgroundColor: colors.surfaceSubtle,
     flexDirection: "row",
-    justifyContent: "center",
-    gap: 14,
-  },
-  socialButton: {
-    width: 52,
-    height: 52,
-    backgroundColor: "#f2f4f7",
-    borderRadius: 12,
-    justifyContent: "center",
     alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    marginBottom: 10,
   },
+  socialFullText: { fontSize: 15, fontWeight: "700", color: colors.text },
   socialButtonLoading: {
     opacity: 0.7,
-  },
-  socialButtonDisabled: {
-    opacity: 0.5,
   },
   footer: {
     flexDirection: "row",
@@ -441,11 +359,11 @@ const styles = StyleSheet.create({
     marginTop: 32,
   },
   footerText: {
-    color: "#6b7280",
+    color: colors.textSecondary,
     fontSize: 14,
   },
   footerLink: {
-    color: "#1088ff",
+    color: colors.accentText,
     fontSize: 14,
     fontWeight: "600",
   },

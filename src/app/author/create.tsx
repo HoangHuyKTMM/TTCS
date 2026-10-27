@@ -1,12 +1,17 @@
+import { useThemeStyles } from '../../components/AppTheme'
+import { type AppColors } from '../../theme'
 import React, { useEffect, useState } from 'react'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { ScrollView, View, Text, TextInput, Pressable, StyleSheet, Alert, Image, ActivityIndicator } from 'react-native'
+import KeyboardSafeScroll from '../../components/KeyboardSafe'
 import { useRouter } from 'expo-router'
 import * as Auth from '../../lib/auth'
 import { apiCreateBook, apiFetchGenres } from '../../lib/api'
 import * as ImagePicker from 'expo-image-picker'
 
 export default function AuthorCreateScreen() {
+  const { colors, styles } = useThemeStyles(createStyles)
+
   const router = useRouter()
   const [token, setToken] = useState<string | null>(null)
   const [user, setUser] = useState<any | null>(null)
@@ -102,9 +107,13 @@ export default function AuthorCreateScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <KeyboardSafeScroll style={{ flex: 1 }} contentContainerStyle={styles.scroll}>
         <Text style={styles.title}>Sáng tác truyện</Text>
         <Text style={styles.subtitle}>Dành cho tác giả. Bạn có thể tạo truyện mới và đăng chương.</Text>
+
+        <Pressable style={[styles.secondaryBtn, { marginTop: 14 }]} onPress={() => router.push('/author/manage')}>
+          <Text style={styles.secondaryText}>Quản lý truyện / Import chương Word</Text>
+        </Pressable>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Tạo truyện mới</Text>
@@ -126,7 +135,7 @@ export default function AuthorCreateScreen() {
             </View>
           </ScrollView>
           {selectedGenreIds.length > 0 ? (
-            <Text style={[styles.label, { color: '#0f172a' }]}>Đã chọn: {availableGenres.filter(g => selectedGenreIds.includes(String(g.id || g.genre_id))).map(g => g.name).join(', ')}</Text>
+            <Text style={[styles.label, { color: colors.text }]}>Đã chọn: {availableGenres.filter(g => selectedGenreIds.includes(String(g.id || g.genre_id))).map(g => g.name).join(', ')}</Text>
           ) : null}
           <Text style={styles.label}>Ảnh bìa (URL)</Text>
           <TextInput value={coverUrl} onChangeText={setCoverUrl} placeholder="https://..." style={styles.input} />
@@ -143,7 +152,7 @@ export default function AuthorCreateScreen() {
           <TextInput value={description} onChangeText={setDescription} placeholder="Giới thiệu ngắn" style={[styles.input, { height: 80 }]} multiline />
           <Pressable style={[styles.primaryBtn, creating && styles.primaryBtnDisabled]} onPress={handleCreateBook} disabled={creating}>
             {creating ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={colors.onAccent} />
             ) : (
               <Text style={styles.primaryText}>Tạo truyện</Text>
             )}
@@ -153,30 +162,30 @@ export default function AuthorCreateScreen() {
         <Pressable style={styles.linkBtn} onPress={() => router.back()}>
           <Text style={styles.linkText}>← Quay lại</Text>
         </Pressable>
-      </ScrollView>
+      </KeyboardSafeScroll>
     </SafeAreaView>
   )
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f6f8fb' },
+const createStyles = (colors: AppColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: 16, paddingBottom: 40 },
-  title: { fontSize: 20, fontWeight: '800', color: '#0f172a' },
-  subtitle: { color: '#6b7280', marginTop: 4 },
-  card: { backgroundColor: '#fff', marginTop: 14, borderRadius: 12, padding: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: '#e5e7eb' },
-  cardTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 8 },
-  label: { fontSize: 12, color: '#6b7280', marginTop: 6, marginBottom: 4 },
-  input: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#fff' },
-  primaryBtn: { backgroundColor: '#1088ff', borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 10 },
+  title: { fontSize: 20, fontWeight: '800', color: colors.text },
+  subtitle: { color: colors.textSecondary, marginTop: 4 },
+  card: { backgroundColor: colors.surface, marginTop: 14, borderRadius: 12, padding: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderLight },
+  cardTitle: { fontSize: 16, fontWeight: '800', color: colors.text, marginBottom: 8 },
+  label: { fontSize: 12, color: colors.textSecondary, marginTop: 6, marginBottom: 4 },
+  input: { color: colors.text, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: colors.surface },
+  primaryBtn: { backgroundColor: colors.accent, borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 10 },
   primaryBtnDisabled: { opacity: 0.5 },
-  primaryText: { color: '#fff', fontWeight: '700' },
-  secondaryBtn: { backgroundColor: '#f1f5f9', borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: '#e5e7eb' },
-  secondaryText: { color: '#0f172a', fontWeight: '700' },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: '#e5e7eb', backgroundColor: '#f8fafc', maxWidth: 160 },
-  chipActive: { backgroundColor: '#1088ff11', borderColor: '#1088ff' },
-  chipText: { color: '#0f172a' },
-  chipTextActive: { color: '#1088ff', fontWeight: '700' },
+  primaryText: { color: colors.onAccent, fontWeight: '700' },
+  secondaryBtn: { backgroundColor: colors.surfaceSubtle, borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderLight },
+  secondaryText: { color: colors.text, fontWeight: '700' },
+  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderLight, backgroundColor: colors.bg, maxWidth: 160 },
+  chipActive: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
+  chipText: { color: colors.text },
+  chipTextActive: { color: colors.accentText, fontWeight: '700' },
   linkBtn: { marginTop: 12, alignItems: 'center' },
-  linkText: { color: '#1088ff', fontWeight: '700' },
-  coverPreview: { width: '100%', height: 180, borderRadius: 10, backgroundColor: '#e5e7eb' },
+  linkText: { color: colors.accentText, fontWeight: '700' },
+  coverPreview: { width: '100%', height: 180, borderRadius: 10, backgroundColor: colors.borderLight },
 })

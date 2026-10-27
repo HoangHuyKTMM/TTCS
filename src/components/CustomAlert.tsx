@@ -1,3 +1,5 @@
+import { useThemeStyles } from './AppTheme'
+import { type AppColors } from '../theme'
 import React from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 
@@ -14,16 +16,19 @@ interface CustomAlertProps {
 }
 
 export default function CustomAlert(props: CustomAlertProps) {
+  const { colors, styles } = useThemeStyles(createStyles)
+
   const { visible, type = 'info', title, message, buttons, onDismiss } = props;
 
   const colorMap: any = {
-    success: '#10b981',
-    error: '#ef4444',
-    warning: '#f59e0b',
-    info: '#3b82f6',
+    success: colors.successText,
+    error: colors.dangerText,
+    warning: colors.warningText,
+    info: colors.info,
   };
 
-  const color = colorMap[type] || '#3b82f6';
+  const color = colorMap[type] || colors.info;
+  const surface = { success: colors.successSoft, error: colors.dangerSoft, warning: colors.warningSoft, info: colors.infoSoft }[type]
   const defaultButtons = buttons && buttons.length > 0 ? buttons : [{ text: 'OK', onPress: undefined }];
 
   if (!visible) return null;
@@ -38,8 +43,8 @@ export default function CustomAlert(props: CustomAlertProps) {
       <View style={styles.backdrop}>
         <View style={styles.container}>
           {/* Header with color */}
-          <View style={[styles.header, { backgroundColor: color }]}>
-            <Text style={styles.headerTitle}>{title}</Text>
+          <View style={[styles.header, { backgroundColor: surface }]}>
+            <Text style={[styles.headerTitle, { color: type === 'info' ? colors.text : color }]}>{title}</Text>
           </View>
 
           {/* Body */}
@@ -71,7 +76,7 @@ export default function CustomAlert(props: CustomAlertProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: AppColors) => StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.6)',
@@ -81,7 +86,7 @@ const styles = StyleSheet.create({
   container: {
     width: '85%',
     maxWidth: 340,
-    backgroundColor: '#fff',
+    backgroundColor: colors.surface,
     borderRadius: 14,
     overflow: 'hidden',
     elevation: 15,
@@ -97,37 +102,37 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#fff',
+    color: colors.onDark,
     textAlign: 'left',
   },
   body: {
     paddingHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#efefef',
+    borderBottomColor: colors.borderLight,
     minHeight: 60,
     justifyContent: 'center',
   },
   message: {
     fontSize: 14,
-    color: '#333',
+    color: colors.text,
     lineHeight: 22,
   },
   footer: {
     borderTopWidth: 1,
-    borderTopColor: '#efefef',
+    borderTopColor: colors.borderLight,
   },
   btn: {
     paddingVertical: 14,
     paddingHorizontal: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRightColor: '#efefef',
+    borderRightColor: colors.borderLight,
   },
   btnText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#3b82f6',
+    color: colors.accentText,
   },
 });
 

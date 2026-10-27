@@ -1,3 +1,5 @@
+import { useThemeStyles } from './AppTheme'
+import { type AppColors } from '../theme'
 import React, { useEffect, useRef } from 'react';
 import { View, Animated, StyleSheet } from 'react-native';
 
@@ -14,6 +16,8 @@ export const SkeletonLoader: React.FC<SkeletonLoaderProps> = ({
   borderRadius = 4,
   style 
 }) => {
+  const { colors, styles } = useThemeStyles(createStyles)
+
   const shimmerAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -55,9 +59,11 @@ export const SkeletonLoader: React.FC<SkeletonLoaderProps> = ({
 };
 
 export const BookCardSkeleton: React.FC<{ variant?: 'vertical' | 'horizontal' }> = ({ variant = 'vertical' }) => {
+  const { colors, styles } = useThemeStyles(createStyles)
+
   if (variant === 'horizontal') {
     return (
-      <View style={{ flexDirection: 'row', padding: 12, backgroundColor: '#fff', borderRadius: 12, marginHorizontal: 16 }}>
+      <View style={{ flexDirection: 'row', padding: 12, backgroundColor: colors.surface, borderRadius: 12, marginHorizontal: 16 }}>
         <SkeletonLoader width={80} height={106} style={{ borderRadius: 8, marginRight: 12 }} />
         <View style={{ flex: 1, justifyContent: 'space-between' }}>
           <View>
@@ -72,15 +78,17 @@ export const BookCardSkeleton: React.FC<{ variant?: 'vertical' | 'horizontal' }>
   }
   
   return (
-    <View style={{ width: 140, marginRight: 12 }}>
-      <SkeletonLoader width={140} height={186} style={{ borderRadius: 12, marginBottom: 8 }} />
+    <View style={{ width: 118, marginRight: 12 }}>
+      <SkeletonLoader width={118} height={158} style={{ borderRadius: 12, marginBottom: 8 }} />
       <SkeletonLoader width="90%" height={14} style={{ marginBottom: 4 }} />
       <SkeletonLoader width="70%" height={12} />
     </View>
   )
 }
 
-export const CommentSkeleton: React.FC = () => (
+export const CommentSkeleton: React.FC = () => {
+ const { colors, styles } = useThemeStyles(createStyles)
+ return (
   <View style={styles.commentRow}>
     <SkeletonLoader width={36} height={36} borderRadius={18} />
     <View style={{ flex: 1 }}>
@@ -89,9 +97,12 @@ export const CommentSkeleton: React.FC = () => (
       <SkeletonLoader width="70%" height={12} />
     </View>
   </View>
-);
+)
+};
 
-export const ChapterListSkeleton: React.FC = () => (
+export const ChapterListSkeleton: React.FC = () => {
+ const { colors, styles } = useThemeStyles(createStyles)
+ return (
   <View style={styles.chapterContainer}>
     {[1, 2, 3, 4, 5].map((i) => (
       <View key={i} style={styles.chapterRow}>
@@ -99,11 +110,12 @@ export const ChapterListSkeleton: React.FC = () => (
       </View>
     ))}
   </View>
-);
+)
+};
 
-const styles = StyleSheet.create({
+const createStyles = (colors: AppColors) => StyleSheet.create({
   skeleton: {
-    backgroundColor: '#e5e7eb',
+    backgroundColor: colors.borderLight,
   },
   bookCard: {
     flexDirection: 'row',
@@ -125,6 +137,6 @@ const styles = StyleSheet.create({
   chapterRow: {
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: colors.borderLight,
   },
 });

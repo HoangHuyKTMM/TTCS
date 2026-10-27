@@ -1,0 +1,123 @@
+{
+  "auditDate": "2026-10-01",
+  "method": "4 bounded synthetic direct completions; no application DB writes; no production chapter/user content",
+  "configuredBase": "https://api.xah.io/v1",
+  "configuredModel": "ngovutuananh/gpt-5.5-xhigh",
+  "requestedMaxOutputTokensTotal": 340,
+  "results": [
+    {
+      "id": "L01",
+      "name": "Vietnamese benign toxicity",
+      "ok": true,
+      "elapsedMs": 4613,
+      "content": "0.0",
+      "toolCalls": []
+    },
+    {
+      "id": "L02",
+      "name": "Vietnamese abusive toxicity",
+      "ok": true,
+      "elapsedMs": 10240,
+      "content": "0.25",
+      "toolCalls": []
+    },
+    {
+      "id": "L03",
+      "name": "Synthetic grounded recap",
+      "ok": true,
+      "elapsedMs": 18554,
+      "content": "- Lan nhặt được chìa khóa đồng trong vườn.\n- Minh dẫn Lan đến tháp; cửa khóa nên chưa ai vào được.\n- Lan dùng chìa khóa mở cửa và thấy lá thư của mẹ.",
+      "toolCalls": []
+    },
+    {
+      "id": "L04",
+      "name": "Catalog search function calling",
+      "ok": true,
+      "elapsedMs": 4344,
+      "content": "",
+      "toolCalls": [
+        {
+          "function": {
+            "arguments": "{\"query\": \"tiên hiệp\"}",
+            "name": "search_stories"
+          },
+          "id": "call_57a0ff6f98d440318232826d",
+          "index": 0,
+          "type": "function"
+        }
+      ]
+    }
+  ],
+  "transport": [
+    {
+      "requestMaxTokens": 128,
+      "httpStatus": 200,
+      "responseModel": "gpt-5.5-xhigh",
+      "usage": {
+        "completion_tokens": 21,
+        "prompt_tokens": 186,
+        "total_tokens": 207,
+        "x_ckey": {
+          "cost": 37.44,
+          "request_id": "req_7d837ffcd85248b47bd212d9"
+        }
+      },
+      "finishReason": "tool_calls",
+      "elapsedMs": 4343
+    },
+    {
+      "requestMaxTokens": 16,
+      "httpStatus": 200,
+      "responseModel": "gpt-5.5-xhigh",
+      "usage": {
+        "completion_tokens": 61,
+        "prompt_tokens": 66,
+        "total_tokens": 127,
+        "x_ckey": {
+          "cost": 37.44,
+          "request_id": "req_ed336caa839761358e15304d"
+        }
+      },
+      "finishReason": "stop",
+      "elapsedMs": 4612
+    },
+    {
+      "requestMaxTokens": 16,
+      "httpStatus": 200,
+      "responseModel": "gpt-5.5-xhigh",
+      "usage": {
+        "completion_tokens": 48,
+        "prompt_tokens": 61,
+        "prompt_tokens_details": {
+          "cached_tokens": 61
+        },
+        "total_tokens": 109,
+        "x_ckey": {
+          "cost": 37.44,
+          "request_id": "req_bcb72764c4f01eb98ce6ce6e"
+        }
+      },
+      "finishReason": "stop",
+      "elapsedMs": 10240
+    },
+    {
+      "requestMaxTokens": 180,
+      "httpStatus": 200,
+      "responseModel": "gpt-5.5-xhigh",
+      "usage": {
+        "completion_tokens": 74,
+        "prompt_tokens": 156,
+        "prompt_tokens_details": {
+          "cached_tokens": 156
+        },
+        "total_tokens": 230,
+        "x_ckey": {
+          "cost": 37.44,
+          "request_id": "req_e4e5417f90c47ded54fdb9d6"
+        }
+      },
+      "finishReason": "stop",
+      "elapsedMs": 18554
+    }
+  ]
+}

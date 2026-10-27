@@ -13,28 +13,35 @@ type Props = {
   minSecondsToSkip?: number
 }
 
-export default function AdInterstitial({ visible, onFinish, seconds = 0, placement = 'interstitial', minSecondsToSkip = 1 }: Props) {
-  const allowedPlacements = useMemo(() => new Set(['home', 'book-open']), [])
+export default function AdInterstitial({ visible, onFinish, seconds = 0, placement = 'interstitial', minSecondsToSkip = 15 }: Props) {
+  const allowedPlacements = useMemo(() => new Set(['home', 'book-open', 'reader']), [])
   const allowed = allowedPlacements.has(placement)
   const shouldShow = visible && allowed
 
   const [loading, setLoading] = useState(false)
   const [ad, setAd] = useState<VideoAd | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // Minimum seconds before skip (reduced to 1s for testing, change to 15 for production)
   const enforcedMinSeconds = Math.max(1, Math.floor(minSecondsToSkip || 0))
   const [skipRemaining, setSkipRemaining] = useState<number>(enforcedMinSeconds)
 
   const videoRef = useRef<Video | null>(null)
   const finishedRef = useRef(false)
 
+  const onFinishRef = useRef(onFinish)
+  onFinishRef.current = onFinish
+
+  const finishNow = useCallback(() => {
+    if (finishedRef.current) return
+    finishedRef.current = true
+    onFinishRef.current()
+  }, [])
+
   const finish = useCallback(() => {
     if (finishedRef.current) return
     // Enforce minimum watch time (can't be bypassed).
     if (skipRemaining > 0) return
-    finishedRef.current = true
-    onFinish()
-  }, [onFinish, skipRemaining])
+    finishNow()
+  }, [finishNow, skipRemaining])
 
   const adTitle = useMemo(() => ad?.title || 'Quảng cáo', [ad])
 
@@ -89,23 +96,28 @@ export default function AdInterstitial({ visible, onFinish, seconds = 0, placeme
           if (cancelled) return
           if (!Array.isArray(res) || res.length === 0) {
             setAd(null)
+            if (!cancelled) finishNow()
             return
           }
           const pick = res[Math.floor(Math.random() * res.length)] as VideoAd
           if (!pick?.video_url) {
             setAd(null)
+            if (!cancelled) finishNow()
             return
           }
           setAd(pick)
         } catch (e: any) {
-          if (!cancelled) setError(String(e?.message || e))
+          if (!cancelled) {
+            setError(String(e?.message || e))
+            finishNow()
+          }
         } finally {
           if (!cancelled) setLoading(false)
         }
       })()
 
     return () => { cancelled = true }
-  }, [shouldShow, placement])
+  }, [shouldShow, placement, finishNow])
 
   const handleOpenLink = useCallback(async () => {
     const url = ad?.link_url

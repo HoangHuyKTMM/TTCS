@@ -154,6 +154,15 @@ export async function updateBanner(id, payload) {
   return res.json()
 }
 
+async function chapterResult(res) {
+  let body = null
+  try { body = await res.json() } catch (e) { body = null }
+  if (!res.ok || (body && body.error)) {
+    throw new Error(String((body && (body.message || body.error)) || `HTTP ${res.status}`))
+  }
+  return body
+}
+
 export async function createChapter(bookId, payload) {
   const headers = { 'Content-Type': 'application/json' }
   const token = getToken()
@@ -163,7 +172,7 @@ export async function createChapter(bookId, payload) {
     headers,
     body: JSON.stringify(payload)
   })
-  return res.json()
+  return chapterResult(res)
 }
 
 export async function updateChapter(bookId, chapterId, payload) {
@@ -171,7 +180,7 @@ export async function updateChapter(bookId, chapterId, payload) {
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
   const res = await fetch(`${API_BASE}/books/${bookId}/chapters/${chapterId}`, { method: 'PUT', headers, body: JSON.stringify(payload) })
-  return res.json()
+  return chapterResult(res)
 }
 
 export async function deleteChapter(bookId, chapterId) {
@@ -179,7 +188,7 @@ export async function deleteChapter(bookId, chapterId) {
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
   const res = await fetch(`${API_BASE}/books/${bookId}/chapters/${chapterId}`, { method: 'DELETE', headers })
-  return res.json()
+  return chapterResult(res)
 }
 
 export async function fetchStats() {
@@ -346,6 +355,49 @@ export async function adminDeleteComment(id) {
   return res.json()
 }
 
+export async function fetchModerationLogs(status = 'pending_review') {
+  const headers = withAuth({ 'Content-Type': 'application/json' })
+  const res = await fetch(`${API_BASE}/moderation/logs?status=${encodeURIComponent(status)}`, { headers })
+  return res.json()
+}
+
+export async function fetchModerationLog(id) {
+  const headers = withAuth({ 'Content-Type': 'application/json' })
+  const res = await fetch(`${API_BASE}/moderation/logs/${id}`, { headers })
+  return res.json()
+}
+
+export async function decideModerationLog(id, action) {
+  const headers = withAuth({ 'Content-Type': 'application/json' })
+  const res = await fetch(`${API_BASE}/moderation/logs/${id}/decision`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ action })
+  })
+  const data = await res.json()
+  if (!res.ok || data?.error) throw new Error(data?.message || data?.error || 'Không thể xử lý mục kiểm duyệt')
+  return data
+}
+
+export async function checkDuplicateText(payload) {
+  const headers = withAuth({ 'Content-Type': 'application/json' })
+  const res = await fetch(`${API_BASE}/integrity/check-duplicate`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload)
+  })
+  return res.json()
+}
+
+export async function backfillFingerprints() {
+  const headers = withAuth({ 'Content-Type': 'application/json' })
+  const res = await fetch(`${API_BASE}/integrity/backfill`, {
+    method: 'POST',
+    headers
+  })
+  return res.json()
+}
+
 export async function adminUpdateComment(id, payload) {
   const headers = { 'Content-Type': 'application/json' }
   const token = getToken()
@@ -388,6 +440,30 @@ export async function fetchGenres() {
   const res = await fetch(`${API_BASE}/genres`, { headers })
   return res.json()
 }
+
+export async function fetchAiUsage() {
+  const headers = { 'Content-Type': 'application/json' }
+  const token = getToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+  const res = await fetch(`${API_BASE}/moderation/ai-usage`, { headers })
+  if (!res.ok) throw new Error('AI usage unavailable')
+  return res.json()
+}
+
+async function fetchLangfuse(path, query = {}, signal) {
+  const headers = { Accept: 'application/json' }
+  const token = getToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+  const params = new URLSearchParams(Object.entries(query).filter(([, v]) => v != null && v !== ''))
+  const res = await fetch(`${API_BASE}${path}?${params}`, { headers, signal })
+  const payload = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(payload.message || 'Không tải được dữ liệu Langfuse.')
+  return payload
+}
+
+export const fetchLangfuseMetrics = (query, signal) => fetchLangfuse('/moderation/langfuse/metrics', query, signal)
+export const fetchLangfuseObservations = (query, signal) => fetchLangfuse('/moderation/langfuse/observations', query, signal)
+export const fetchLangfuseTrace = (id, query, signal) => fetchLangfuse(`/moderation/traces/${encodeURIComponent(id)}`, query, signal)
 
 export async function createGenre(payload) {
   const headers = { 'Content-Type': 'application/json' }

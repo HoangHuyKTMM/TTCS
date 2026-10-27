@@ -1,9 +1,12 @@
+import { useThemeStyles } from '../components/AppTheme'
+import { type AppColors } from '../theme'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { Alert, Image, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Link } from 'expo-router'
 import * as Auth from '../lib/auth'
 import { API_BASE, apiChangePassword, apiGetMe } from '../lib/api'
+import KeyboardSafeScroll from '../components/KeyboardSafe'
 
 function formatDate(d?: string | null) {
   if (!d) return ''
@@ -17,6 +20,8 @@ function formatDate(d?: string | null) {
 }
 
 export default function AccountScreen() {
+  const { colors, styles } = useThemeStyles(createStyles)
+
   const [token, setToken] = useState<string | null>(null)
   const [user, setUser] = useState<any | null>(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -108,7 +113,8 @@ export default function AccountScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView
+      <KeyboardSafeScroll
+        style={{ flex: 1 }}
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
       >
@@ -194,19 +200,19 @@ export default function AccountScreen() {
             </Pressable>
           </View>
         )}
-      </ScrollView>
+      </KeyboardSafeScroll>
     </SafeAreaView>
   )
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f7f9fc' },
+const createStyles = (colors: AppColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: 16, paddingBottom: 32 },
-  title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
+  title: { fontSize: 22, fontWeight: '800', color: colors.text },
 
   card: {
     marginTop: 12,
-    backgroundColor: '#fff',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 14,
     shadowColor: '#000',
@@ -217,21 +223,21 @@ const styles = StyleSheet.create({
   },
 
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  avatar: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#b3d7ff' },
+  avatar: { width: 54, height: 54, borderRadius: 27, backgroundColor: colors.accentSoft },
   avatarFallback: { alignItems: 'center', justifyContent: 'center' },
-  name: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
-  muted: { color: '#475569' },
+  name: { fontSize: 18, fontWeight: '800', color: colors.text },
+  muted: { color: colors.textSecondary },
 
-  sectionTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
-  inputLabel: { color: '#475569', marginTop: 10, marginBottom: 6, fontWeight: '700' },
-  input: { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10, backgroundColor: '#f8fafc' },
+  sectionTitle: { fontSize: 16, fontWeight: '800', color: colors.text },
+  inputLabel: { color: colors.textSecondary, marginTop: 10, marginBottom: 6, fontWeight: '700' },
+  input: { color: colors.text, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 10, padding: 10, backgroundColor: colors.bg },
 
-  row: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#f1f5f9' },
-  rowLabel: { color: '#475569', fontWeight: '700', width: 120 },
-  rowValue: { color: '#0f172a', fontWeight: '700', flex: 1, textAlign: 'right' },
+  row: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.surfaceSubtle },
+  rowLabel: { color: colors.textSecondary, fontWeight: '700', width: 120 },
+  rowValue: { color: colors.text, fontWeight: '700', flex: 1, textAlign: 'right' },
 
-  primaryBtn: { backgroundColor: '#1088ff', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12 },
-  primaryBtnText: { color: '#fff', fontWeight: '800' },
-  secondaryBtn: { backgroundColor: '#e2e8f0', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12 },
-  secondaryBtnText: { color: '#0f172a', fontWeight: '800' },
+  primaryBtn: { backgroundColor: colors.accent, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12 },
+  primaryBtnText: { color: colors.onAccent, fontWeight: '800' },
+  secondaryBtn: { backgroundColor: colors.borderLight, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12 },
+  secondaryBtnText: { color: colors.text, fontWeight: '800' },
 })

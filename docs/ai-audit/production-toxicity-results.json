@@ -1,0 +1,68 @@
+{
+  "auditDate": "2026-10-01",
+  "method": "2 live scoreToxicity calls using exact production prompt and 8 second race; synthetic comments; no DB writes",
+  "results": [
+    {
+      "id": "P01",
+      "text": "Các nhân vật có bước trưởng thành lớn trong buổi gặp mặt.",
+      "returnedScore": 0.02,
+      "returnedZone": "green",
+      "helperElapsedMs": 7983,
+      "heuristicScore": 0.92,
+      "modelAlreadyFinishedAtHelperReturn": true,
+      "modelOutput": "0.02",
+      "modelElapsedMs": 7983
+    },
+    {
+      "id": "P02",
+      "text": "Mày đúng là đồ ngu, óc chó.",
+      "returnedScore": 0.78,
+      "returnedZone": "yellow",
+      "helperElapsedMs": 8007,
+      "heuristicScore": 0.78,
+      "modelAlreadyFinishedAtHelperReturn": false,
+      "modelOutput": "0.8",
+      "modelElapsedMs": 9620
+    }
+  ],
+  "transport": [
+    {
+      "inputText": "Các nhân vật có bước trưởng thành lớn trong buổi gặp mặt.",
+      "httpStatus": 200,
+      "responseModel": "gpt-5.5-xhigh",
+      "usage": {
+        "completion_tokens": 31,
+        "prompt_tokens": 448,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "total_tokens": 479,
+        "x_ckey": {
+          "cost": 37.44,
+          "request_id": "req_09dc612717dd2c85142ccb06"
+        }
+      },
+      "finishReason": "stop",
+      "elapsedMs": 7981
+    },
+    {
+      "inputText": "Mày đúng là đồ ngu, óc chó.",
+      "httpStatus": 200,
+      "responseModel": "gpt-5.5-xhigh",
+      "usage": {
+        "completion_tokens": 9,
+        "prompt_tokens": 444,
+        "prompt_tokens_details": {
+          "cached_tokens": 444
+        },
+        "total_tokens": 453,
+        "x_ckey": {
+          "cost": 37.44,
+          "request_id": "req_24fb0fa6df429b1646ff972c"
+        }
+      },
+      "finishReason": "stop",
+      "elapsedMs": 9620
+    }
+  ]
+}

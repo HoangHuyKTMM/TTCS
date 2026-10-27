@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tài Liệu Kỹ Thuật: Hệ Thống AI Agent Đọc Truyện & Vận Hành</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- PrismJS for Syntax Highlighting -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans leading-relaxed py-10 px-4 sm:px-8">
+
+  <div class="max-w-5xl mx-auto bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
+    
+    <!-- Hero / Title -->
+    <header class="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-8 sm:p-12">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-semibold uppercase tracking-wider mb-4 border border-indigo-500/30">
+        Đặc Tả Kỹ Thuật Toàn Diện (Full Specification)
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight">Hệ Thống Dual-Agent Nền Tảng Truyện</h1>
+      <p class="text-slate-300 text-base sm:text-lg mt-3 max-w-3xl">
+        Kiến trúc Reading Companion & Integrity Agent vận hành trên 100% MySQL, cơ chế On-Demand Cache-Aside chống Spoil, kiểm duyệt SimHash và giám sát quan sát qua Langfuse Iframe.
+      </p>
+    </header>
+
+    <div class="p-8 sm:p-12 space-y-12">
+
+      <!-- Section 1: Tổng quan Kiến trúc -->
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-slate-900 border-b pb-2 flex items-center gap-3">
+          <span class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-black">1</span>
+          Tổng Quan Kiến Trúc Hệ Thống
+        </h2>
+        <div class="bg-slate-900 text-slate-100 p-6 rounded-xl font-mono text-xs sm:text-sm overflow-x-auto shadow-inner leading-relaxed">
+[ Giao diện Người đọc (Mobile / Web) ]
+           │ (REST API / WebSocket / Streaming)
+           ▼
+┌────────────────────────────────────────────────────────┐
+│  AGENT 1: READING COMPANION (Đồng bộ / Giao diện Chat) │
+│  - Gợi ý truyện đa vòng (Multi-turn Chat & Story Cards)│
+│  - Tóm tắt On-Demand chống Spoil (Cache-Aside)         │
+│  - Tác vụ thư viện / Đọc sau (Function Calling)        │
+└───────────┬────────────────────────────────────────────┘
+            │
+            ▼
+┌────────────────────────────────────────────────────────┐
+│  CƠ SỞ DỮ LIỆU TRUNG TÂM: MYSQL DUY NHẤT               │
+│  - Truyện & Chương: stories, chapters                  │
+│  - Tiến độ & Cache tóm tắt: user_reading_progress,     │
+│    story_summary_cache                                 │
+│  - Lịch sử chat & Trace ID: conversations, messages    │
+│  - Vận hành & Bản quyền: comments, moderation_logs,    │
+│    chapter_fingerprints                                │
+└───────────▲────────────────────────────────────────────┘
+            │
+┌───────────┴────────────────────────────────────────────┐
+│  AGENT 2: MODERATION & INTEGRITY (Bất đồng bộ / Worker)│
+│  - Tầng 1: Lọc tức thời bằng Regex & Blacklist từ cấm   │
+│  - Tầng 2: Đánh giá Toxic ngầm (Cơ chế Shadowban)      │
+│  - Tầng 3: Quét đạo văn văn bản bằng thuật toán SimHash│
+│  - Tầng 4: Human-in-the-Loop đẩy cảnh báo về Admin     │
+└───────────────────────────▲────────────────────────────┘
+                            │
+┌───────────────────────────┴────────────────────────────┐
+│  DASHBOARD QUẢN TRỊ VIÊN (ADMIN DASHBOARD)             │
+│  - Duyệt Vùng Vàng / Vùng Đỏ với Diff Viewer 2 cột     │
+│  - Giám sát luồng AI: Nhúng trực tiếp Iframe Langfuse   │
+│    (Waterfall Timeline, Latency, Token Usage, Prompt)  │
+└────────────────────────────────────────────────────────┘
+        </div>
+      </section>
+
+      <!-- Section 2: MySQL DDL -->
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-slate-900 border-b pb-2 flex items-center gap-3">
+          <span class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-black">2</span>
+          Thiết Kế Cơ Sở Dữ Liệu MySQL (DDL Toàn Diện)
+        </h2>
+        <p class="text-sm text-slate-600">Được chuẩn hóa trên engine <code>InnoDB</code>, bộ mã <code>utf8mb4_unicode_ci</code> với đầy đủ khóa ngoại và đánh Index tối ưu hóa truy vấn.</p>
+        <div class="rounded-xl overflow-hidden border border-slate-200">
+          <pre><code class="language-sql">-- ========================================================
+-- 1. DỮ LIỆU TRUYỆN & NỘI DUNG CHƯƠNG
+-- ========================================================
+CREATE TABLE IF NOT EXISTS stories (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    author VARCHAR(100),
+    genres VARCHAR(255),
+    status ENUM('ongoing', 'completed') DEFAULT 'ongoing',
+    description TEXT,
+    total_chapters INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FULLTEXT INDEX ft_story_search (title, description)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS chapters (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    story_id INT NOT NULL,
+    chapter_number INT NOT NULL,
+    title VARCHAR(255),
+    content LONGTEXT NOT NULL,
+    status ENUM('draft', 'pending_review', 'published', 'rejected') DEFAULT 'published',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_story_chapter (story_id, chapter_number),
+    INDEX idx_story_num (story_id, chapter_number),
+    CONSTRAINT fk_chapter_story FOREIGN KEY (story_id) REFERENCES stories(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ========================================================
+-- 2. TIẾN ĐỘ NGƯỜI ĐỌC, CACHE TÓM TẮT & CHATBOT (AGENT 1)
+-- ========================================================
+CREATE TABLE IF NOT EXISTS user_reading_progress (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    story_id INT NOT NULL,
+    current_chapter INT NOT NULL DEFAULT 1,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_user_story (user_id, story_id),
+    CONSTRAINT fk_progress_story FOREIGN KEY (story_id) REFERENCES stories(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS story_summary_cache (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    story_id INT NOT NULL,
+    from_chapter INT NOT NULL,
+    to_chapter INT NOT NULL,
+    summary_text TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_story_range (story_id, from_chapter, to_chapter),
+    INDEX idx_summary_lookup (story_id, from_chapter, to_chapter),
+    CONSTRAINT fk_cache_story FOREIGN KEY (story_id) REFERENCES stories(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS conversations (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NULL,
+    title VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS messages (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    conversation_id INT NOT NULL,
+    sender ENUM('user', 'assistant') NOT NULL,
+    content TEXT NOT NULL,
+    metadata JSON NULL,
+    trace_id VARCHAR(64) NULL, -- Khóa logic liên kết Trace Langfuse
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_conv_time (conversation_id, created_at),
+    INDEX idx_trace (trace_id),
+    CONSTRAINT fk_msg_conv FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ========================================================
+-- 3. KIỂM DUYỆT BÌNH LUẬN, BẢN QUYỀN & HITL (AGENT 2)
+-- ========================================================
+CREATE TABLE IF NOT EXISTS comments (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    story_id INT NOT NULL,
+    chapter_id BIGINT NULL,
+    user_id INT NOT NULL,
+    content TEXT NOT NULL,
+    status ENUM('pending', 'approved', 'shadowbanned', 'rejected') DEFAULT 'approved',
+    toxicity_score FLOAT DEFAULT 0.0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_comment_feed (story_id, status, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS chapter_fingerprints (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    story_id INT NOT NULL,
+    chapter_id BIGINT NOT NULL,
+    simhash_64 BIGINT UNSIGNED NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_simhash (simhash_64),
+    CONSTRAINT fk_fp_chapter FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS moderation_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    target_type ENUM('comment', 'chapter') NOT NULL,
+    target_id BIGINT NOT NULL,
+    violation_type ENUM('toxicity', 'spam', 'plagiarism') NOT NULL,
+    confidence_score FLOAT NOT NULL,
+    matched_target_id BIGINT NULL,
+    evidence_data JSON NULL,
+    trace_id VARCHAR(64) NULL,
+    status ENUM('pending_review', 'approved_by_admin', 'penalized_by_admin') DEFAULT 'pending_review',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_mod_status (status, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;</code></pre>
+        </div>
+      </section>
+
+      <!-- Section 3: Agent 1 Logic -->
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-slate-900 border-b pb-2 flex items-center gap-3">
+          <span class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-black">3</span>
+          Agent 1: Reading Companion & Cache-Aside
+        </h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="bg-indigo-50/60 p-5 rounded-xl border border-indigo-100">
+            <h3 class="font-bold text-indigo-950 mb-2">Bộ Công Cụ (Function Calling)</h3>
+            <ul class="text-sm space-y-2 text-indigo-900 list-disc list-inside">
+              <li><code>get_user_progress</code>: Lấy <code>current_chapter</code> hiện tại.</li>
+              <li><code>get_catchup_summary</code>: Ràng buộc an toàn: chặn lấy nội dung chương $\ge current\_chapter$.</li>
+              <li><code>search_stories</code>: Tìm kiếm với MySQL Full-Text Search.</li>
+              <li><code>save_to_favorites</code>: Thêm truyện vào tủ sách tự động.</li>
+            </ul>
+          </div>
+          <div class="bg-slate-50 p-5 rounded-xl border border-slate-200">
+            <h3 class="font-bold text-slate-900 mb-2">Giao Diện Người Đọc (UI)</h3>
+            <ul class="text-sm space-y-2 text-slate-700 list-disc list-inside">
+              <li><strong>Floating Button:</strong> Nút nổi thông minh tự ẩn khi cuộn xuống.</li>
+              <li><strong>Bottom Sheet:</strong> Ngăn trượt 50% màn hình, không che khuất trang đọc.</li>
+              <li><strong>Quick Chips:</strong> Nút bấm 1 chạm <em>"Tóm tắt 10 chương trước"</em>.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="rounded-xl overflow-hidden border border-slate-200 mt-2">
+          <pre><code class="language-javascript">// Logic Tóm Tắt On-Demand Chống Spoil & Lưu Cache
+async function getCatchUpSummary(storyId, currentChapter) {
+  const toChapter = currentChapter - 1;
+  if (toChapter < 1) return "Bạn đang ở chương mở đầu, chưa có sự kiện trước đó.";
+  const fromChapter = Math.max(1, currentChapter - 15);
+
+  // 1. Kiểm tra Cache MySQL
+  const [cached] = await db.query(
+    "SELECT summary_text FROM story_summary_cache WHERE story_id = ? AND from_chapter = ? AND to_chapter = ?",
+    [storyId, fromChapter, toChapter]
+  );
+  if (cached.length > 0) return cached[0].summary_text;
+
+  // 2. Cache Miss -> Lấy nội dung gốc an toàn
+  const [rawChapters] = await db.query(
+    "SELECT chapter_number, content FROM chapters WHERE story_id = ? AND chapter_number BETWEEN ? AND ? ORDER BY chapter_number ASC",
+    [storyId, fromChapter, toChapter]
+  );
+
+  // 3. Prompting cô lập Spoil
+  const prompt = `Tóm tắt các tình tiết chính từ chương ${fromChapter} đến ${toChapter}. CẤM ĐỀ CẬP tình tiết từ chương ${currentChapter} trở đi.`;
+  const summaryText = await callLLM(prompt, rawChapters);
+
+  // 4. Ghi ngược vào Cache
+  await db.query(
+    "INSERT INTO story_summary_cache (story_id, from_chapter, to_chapter, summary_text) VALUES (?, ?, ?, ?)",
+    [storyId, fromChapter, toChapter, summaryText]
+  );
+
+  return summaryText;
+}</code></pre>
+        </div>
+      </section>
+
+      <!-- Section 4: Agent 2 Logic -->
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-slate-900 border-b pb-2 flex items-center gap-3">
+          <span class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-black">4</span>
+          Agent 2: Moderation & Integrity (Bản Quyền & Shadowban)
+        </h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="p-5 rounded-xl border border-slate-200 bg-white">
+            <h3 class="font-bold text-slate-900 mb-2">1. Luồng Lọc Bình Luận</h3>
+            <p class="text-xs text-slate-500 mb-3">Kết hợp Regex tức thì với chấm điểm Toxic bất đồng bộ</p>
+            <ol class="text-sm space-y-2 text-slate-700 list-decimal list-inside">
+              <li><strong>Tầng 1 (Regex):</strong> Chặn từ khóa cực đoan, link cờ bạc (thời gian &lt; 1ms).</li>
+              <li><strong>Tầng 2 (AI Worker):</strong> Chấm điểm độc hại ngầm qua Queue.</li>
+              <li><strong>Shadowban:</strong> Độc hại từ 0.5 - 0.8 thì ẩn tàng hình (chỉ người viết thấy).</li>
+            </ol>
+          </div>
+          <div class="p-5 rounded-xl border border-slate-200 bg-white">
+            <h3 class="font-bold text-slate-900 mb-2">2. Kiểm Duyệt Đạo Văn (SimHash)</h3>
+            <p class="text-xs text-slate-500 mb-3">0 token AI tiêu thụ, xử lý hàng nghìn chương cực nhanh</p>
+            <ol class="text-sm space-y-2 text-slate-700 list-decimal list-inside">
+              <li><strong>Tạo vân tay:</strong> Tính mã băm nhị phân 64-bit cho chương mới tải lên.</li>
+              <li><strong>Hamming Distance:</strong> So khớp số bit khác nhau $D_H$ với kho truyện.</li>
+              <li><strong>Gắn cờ:</strong> $D_H \le 3$ (Trùng khớp $\ge 85\%$) $\rightarrow$ Tạm giữ trạng thái và báo Admin.</li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 5: Human-in-the-loop Table -->
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-slate-900 border-b pb-2 flex items-center gap-3">
+          <span class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-black">5</span>
+          Mô Hình Phân Cấp Human-In-The-Loop (HITL)
+        </h2>
+        <div class="overflow-x-auto rounded-xl border border-slate-200">
+          <table class="w-full text-left text-sm border-collapse">
+            <thead class="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200">
+              <tr>
+                <th class="py-3 px-4">Phân Vùng</th>
+                <th class="py-3 px-4">Tiêu Chuẩn Rủi Ro</th>
+                <th class="py-3 px-4">Hành Động Tự Động Của Agent</th>
+                <th class="py-3 px-4">Can Thiệp Của Admin</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr>
+                <td class="py-3 px-4 font-bold text-emerald-700">Vùng Xanh</td>
+                <td class="py-3 px-4">Trùng lặp &lt; 50% / Toxic &lt; 0.5</td>
+                <td class="py-3 px-4">Phê duyệt và xuất bản công khai ngay.</td>
+                <td class="py-3 px-4 text-slate-400">Không cần can thiệp.</td>
+              </tr>
+              <tr class="bg-amber-50/50">
+                <td class="py-3 px-4 font-bold text-amber-700">Vùng Vàng</td>
+                <td class="py-3 px-4">Trùng lặp 50% - 85% / Toxic 0.5 - 0.8</td>
+                <td class="py-3 px-4">Chuyển <code>pending_review</code>, đẩy vào log.</td>
+                <td class="py-3 px-4 font-semibold text-amber-900">Bắt buộc duyệt trên Diff Viewer.</td>
+              </tr>
+              <tr class="bg-rose-50/50">
+                <td class="py-3 px-4 font-bold text-rose-700">Vùng Đỏ</td>
+                <td class="py-3 px-4">Trùng lặp &gt; 85% / Toxic &gt; 0.8</td>
+                <td class="py-3 px-4">Tự động tạm khóa (Soft Block), cảnh báo đỏ.</td>
+                <td class="py-3 px-4 font-semibold text-rose-900">Xác nhận chế tài khóa truyện/tài khoản.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Section 6: Langfuse Observability & Iframe -->
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-slate-900 border-b pb-2 flex items-center gap-3">
+          <span class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-black">6</span>
+          Giám Sát AI Qua Langfuse Tracing & Nhúng Iframe
+        </h2>
+        <p class="text-sm text-slate-600">
+          Backend khởi tạo Trace ghi nhận từng Span (gọi SQL, gọi LLM, kiểm tra cache) và lưu <code>trace_id</code> vào MySQL. Trên Dashboard Admin, chi tiết lượt suy luận được nhúng trực tiếp qua thẻ <code>&lt;iframe&gt;</code> để soi Timeline, Latency và Token mà không tốn công dựng UI.
+        </p>
+        <div class="rounded-xl overflow-hidden border border-slate-200">
+          <pre><code class="language-html">&lt;!-- Modal Nhúng Giao Diện Trace Của Langfuse Trong Admin Dashboard --&gt;
+&lt;div id="traceModal" class="modal-wrapper hidden"&gt;
+  &lt;div class="modal-box"&gt;
+    &lt;div class="modal-header"&gt;
+      &lt;h3&gt;Luồng Suy Luận AI &amp; Giám Sát Token (Langfuse Trace)&lt;/h3&gt;
+      &lt;button onclick="closeTraceModal()"&gt;Đóng&lt;/button&gt;
+    &lt;/div&gt;
+    &lt;iframe 
+      id="langfuseIframe" 
+      src="https://cloud.langfuse.com/project/YOUR_PROJECT_ID/traces/TRACE_ID" 
+      width="100%" 
+      height="85%" 
+      frameborder="0"&gt;
+    &lt;/iframe&gt;
+  &lt;/div&gt;
+&lt;/div&gt;</code></pre>
+        </div>
+      </section>
+
+      <!-- Section 7: Sprint Roadmap -->
+      <section class="space-y-4">
+        <h2 class="text-2xl font-bold text-slate-900 border-b pb-2 flex items-center gap-3">
+          <span class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-black">7</span>
+          Lộ Trình Triển Khai (Sprint Roadmap)
+        </h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200">
+            <div class="font-bold text-indigo-700 text-xs uppercase tracking-wider mb-1">Sprint 1</div>
+            <h4 class="font-semibold text-slate-900 mb-2">Cơ Sở Dữ Liệu</h4>
+            <p class="text-xs text-slate-600">Khởi tạo 8 bảng MySQL, đánh Index Full-Text và Unique Range Cache.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200">
+            <div class="font-bold text-indigo-700 text-xs uppercase tracking-wider mb-1">Sprint 2</div>
+            <h4 class="font-semibold text-slate-900 mb-2">Agent 1: Companion</h4>
+            <p class="text-xs text-slate-600">Xây dựng hàm Cache-Aside chống spoil và giao diện chat trả lời kèm Story Cards.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200">
+            <div class="font-bold text-indigo-700 text-xs uppercase tracking-wider mb-1">Sprint 3</div>
+            <h4 class="font-semibold text-slate-900 mb-2">Agent 2: Integrity</h4>
+            <p class="text-xs text-slate-600">Tích hợp SimHash 64-bit, hàng đợi Worker chấm điểm Toxic và cơ chế Shadowban.</p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200">
+            <div class="font-bold text-indigo-700 text-xs uppercase tracking-wider mb-1">Sprint 4</div>
+            <h4 class="font-semibold text-slate-900 mb-2">HITL &amp; Observability</h4>
+            <p class="text-xs text-slate-600">Dựng màn hình Diff Viewer, nhúng Iframe Langfuse và chạy benchmark kiểm thử.</p>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-slate-100 p-6 border-t border-slate-200 text-center text-xs text-slate-500">
+      Tài liệu kỹ thuật nội bộ dành cho đội ngũ phát triển AI Agent & Nền tảng đọc truyện.
+    </footer>
+
+  </div>
+
+</body>
+</html>

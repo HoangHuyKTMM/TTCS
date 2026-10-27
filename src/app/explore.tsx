@@ -1,165 +1,118 @@
-import React, { useMemo, useState, useEffect, useCallback } from "react";
-import { Image, TouchableOpacity, Linking, RefreshControl } from 'react-native'
-import { API_BASE, apiFetchBooks } from '../lib/api'
-import * as Auth from '../lib/auth'
-import { shouldShowAds, shouldShowPlacement } from '../lib/ads'
-import AdInterstitial from '../components/AdInterstitial'
-import { useRouter } from 'expo-router'
-import { useFocusEffect } from '@react-navigation/native'
-import { useDebouncedNavigation } from '../lib/navigation'
+import { useThemeStyles } from '../components/AppTheme'
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
+  Image,
+  TouchableOpacity,
+  Linking,
+  RefreshControl,
+  Dimensions,
   StyleSheet,
   Text,
   View,
   Pressable,
   ScrollView,
-  FlatList,
-} from "react-native";
+  NativeSyntheticEvent,
+  NativeScrollEvent,
+} from 'react-native'
+import { API_BASE, apiFetchBanners, apiFetchBooks, apiFetchGenres } from '../lib/api'
+import { pickHomeRecommendations } from '../lib/homeFeed'
+import * as Auth from '../lib/auth'
+import { shouldShowPlacement } from '../lib/ads'
+import AdInterstitial from '../components/AdInterstitial'
+
+import { useFocusEffect } from '@react-navigation/native'
+import { useDebouncedNavigation } from '../lib/navigation'
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Link } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { BookCardSkeleton } from '../components/SkeletonLoader'
+import { cardShadow, cardShadowSm, radius, type AppColors } from '../theme'
+import { GenreChip, SectionHeader, StoryPoster, StoryRow } from '../components/ui'
 
-type RankItem = {
-  id: string;
-  title: string;
-  subtitle: string;
-  stats: string;
-  cover?: string;
-};
-
-type RecommendItem = {
-  id: string;
-  title: string;
-  desc: string;
-  stats: string;
-  cover?: string;
-};
-
-const TABS = ["Đề xuất"] as const;
-
-// Memoized components for better performance
-const RankItemCard = React.memo(({ item, index, onPress }: { item: RankItem; index: number; onPress: (id: string) => void }) => (
-  <Pressable style={styles.rankItem} onPress={() => onPress(item.id)}>
-    <View style={styles.coverWrap}>
-      {item.cover ? (
-        <Image source={{ uri: item.cover }} style={styles.cover} />
-      ) : (
-        <View style={styles.cover} />
-      )}
-      <View
-        style={[
-          styles.rankBadge,
-          index === 0 && styles.rankGold,
-          index === 1 && styles.rankSilver,
-          index === 2 && styles.rankBronze,
-        ]}
-      >
-        <Text style={styles.rankBadgeText}>{index + 1}</Text>
-      </View>
-    </View>
-    <View style={styles.rankTextWrap}>
-      <Text style={styles.rankTitle} numberOfLines={1}>{item.title}</Text>
-      <Text style={styles.rankSubtitle} numberOfLines={1}>{item.subtitle}</Text>
-      <Text style={styles.rankStats}>{item.stats}</Text>
-    </View>
-  </Pressable>
-));
-
-const RecommendItemCard = React.memo(({ item, onPress }: { item: RecommendItem; onPress: (id: string) => void }) => (
-  <Pressable style={styles.recItem} onPress={() => onPress(item.id)}>
-    {item.cover ? (
-      <Image source={{ uri: item.cover }} style={styles.recCover} />
-    ) : (
-      <View style={styles.recCover} />
-    )}
-    <View style={styles.recTextWrap}>
-      <Text style={styles.recTitle} numberOfLines={2}>{item.title}</Text>
-      <Text style={styles.recDesc} numberOfLines={2}>{item.desc}</Text>
-      <Text style={styles.recStats}>{item.stats}</Text>
-    </View>
-  </Pressable>
-));
+const { width: SCREEN_W } = Dimensions.get('window')
+const BANNER_W = Math.min(SCREEN_W - 32, 380)
+const BANNER_H = Math.round(BANNER_W * 0.46)
 
 export default function ExplorePage() {
-  const [tab, setTab] = useState<(typeof TABS)[number]>(TABS[0]);
+  const { colors, styles } = useThemeStyles(createStyles)
+
   const [books, setBooks] = useState<any[]>([])
-  const [recData, setRecData] = useState<RecommendItem[]>([])
+  const [recData, setRecData] = useState<any[]>([])
+  const [rankData, setRankData] = useState<any[]>([])
+  const [genres, setGenres] = useState<string[]>([])
+  const previousUpdated = useRef<{ id: string }[]>([])
+  const pageRequestId = useRef(0)
   const [refreshing, setRefreshing] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
-
   const [error, setError] = useState<string | null>(null)
   const [user, setUser] = useState<any | null>(null)
   const [userLoaded, setUserLoaded] = useState(false)
   const [entryAdVisible, setEntryAdVisible] = useState(false)
-  const router = useRouter()
-  const { navigate } = useDebouncedNavigation()
-  
+  const [greetingName, setGreetingName] = useState('')
+  const [activeBanner, setActiveBanner] = useState(0)
+  const { navigate: navigateTo } = useDebouncedNavigation()
+
+  const navigate = navigateTo
+
+  const fmtNum = useCallback((n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0), [])
+
+  const mapBook = useCallback((b: any, idx: number) => {
+    const rawViews = Number(b.views ?? b.view_count ?? b.reads ?? b.view ?? b.total_views ?? 0)
+    const views = Number.isFinite(rawViews) ? Math.max(0, rawViews) : 0
+    const likes = Number(b.likes_count || b.likes || b.favorites || 0)
+    return {
+      id: String(b.id || b.story_id || idx + 1),
+      title: b.title || b.name || 'Không rõ',
+      genre: b.genre || '',
+      views, likes,
+      desc: b.description || b.desc || '',
+      cover: b.cover_url ? (String(b.cover_url).startsWith('http') ? b.cover_url : `${API_BASE}${b.cover_url}`) : null,
+    }
+  }, [])
+
   const loadBooks = useCallback(async () => {
-    let mounted = true
+    const requestId = ++pageRequestId.current
     setRefreshing(true)
     setIsLoading(true)
     try {
-      const res: any = await apiFetchBooks()
-      if (!mounted) return
+      const token = await Auth.getToken()
+      const [res, ranked, recommended, genreRows]: any[] = await Promise.all([
+        apiFetchBooks(token || undefined, { limit: 50, sort: 'recent' }),
+        apiFetchBooks(token || undefined, { limit: 5, sort: 'views' }),
+        apiFetchBooks(token || undefined, { limit: 5, sort: 'recommended' }),
+        apiFetchGenres(token || undefined),
+      ])
+      if (requestId !== pageRequestId.current) return
       if (res && res.error) {
         console.error('fetch books err', res)
         setError(res.message || 'Network request failed')
         setBooks([])
         setRecData([])
-      } else if (Array.isArray(res)) {
-        const mapped = res.map((b: any, idx: number) => {
-          const views = Number(b.views || b.view_count || b.reads || b.view || b.total_views || 0)
-          const likes = Number(b.likes_count || b.likes || b.favorites || b.followers_count || 0)
-          return {
-            id: String(b.id || b.story_id || idx + 1),
-            title: b.title || b.name || 'Không rõ',
-            genre: b.genre || '',
-            views,
-            likes,
-            desc: b.description || b.desc || '',
-            cover: b.cover_url ? (String(b.cover_url).startsWith('http') ? b.cover_url : `${API_BASE}${b.cover_url}`) : null,
-          }
-        })
-        setBooks(mapped)
-
-        // Random 6 books for "Có Thể Bạn Sẽ Thích".
-        // IMPORTANT: randomization happens only when data is (re)loaded.
-        const pool = [...mapped]
-        for (let i = pool.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1))
-          const tmp = pool[i]
-          pool[i] = pool[j]
-          pool[j] = tmp
-        }
-        setRecData(
-          pool.slice(0, 6).map((b: any) => ({
-            id: String(b.id),
-            title: b.title || '',
-            desc: b.desc || '',
-            stats: `${fmtNum(Number(b.views || 0))} lượt xem · ${fmtNum(Number(b.likes || 0))} lượt thích`,
-            cover: b.cover ? (String(b.cover).startsWith('http') ? b.cover : `${API_BASE}${b.cover}`) : null
-          }))
-        )
-
+      } else if (res && Array.isArray(res.books)) {
+        const updated = pickHomeRecommendations(res.books.map(mapBook), previousUpdated.current, 5)
+        previousUpdated.current = updated
+        setBooks(updated)
+        setRankData(Array.isArray(ranked?.books) ? ranked.books.map(mapBook) : [])
+        setRecData(Array.isArray(recommended?.books) ? recommended.books.map(mapBook) : [])
+        setGenres(Array.isArray(genreRows) ? genreRows.map((item: any) => String(item.name || '')).filter(Boolean) : [])
         setError(null)
       } else {
         setBooks([])
         setRecData([])
       }
     } catch (e) {
+      if (requestId !== pageRequestId.current) return
       console.error('fetch books err', e)
       setError(String(e))
       setBooks([])
       setRecData([])
     } finally {
-      if (mounted) {
+      if (requestId === pageRequestId.current) {
         setRefreshing(false)
         setIsLoading(false)
       }
     }
-    return () => { mounted = false }
-  }, [])
+  }, [mapBook])
 
   useFocusEffect(useCallback(() => {
     let active = true
@@ -168,68 +121,32 @@ export default function ExplorePage() {
       if (!active) return
       setUser(u)
       setUserLoaded(true)
+      const name = u?.fullname || u?.name || (u?.email ? String(u.email).split('@')[0] : '')
+      setGreetingName(name)
     })
-    // Refresh on focus so the home widgets (BXH + Có Thể Bạn Sẽ Thích) show updated likes/views.
     loadBooks()
     return () => { active = false }
   }, [loadBooks]))
 
-  // Home entry ad: show only once per session
   useEffect(() => {
     if (!userLoaded) return
     if (shouldShowPlacement('home-once', user)) setEntryAdVisible(true)
   }, [userLoaded, user])
 
-  // NOTE: don't call loadBooks() here; useFocusEffect already loads on initial focus.
-
   const handleOpenBook = useCallback((id: string) => {
     navigate('/book/[id]', { id })
   }, [navigate])
 
-  const fmtNum = useCallback((n: number) => Number.isFinite(n) ? n.toLocaleString('vi-VN') : String(n || 0), [])
+  const availableGenres = ['Tất cả', ...genres]
 
-  const topByViews = useMemo(() => {
-    return [...books]
-      .sort((a, b) => Number(b.views || 0) - Number(a.views || 0))
-      .slice(0, 6)
-  }, [books])
-
-  const rankColumns: RankItem[][] = useMemo(() => {
-    const cols: RankItem[][] = [];
-    const rankData = topByViews.map((b, idx) => ({
-      id: String(b.id || idx + 1),
-      title: b.title || 'Không rõ',
-      subtitle: b.genre || '',
-      stats: `${fmtNum(Number(b.views || 0))} lượt xem · ${fmtNum(Number(b.likes || 0))} lượt thích`,
-      cover: b.cover ? (String(b.cover).startsWith('http') ? b.cover : `${API_BASE}${b.cover}`) : null
-    }))
-    for (let i = 0; i < rankData.length; i += 3) {
-      cols.push(rankData.slice(i, i + 3));
-    }
-    return cols;
-  }, [topByViews]);
-
-  // recData is now computed in loadBooks() to avoid re-randomizing on unrelated re-renders.
-
-  // banners
   const [banners, setBanners] = useState<any[]>([])
   useEffect(() => {
     let mounted = true
     async function loadB() {
       try {
-        const res: any = await (await import('../lib/api')).apiFetchBooks ? await (await import('../lib/api')).apiFetchBooks() : null
-        // load banners directly via fetch to /banners
-        const r = await fetch(`${API_BASE}/banners`)
-        const json = await r.json()
+        const json = await apiFetchBanners()
         if (!mounted) return
-        if (Array.isArray(json)) setBanners(
-          json
-            .filter((b: any) => b.enabled !== false)
-            .map((b: any) => ({
-              ...b,
-              image_url: b.image_url && String(b.image_url).startsWith('http') ? b.image_url : (b.image_url ? `${API_BASE}${b.image_url}` : null)
-            }))
-        )
+        if (Array.isArray(json)) setBanners(json.filter((b: any) => b && b.enabled !== false))
       } catch (e) {
         console.error('fetch banners err', e)
       }
@@ -243,279 +160,361 @@ export default function ExplorePage() {
     const normalized = url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`
     try {
       const supported = await Linking.canOpenURL(normalized)
-      if (supported) {
-        await Linking.openURL(normalized)
-      } else {
-        console.warn('Cannot open url', normalized)
-      }
+      if (supported) await Linking.openURL(normalized)
     } catch (e) {
       console.error('open banner url error', e)
     }
   }
 
+  const handleBannerScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const slide = Math.round(e.nativeEvent.contentOffset.x / (BANNER_W + 12))
+    if (slide >= 0 && slide < banners.length && slide !== activeBanner) {
+      setActiveBanner(slide)
+    }
+  }
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadBooks} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadBooks} tintColor={colors.accent} />}
       >
-        {/* Header */}
+        {/* Top Header */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.headerTitle}>Xin chào! 👋</Text>
-            <Text style={styles.headerSubtitle}>Khám phá thế giới truyện hôm nay</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerGreeting}>
+              {greetingName ? `Xin chào, ${greetingName} 👋` : 'Xin chào bạn đọc 👋'}
+            </Text>
+            <Text style={styles.headerSubtitle}>Hôm nay bạn muốn đọc gì?</Text>
           </View>
-          <Link href="/(tabs)/profile" asChild>
-            <Pressable style={styles.avatarBtn}>
-              <Ionicons name="person-circle-outline" size={36} color="#1088ff" />
+          <View style={styles.headerActions}>
+            <Pressable onPress={() => navigate('/notifications')} style={styles.iconBtn}>
+              <Ionicons name="notifications-outline" size={20} color={colors.text} />
             </Pressable>
-          </Link>
+            <Pressable onPress={() => navigate('/(tabs)/profile')} style={styles.iconBtn}>
+              <Ionicons name="person-outline" size={20} color={colors.text} />
+            </Pressable>
+          </View>
         </View>
 
-        {/* Search Box */}
+        {/* Search & AI Bar */}
         <View style={styles.searchRow}>
-          <Link href="/search" asChild>
-            <Pressable style={styles.searchBox}>
-              <Ionicons name="search-outline" size={20} color="#9ca3af" />
-              <Text style={styles.searchPlaceholder}>Tìm kiếm tiểu thuyết, tác giả…</Text>
-            </Pressable>
-          </Link>
-          <Link href="/chatbot" asChild>
-            <Pressable style={styles.aiBtn}>
-              <Ionicons name="sparkles" size={20} color="#fff" />
-            </Pressable>
-          </Link>
+          <Pressable onPress={() => navigate('/search')} style={styles.searchBox}>
+            <Ionicons name="search-outline" size={20} color={colors.accentText} />
+            <Text style={styles.searchPlaceholder}>Tìm truyện, tác giả, thể loại…</Text>
+          </Pressable>
+          <Pressable onPress={() => navigate('/chatbot')} style={styles.aiBtn}>
+            <Ionicons name="sparkles" size={19} color={colors.onAccent} />
+          </Pressable>
         </View>
 
-        {/* Banner Section */}
+        {/* Genre Tags */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.genreRow}
+        >
+          {availableGenres.map((g) => (
+            <GenreChip
+              key={g}
+              label={g}
+              onPress={() => {
+                if (g === 'Tất cả') navigate('/search')
+                else navigate('/search', { genre: g })
+              }}
+            />
+          ))}
+        </ScrollView>
+
+        {/* Banners Carousel */}
         {banners.length > 0 && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.bannerContainer}
-            contentContainerStyle={{ paddingHorizontal: 16 }}
-          >
-            {banners.map((banner) => (
-              <Pressable
-                key={banner.id}
-                style={styles.bannerItem}
-                onPress={() => handleBannerPress(banner.link)}
-              >
-                <Image
-                  source={{ uri: banner.image_url }}
-                  style={styles.bannerImage}
-                  resizeMode="cover"
-                />
-              </Pressable>
-            ))}
-          </ScrollView>
+          <View style={styles.bannerSection}>
+            <ScrollView
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onScroll={handleBannerScroll}
+              scrollEventThrottle={16}
+              contentContainerStyle={{ paddingHorizontal: 16 }}
+            >
+              {banners.map((banner) => (
+                <Pressable
+                  key={banner.id}
+                  style={styles.bannerItem}
+                  onPress={() => handleBannerPress(banner.link)}
+                >
+                  {banner.image_url ? (
+                    <Image source={{ uri: banner.image_url }} style={styles.bannerImage} resizeMode="cover" />
+                  ) : (
+                    <View style={[styles.bannerImage, { backgroundColor: colors.accentSoft }]} />
+                  )}
+                </Pressable>
+              ))}
+            </ScrollView>
+
+            {/* Pagination Dots */}
+            {banners.length > 1 && (
+              <View style={styles.paginationRow}>
+                {banners.map((_, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      styles.dot,
+                      i === activeBanner ? styles.dotActive : styles.dotInactive,
+                    ]}
+                  />
+                ))}
+              </View>
+            )}
+          </View>
         )}
 
-        <View style={styles.sectionHeader}>
-          <Link href={"/(tabs)/rank"} asChild>
-            <Pressable>
-              <Text style={styles.sectionTitle}>BXH Tháng Này</Text>
-            </Pressable>
-          </Link>
-          <Text style={styles.sectionAction}>BXH Hoàn Chỉnh</Text>
-        </View>
+        {/* Section: Trending / Ranking */}
+        <SectionHeader title="Bảng xếp hạng hot" action="Xem tất cả" onAction={() => navigate('/(tabs)/rank')} />
+
         {error ? (
-          <View style={{ padding: 12, backgroundColor: '#fee2e2', borderRadius: 8, marginTop: 8 }}>
-            <Text style={{ color: '#b91c1c' }}>Không thể kết nối tới server: {error}</Text>
-            <TouchableOpacity onPress={() => { setError(null); (async () => { const res: any = await apiFetchBooks(); if (Array.isArray(res)) setBooks(res); else setError(res.message || 'Network request failed') })() }} style={{ marginTop: 8 }}>
-              <Text style={{ color: '#2563eb' }}>Thử lại</Text>
+          <View style={styles.errorBox}>
+            <Ionicons name="alert-circle-outline" size={20} color={colors.danger} />
+            <Text style={styles.errorText}>Không thể kết nối máy chủ: {error}</Text>
+            <TouchableOpacity onPress={() => { setError(null); loadBooks() }} style={styles.retryBtn}>
+              <Text style={styles.retryBtnText}>Thử lại</Text>
             </TouchableOpacity>
           </View>
         ) : null}
 
         {isLoading ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ marginHorizontal: -16 }}
-            contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}
-          >
-            {[0, 1].map((colIdx) => (
-              <View key={colIdx} style={styles.col}>
-                {[0, 1, 2].map((rowIdx) => (
-                  <View key={rowIdx} style={{ marginBottom: 12 }}>
-                    <BookCardSkeleton />
-                  </View>
-                ))}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hPad}>
+            {[0, 1, 2, 3].map((idx) => (
+              <View key={idx} style={{ marginRight: 12 }}>
+                <BookCardSkeleton />
               </View>
             ))}
           </ScrollView>
         ) : (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ marginHorizontal: -16 }}
-            contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}
-            removeClippedSubviews={true}
-          >
-            {rankColumns.map((col, colIdx) => (
-              <View key={colIdx} style={styles.col}>
-                {col.map((item, rowIdx) => {
-                  const globalIndex = colIdx * 3 + rowIdx;
-                  return (
-                    <RankItemCard 
-                      key={item.id} 
-                      item={item} 
-                      index={globalIndex} 
-                      onPress={handleOpenBook} 
-                    />
-                  );
-                })}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hPad}>
+            {rankData.map((item, index) => (
+              <View key={item.id} style={{ marginRight: 14 }}>
+                <StoryPoster
+                  cover={item.cover}
+                  title={item.title}
+                  subtitle={`${fmtNum(item.views)} lượt xem`}
+                  rank={index}
+                  onPress={() => handleOpenBook(item.id)}
+                />
               </View>
             ))}
           </ScrollView>
         )}
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Có Thể Bạn Sẽ Thích</Text>
-          <Text style={styles.sectionAction}>Thêm</Text>
-        </View>
+        {/* Section: Recommended Stories */}
+        <SectionHeader title="Có thể bạn sẽ thích" action="Khám phá thêm" onAction={() => navigate('/search')} />
         {isLoading ? (
-          <>
-            {[0, 1, 2, 3].map((idx) => (
-              <View key={idx} style={{ marginBottom: 12 }}>
+          recData.length === 0 ? (
+            [0, 1, 2].map((idx) => (
+              <View key={idx} style={{ marginHorizontal: 16, marginBottom: 10 }}>
                 <BookCardSkeleton variant="horizontal" />
               </View>
-            ))}
-          </>
+            ))
+          ) : null
         ) : (
-          recData.map((it) => (
-            <RecommendItemCard key={it.id} item={it} onPress={handleOpenBook} />
-          ))
+          <View style={styles.recCard}>
+            {recData.map((it) => (
+              <StoryRow
+                key={it.id}
+                cover={it.cover}
+                title={it.title}
+                subtitle={it.genre || it.desc}
+                meta={`${fmtNum(Number(it.views || 0))} lượt xem · ${fmtNum(Number(it.likes || 0))} thích`}
+                onPress={() => handleOpenBook(it.id)}
+              />
+            ))}
+          </View>
         )}
-        <AdInterstitial visible={entryAdVisible} placement="home" onFinish={() => setEntryAdVisible(false)} />
-      </ScrollView>
 
-      {/* <AdInterstitial
-        visible={entryAdVisible}
-        placement="home"
-        onFinish={() => setEntryAdVisible(false)}
-      /> */}
+        <SectionHeader title="Truyện mới cập nhật" action="Tìm thêm" onAction={() => navigate('/search')} />
+        <View style={styles.recCard}>
+          {books.slice(0, 5).map((item) => (
+            <StoryRow key={item.id} cover={item.cover} title={item.title} subtitle={item.genre || item.desc}
+              meta={`${fmtNum(Number(item.views || 0))} lượt xem`} onPress={() => handleOpenBook(item.id)} />
+          ))}
+        </View>
+
+        <AdInterstitial visible={entryAdVisible} placement="home" onFinish={() => {
+          setEntryAdVisible(false)
+        }} />
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f8fafc" },
-  scroll: { paddingHorizontal: 16, paddingBottom: 100 },
+const createStyles = (colors: AppColors) => StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  scroll: {
+    paddingBottom: 32,
+  },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingTop: 16,
-    paddingBottom: 8,
+    paddingTop: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 6,
   },
-  headerTitle: {
-    fontSize: 24,
+  headerGreeting: {
+    fontSize: 22,
     fontWeight: "800",
-    color: "#111827",
+    color: colors.text,
+    letterSpacing: -0.4,
   },
   headerSubtitle: {
-    fontSize: 14,
-    color: "#6b7280",
+    fontSize: 13,
+    color: colors.textSecondary,
     marginTop: 2,
+    fontWeight: "500",
   },
-  avatarBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#e0f2fe",
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
     justifyContent: "center",
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    ...cardShadowSm,
+  },
+  btnPressed: {
+    opacity: 0.75,
+    transform: [{ scale: 0.95 }],
+  },
+  searchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 14,
+    paddingHorizontal: 16,
   },
   searchBox: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     height: 48,
-    backgroundColor: "#fff",
-    borderRadius: 14,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
     paddingHorizontal: 14,
-    marginBottom: 0,
     flex: 1,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    borderColor: colors.borderLight,
+    ...cardShadowSm,
   },
-  searchPlaceholder: { color: "#9ca3af", fontSize: 15 },
-  searchRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 16 },
+  searchBoxPressed: {
+    backgroundColor: colors.surfaceSubtle,
+  },
+  searchPlaceholder: {
+    color: colors.textMuted,
+    fontSize: 14,
+    fontWeight: "500",
+  },
   aiBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: "#1088ff",
+    width: 48,
+    height: 48,
+    borderRadius: radius.lg,
+    backgroundColor: colors.accent,
     justifyContent: "center",
     alignItems: "center",
-    shadowColor: "#1088ff",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 4,
+    ...cardShadowSm,
   },
-  iconBtn: { width: 36, height: 36, borderRadius: 8, backgroundColor: "#f2f4f7" },
-  sectionHeader: {
+  genreRow: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
+  bannerSection: {
     marginTop: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  sectionTitle: { fontSize: 16, fontWeight: "700" },
-  sectionAction: { fontSize: 12, color: "#6b7280" },
-  rankItem: { flexDirection: "row", gap: 12, marginTop: 12, alignItems: "center" },
-  coverWrap: { width: 64, height: 86 },
-  cover: { width: 64, height: 86, backgroundColor: "#e5e7eb", borderRadius: 8 },
-  rankBadge: {
-    position: "absolute",
-    left: -8,
-    top: -8,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: "#9ca3af",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  rankGold: { backgroundColor: "#f59e0b" },
-  rankSilver: { backgroundColor: "#9ca3af" },
-  rankBronze: { backgroundColor: "#d97706" },
-  rankBadgeText: { color: "#fff", fontWeight: "700" },
-  rankTextWrap: { flex: 1 },
-  rankTitle: { fontSize: 15, fontWeight: "700" },
-  rankSubtitle: { fontSize: 12, color: "#6b7280", marginTop: 2 },
-  rankStats: { fontSize: 12, color: "#6b7280", marginTop: 6 },
-  colList: { paddingTop: 8, paddingBottom: 4, paddingRight: 16 },
-  col: { width: 280, marginRight: 12 },
-  recItem: { flexDirection: "row", gap: 12, marginTop: 12 },
-  recCover: { width: 64, height: 64, borderRadius: 12, backgroundColor: "#fee2e2" },
-  recTextWrap: { flex: 1 },
-  recTitle: { fontSize: 15, fontWeight: "700" },
-  recDesc: { fontSize: 12, color: "#6b7280", marginTop: 2 },
-  recStats: { fontSize: 12, color: "#6b7280", marginTop: 6 },
-  bannerContainer: {
-    marginTop: 16,
-    marginHorizontal: -16,
-    marginBottom: 8,
   },
   bannerItem: {
-    width: 260,
-    height: 120,
+    width: BANNER_W,
+    height: BANNER_H,
     marginRight: 12,
-    borderRadius: 10,
+    borderRadius: radius.xl,
     overflow: "hidden",
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    ...cardShadow,
   },
   bannerImage: {
     width: "100%",
     height: "100%",
-    borderRadius: 12,
   },
+  paginationRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+  },
+  dot: {
+    height: 5,
+    borderRadius: 3,
+  },
+  dotActive: {
+    width: 18,
+    backgroundColor: colors.accent,
+  },
+  dotInactive: {
+    width: 6,
+    backgroundColor: colors.border,
+  },
+  hPad: {
+    paddingHorizontal: 16,
+    paddingBottom: 4,
+  },
+  recCard: {
+    marginHorizontal: 16,
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    ...cardShadow,
+  },
+  errorBox: {
+    marginHorizontal: 16,
+    padding: 14,
+    backgroundColor: colors.dangerSoft,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    gap: 6,
+  },
+  errorText: {
+    color: colors.dangerText,
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  retryBtn: {
+    marginTop: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    backgroundColor: colors.surface,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.danger,
+  },
+  retryBtnText: {
+    color: colors.dangerText,
+    fontWeight: '700',
+    fontSize: 12,
+  },
+
 });

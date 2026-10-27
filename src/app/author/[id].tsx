@@ -1,3 +1,4 @@
+import { useThemeStyles } from '../../components/AppTheme'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { ActivityIndicator, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native'
@@ -9,6 +10,8 @@ import { API_BASE, apiFetchAuthorBooks, apiFetchAuthors, apiFollowAuthor, apiUnf
 import AdInterstitial from '../../components/AdInterstitial'
 import { shouldShowAds } from '../../lib/ads'
 import CustomAlert from '../../components/CustomAlert'
+import { radius, cardShadow, type AppColors } from '../../theme'
+import { EmptyState, ScreenBack, StoryRow } from '../../components/ui'
 
 type UiBook = {
   id: string
@@ -18,6 +21,8 @@ type UiBook = {
 }
 
 export default function AuthorDetailScreen() {
+  const { colors, styles } = useThemeStyles(createStyles)
+
   const params = useLocalSearchParams() as any
   const authorId = String(params?.id || '')
   const initialName = params?.name ? String(params.name) : ''
@@ -231,13 +236,13 @@ export default function AuthorDetailScreen() {
         </Text>
       </Pressable>
     </View>
-  ), [authorAvatarUrl, authorName, booksCount, followers, fmtNum, handleToggleFollow, isFollowing, isSelf])
+  ), [authorAvatarUrl, authorName, booksCount, followers, fmtNum, handleToggleFollow, isFollowing, isSelf, styles])
 
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" color="#1088ff" />
+          <ActivityIndicator size="large" color={colors.accentText} />
         </View>
       </SafeAreaView>
     )
@@ -245,13 +250,7 @@ export default function AuthorDetailScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={styles.backText}>‹</Text>
-        </Pressable>
-        <Text style={styles.topTitle} numberOfLines={1}>Tác giả</Text>
-        <View style={{ width: 34 }} />
-      </View>
+      <ScreenBack title="Tác giả" onBack={() => router.back()} />
 
       <FlatList
         data={books}
@@ -260,22 +259,15 @@ export default function AuthorDetailScreen() {
         contentContainerStyle={styles.list}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { loadAuthorMeta(); loadBooks(false) }} />}
         ListEmptyComponent={
-          <View style={{ padding: 16 }}>
-            <Text style={{ color: '#6b7280' }}>Tác giả chưa có truyện nào.</Text>
-          </View>
+          <EmptyState icon="book-outline" title="Tác giả chưa có truyện nào." />
         }
         renderItem={({ item }) => (
-          <Pressable onPress={() => handleOpenBook(item.id)} style={styles.bookRow}>
-            {item.cover ? (
-              <Image source={{ uri: item.cover }} style={styles.cover} />
-            ) : (
-              <View style={styles.cover} />
-            )}
-            <View style={{ flex: 1 }}>
-              <Text style={styles.bookTitle} numberOfLines={1}>{item.title}</Text>
-              <Text style={styles.bookMeta} numberOfLines={1}>{item.stats}</Text>
-            </View>
-          </Pressable>
+          <StoryRow
+            cover={item.cover}
+            title={item.title}
+            meta={item.stats}
+            onPress={() => handleOpenBook(item.id)}
+          />
         )}
       />
 
@@ -299,42 +291,30 @@ export default function AuthorDetailScreen() {
   )
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-
-  topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8 },
-  backBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3f4f6' },
-  backText: { fontSize: 22, fontWeight: '800', color: '#111827', marginTop: -2 },
-  topTitle: { flex: 1, textAlign: 'center', fontSize: 16, fontWeight: '800', color: '#111827' },
-
+const createStyles = (colors: AppColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.bg },
   list: { paddingHorizontal: 16, paddingBottom: 24 },
 
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    padding: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#eef2f7',
-    borderRadius: 14,
-    backgroundColor: '#fff',
+    padding: 14,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
     marginBottom: 12,
+    ...cardShadow,
   },
-  avatar: { width: 54, height: 54, borderRadius: 27, overflow: 'hidden', backgroundColor: '#1088ff22', alignItems: 'center', justifyContent: 'center' },
+  avatar: { width: 54, height: 54, borderRadius: 27, overflow: 'hidden', backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
   avatarImg: { width: '100%', height: '100%' },
-  avatarText: { color: '#1088ff', fontWeight: '900', fontSize: 20 },
-  authorName: { fontSize: 16, fontWeight: '900', color: '#111827' },
-  authorMeta: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  avatarText: { color: colors.accentText, fontWeight: '900', fontSize: 20 },
+  authorName: { fontSize: 16, fontWeight: '900', color: colors.text },
+  authorMeta: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
 
   followBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999 },
-  followBtnOn: { backgroundColor: '#1088ff' },
-  followingBtn: { backgroundColor: '#f3f4f6' },
-  followBtnText: { fontSize: 12, fontWeight: '900' },
-  followBtnTextOn: { color: '#fff' },
-  followingText: { color: '#111827' },
-
-  bookRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#eef2f7' },
-  cover: { width: 48, height: 64, borderRadius: 10, backgroundColor: '#e5e7eb' },
-  bookTitle: { fontSize: 15, fontWeight: '800', color: '#111827' },
-  bookMeta: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  followBtnOn: { backgroundColor: colors.accent },
+  followingBtn: { backgroundColor: colors.accentSoft },
+  followBtnText: { color: colors.text, fontSize: 12, fontWeight: '900' },
+  followBtnTextOn: { color: colors.onAccent },
+  followingText: { color: colors.accentText },
 })

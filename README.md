@@ -77,6 +77,38 @@ GROK_API_KEY=xai-your-api-key-here
 - Kill process trên port 4000, 5173, 8081 tránh conflict
 - Khởi động service trong terminal riêng
 
+### Kiểm thử tự động
+
+Yêu cầu Node.js 22 trở lên. Tại thư mục gốc, cài dependencies và chạy bộ test mặc định:
+
+```powershell
+npm ci
+npm ci --prefix admin-dashboard/server
+npm test
+```
+
+`npm test` chạy test cho nhập chương và feed mobile, sau đó chạy hồi quy AI backend với database/provider giả lập. Bộ mặc định không cần `.env`, MySQL hoặc API key AI. Có thể chạy riêng từng phần:
+
+```powershell
+npm run test:mobile
+npm run test:backend
+npm run typecheck
+npm ci --prefix admin-dashboard/frontend
+npm --prefix admin-dashboard/frontend run build
+```
+
+GitHub Actions tự chạy test, kiểm tra TypeScript và build dashboard trên mỗi push và pull request.
+
+Kiểm thử tích hợp backend với MySQL là tùy chọn. Cấu hình `admin-dashboard/server/.env` để kết nối MySQL có quyền tạo/xóa database tạm, rồi bật suite bằng:
+
+```powershell
+$env:AI_DB_TEST = '1'
+npm --prefix admin-dashboard/server run test:db
+Remove-Item Env:AI_DB_TEST
+```
+
+Suite này chỉ tạo rồi xóa database có tiền tố `reader_ai_test_`; không chạy trong `npm test` và không gọi provider AI trả phí.
+
 
 ---
 
@@ -245,7 +277,8 @@ eas build:cancel <BUILD_ID>       # Hủy build đang chạy
 ```
 Reader_app/
 ├── .github/
-│   └── copilot-instructions.md    # Hướng dẫn cho AI coding agents
+│   ├── copilot-instructions.md    # Hướng dẫn cho AI coding agents
+│   └── workflows/ci.yml           # Test, typecheck và build trên GitHub Actions
 │
 ├── admin-dashboard/
 │   ├── frontend/                  # Admin Dashboard (React + Vite)
@@ -269,6 +302,9 @@ Reader_app/
 │       ├── scripts/
 │       │   ├── create_admin.js   # Tạo admin user
 │       │   └── seed_db.js        # Seed sample data
+│       ├── test/
+│       │   ├── ai.test.js        # Hồi quy AI dùng fixture
+│       │   └── ai-db.test.js     # Tích hợp MySQL (chạy riêng)
 │       └── data.json             # Fallback storage (nếu không dùng MySQL)
 │
 ├── android/                       # Android native code
@@ -318,6 +354,10 @@ Reader_app/
 │   │   └── ads.ts               # Ad management
 │   │
 │   └── types/                    # TypeScript types (inferred from usage)
+│
+├── test/                          # Test tự động cho tiện ích mobile
+│   ├── homeFeed.test.cjs
+│   └── chapterImport.test.cjs
 │
 ├── app.json                      # Expo config (plugins, package name, apiBase)
 ├── eas.json                      # EAS build profiles (dev/preview/production)

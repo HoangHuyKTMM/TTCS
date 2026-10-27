@@ -1,24 +1,54 @@
 import Constants from 'expo-constants'
+import { Platform } from 'react-native'
 
 const extra = (Constants.expoConfig?.extra || {}) as any
-export const API_BASE = extra.apiBase || process.env.EXPO_PUBLIC_API_BASE || 'http://10.0.2.2:4000' // use EXPO_PUBLIC_API_BASE or extra.apiBase; default to Android emulator
 
-console.log('[API] API_BASE:', API_BASE)
-console.log('[API] process.env.EXPO_PUBLIC_API_BASE:', process.env.EXPO_PUBLIC_API_BASE)
-console.log('[API] extra.apiBase:', extra.apiBase)
+// This PC is 192.168.1.241 on Wi-Fi. The phone (192.168.1.214) can reach that
+// address directly. 10.0.2.2 exists only inside the Android emulator.
+// 127.0.0.1 on a real phone is the phone itself unless USB reverse is set
+// with the phone selected: adb -s e3ab33ab reverse tcp:4000 tcp:4000
+// A bare `adb reverse` fails while the emulator is also attached.
+const LAN_API_BASE = 'http://192.168.1.241:4000'
+const CANDIDATE_BASES = [
+  Platform.OS === 'android' ? LAN_API_BASE : 'http://localhost:4000',
+  Platform.OS === 'android' ? 'http://127.0.0.1:4000' : 'http://localhost:4000',
+  process.env.EXPO_PUBLIC_API_BASE,
+  extra.apiBase,
+  Platform.OS === 'android' ? 'http://10.0.2.2:4000' : 'http://localhost:4000',
+  'http://localhost:4000',
+].filter(Boolean) as string[]
+
+const UNIQUE_BASES = Array.from(new Set(CANDIDATE_BASES))
+
+let activeApiBase = Platform.OS === 'android' ? LAN_API_BASE : 'http://localhost:4000'
+if (UNIQUE_BASES.length > 0 && !UNIQUE_BASES[0].includes('192.168.9.141')) {
+  activeApiBase = UNIQUE_BASES[0]
+}
+
+export let API_BASE = activeApiBase
 
 async function request(path: string, opts: RequestInit = {}) {
-  const url = `${API_BASE}${path}`
-  console.log('[API] Fetching:', url)
-  try {
-    const res = await fetch(url, opts)
-    const text = await res.text()
-    try { return JSON.parse(text) } catch (e) { return text }
-  } catch (err: any) {
-    // network error (DNS, refused, offline)
-    console.error('[API] Fetch error:', url, err)
-    return { error: 'network', message: String(err && err.message ? err.message : err) }
+  const tryBases = [activeApiBase, ...UNIQUE_BASES.filter(b => b !== activeApiBase && !b.includes('192.168.9.141'))]
+
+  let lastErr: any = null
+  for (const base of tryBases) {
+    const url = `${base}${path}`
+    try {
+      const res = await fetch(url, opts)
+      if (activeApiBase !== base) {
+        activeApiBase = base
+        API_BASE = base
+        console.log('[API] Connected and switched API_BASE to:', base)
+      }
+      const text = await res.text()
+      try { return JSON.parse(text) } catch (e) { return text }
+    } catch (err: any) {
+      lastErr = err
+    }
   }
+
+  console.error('[API] Fetch error (all bases failed):', path, lastErr)
+  return { error: 'network', message: String(lastErr && lastErr.message ? lastErr.message : lastErr) }
 }
 
 export async function apiRegister(name: string, email: string, password: string) {
@@ -37,11 +67,39 @@ export async function apiLogin(email: string, password: string) {
   })
 }
 
-export async function apiFetchBooks(token?: string, opts?: { mine?: boolean }) {
+export type BookPage = { books: any[]; nextCursor: string | null; hasMore: boolean }
+export type BookPageOptions = { limit?: number; cursor?: string | null; sort?: 'recent' | 'views' | 'likes' | 'recommended'; genre?: string }
+
+export async function apiFetchBooks(token?: string, opts?: ({ mine?: boolean } & BookPageOptions) | undefined) {
   const headers: any = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
-  const mine = opts && opts.mine ? '?mine=true' : ''
-  return request(`/books${mine}`, { headers })
+  const params = new URLSearchParams()
+  if (opts?.mine) params.set('mine', 'true')
+  if (opts?.limit !== undefined) params.set('limit', String(opts.limit))
+  if (opts?.cursor) params.set('cursor', opts.cursor)
+  if (opts?.sort) params.set('sort', opts.sort)
+  if (opts?.genre && opts.genre !== 'Tất cả') params.set('genre', opts.genre)
+  const query = params.toString()
+  return request(`/books${query ? `?${query}` : ''}`, { headers })
+}
+
+export async function apiFetchLikedBooks(token: string, opts?: { limit?: number; cursor?: string | null }): Promise<BookPage | any> {
+  const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  const params = new URLSearchParams()
+  if (opts?.limit !== undefined) params.set('limit', String(opts.limit))
+  if (opts?.cursor) params.set('cursor', opts.cursor)
+  const query = params.toString()
+  return request(`/books/liked${query ? `?${query}` : ''}`, { headers })
+}
+
+export async function apiSearchBooks(query: string, opts?: { genre?: string; limit?: number; cursor?: string | null }, token?: string): Promise<BookPage | any> {
+  const headers: any = { 'Content-Type': 'application/json' }
+  if (token) headers.Authorization = `Bearer ${token}`
+  const params = new URLSearchParams({ q: query })
+  if (opts?.genre && opts.genre !== 'Tất cả') params.set('genre', opts.genre)
+  if (opts?.limit !== undefined) params.set('limit', String(opts.limit))
+  if (opts?.cursor) params.set('cursor', opts.cursor)
+  return request(`/books/search?${params.toString()}`, { headers })
 }
 
 // Genres (public)
@@ -63,6 +121,12 @@ export async function apiFetchChapter(bookId: string, chapterId: string, token?:
   return request(`/books/${bookId}/chapters/${chapterId}`, { headers })
 }
 
+export async function apiFetchChapterByNumber(bookId: string, chapterNo: number, token?: string) {
+  const headers: any = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return request(`/books/${bookId}/chapters/${chapterNo}?by=number`, { headers })
+}
+
 export async function apiFetchBook(bookId: string, token?: string) {
   const headers: any = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
@@ -75,11 +139,7 @@ export async function apiGetMe(token?: string) {
   return request('/me', { headers })
 }
 
-export async function apiSubscribeVip(userId: string, body: any = {}, token?: string) {
-  const headers: any = { 'Content-Type': 'application/json' }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  return request(`/users/${userId}/vip`, { method: 'POST', headers, body: JSON.stringify(body) })
-}
+
 
 export async function apiApplyAuthor(body: any = {}, token?: string) {
   const headers: any = { 'Content-Type': 'application/json' }
@@ -99,18 +159,71 @@ export async function apiUpdateAuthorApplication(id: string, body: any = {}, tok
   return request(`/author/applications/${id}`, { method: 'PUT', headers, body: JSON.stringify(body) })
 }
 
-export default { apiRegister, apiLogin, apiFetchBooks, apiFetchChapters, apiFetchChapter, apiFetchBook, apiGetMe, apiSubscribeVip }
+export default { apiRegister, apiLogin, apiFetchBooks, apiFetchChapters, apiFetchChapter, apiFetchBook, apiGetMe }
 // Wallet helpers
+export type ReadingProgressRow = {
+  history_id?: number
+  user_id?: string
+  book_id: string
+  story_id?: string
+  chapter_id?: string | null
+  chapter_no?: number | null
+  progress_pct?: number | null
+  last_read_at?: string | null
+  title?: string | null
+  cover_url?: string | null
+  genre?: string | null
+}
+
+export async function apiSaveProgress(
+  payload: { book_id: string; chapter_id?: string; chapter_no?: number; progress?: number },
+  token: string
+) {
+  const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  return request('/progress', { method: 'POST', headers, body: JSON.stringify(payload) })
+}
+
+export async function apiGetProgress(bookId: string, token: string): Promise<ReadingProgressRow | any> {
+  const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  return request(`/progress?book_id=${encodeURIComponent(bookId)}`, { headers })
+}
+
+export async function apiGetReadingHistory(token: string): Promise<ReadingProgressRow[] | any> {
+  const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  return request('/progress', { headers })
+}
+
+export async function apiListChatSessions(token: string) {
+  return request('/chat/conversations', { headers: { Authorization: `Bearer ${token}` } })
+}
+
+export async function apiGetChatMessages(conversationId: string, token: string) {
+  return request(`/chat/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+}
+
+export async function apiChat(
+  payload: {
+    message: string
+    history?: { role: 'user' | 'assistant'; content: string }[]
+    book_id?: string
+    chapter_no?: number
+    intent?: 'recommend' | 'recap' | 'auto'
+    conversation_id?: string | number
+    conversation_token?: string
+  },
+  token?: string
+) {
+  const headers: any = { 'Content-Type': 'application/json' }
+  if (token) headers.Authorization = `Bearer ${token}`
+  return request('/chat', { method: 'POST', headers, body: JSON.stringify(payload) })
+}
+
 export async function apiGetWallet(token?: string) {
   const headers: any = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
   return request('/wallet', { headers })
-}
-
-export async function apiTopUpWallet(coins: number, token?: string) {
-  const headers: any = { 'Content-Type': 'application/json' }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  return request('/wallet/topup', { method: 'POST', headers, body: JSON.stringify({ coins }) })
 }
 
 // Wallet: top-up requests (manual approval)
@@ -126,6 +239,42 @@ export async function apiListTopupRequests(token?: string) {
   return request('/wallet/topup-requests', { headers })
 }
 
+// Wallet: SePay Automated Top-up Intent
+export type TopupIntent = {
+  intent_id?: number
+  user_id: string
+  coins: number
+  amount: number
+  payment_code: string
+  account_no: string
+  bank_name: string
+  account_name: string
+  status: 'pending' | 'consumed' | 'expired'
+  qr_url: string
+  vietqr_url: string
+  expires_at?: string
+  local_mode?: boolean
+}
+
+export async function apiLocalSepayPay(paymentCode: string, token?: string): Promise<{ success: boolean; paid: boolean; already_credited?: boolean; message?: string; wallet?: any; coins?: number; error?: string }> {
+  const headers: any = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return request('/sepay/local-pay', { method: 'POST', headers, body: JSON.stringify({ paymentCode }) })
+}
+
+export async function apiCreateTopupIntent(coins: number, token?: string): Promise<{ success: boolean; intent: TopupIntent; error?: string }> {
+  const headers: any = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return request('/wallet/topup-intent', { method: 'POST', headers, body: JSON.stringify({ coins }) })
+}
+
+export async function apiCheckTopupIntentStatus(code: string, token?: string): Promise<{ success: boolean; status: string; is_paid: boolean; coins?: number; amount?: number; wallet?: any; error?: string }> {
+  const headers: any = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return request(`/wallet/topup-intent/${encodeURIComponent(code)}/status`, { headers })
+}
+
+
 export async function apiBuyVipWithCoins(cost_coins: number, body: any = {}, token?: string) {
   const headers: any = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
@@ -138,10 +287,32 @@ export async function apiBuyAuthorWithCoins(cost_coins: number, token?: string) 
   return request('/wallet/buy-author', { method: 'POST', headers, body: JSON.stringify({ cost_coins }) })
 }
 
-export async function apiDonateCoins(bookId: string, coins: number, message?: string, token?: string) {
+export type GiftItem = {
+  code: string
+  name: string
+  emoji: string
+  coins: number
+}
+
+export async function apiFetchGifts(): Promise<GiftItem[]> {
+  const res: any = await request('/gifts')
+  if (Array.isArray(res)) return res
+  if (res && Array.isArray(res.gifts)) return res.gifts
+  return []
+}
+
+export async function apiFetchRecentGifts(bookId: string, limit = 8) {
+  return request(`/books/${encodeURIComponent(bookId)}/gifts?limit=${encodeURIComponent(String(limit))}`)
+}
+
+export async function apiSendGift(bookId: string, giftCode: string, quantity: number, token?: string) {
   const headers: any = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
-  return request(`/books/${bookId}/donate`, { method: 'POST', headers, body: JSON.stringify({ coins, message }) })
+  return request(`/books/${encodeURIComponent(bookId)}/donate`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ gift_code: giftCode, quantity }),
+  })
 }
 
 // Update current user's avatar
@@ -198,6 +369,37 @@ export async function apiDeleteChapter(bookId: string, chapterId: string, token:
 export async function apiImportBook(payload: { title: string; content: string; author?: string; description?: string; cover_url?: string; genre?: string }, token: string) {
   const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
   return request('/books/import', { method: 'POST', headers, body: JSON.stringify(payload) })
+}
+
+// AI Duplicate / Plagiarism Check
+export type CheckDuplicateResult = {
+  zone: 'green' | 'yellow' | 'red'
+  hamming: number | null
+  similarity: number
+  similarity_pct: number
+  is_duplicate: boolean
+  matched_chapter?: {
+    chapter_id: string | number
+    story_id: string | number
+    story_title?: string
+    chapter_no?: number
+    chapter_title?: string
+  } | null
+  matched_snippets?: { snippetA: string; snippetB?: string; similarity: number }[]
+  ai_analysis?: string | null
+  message: string
+}
+
+export async function apiCheckDuplicate(
+  payload: { content: string; title?: string; chapterId?: string; storyId?: string },
+  token: string
+): Promise<CheckDuplicateResult | any> {
+  const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  return request('/integrity/check-duplicate', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload)
+  })
 }
 
 // Likes / Favorites
@@ -300,17 +502,24 @@ export async function apiFetchPublicFeed(opts?: { limit?: number; offset?: numbe
 // Notifications (auth)
 export type NotificationItem = {
   id: string
-  type: 'like' | 'follow' | 'donation' | 'rank'
+  type: 'like' | 'follow' | 'donation' | 'rank' | 'new_story' | 'new_chapter'
   created_at: string
   actor_user_id?: string | null
   actor_name?: string | null
   actor_avatar_url?: string | null
   story_id?: string | null
   story_title?: string | null
+  chapter_id?: string | null
+  chapter_no?: number | null
+  chapter_title?: string | null
   rank?: number | null
   views?: number | null
   coins?: number | null
   message?: string | null
+  gift_code?: string | null
+  gift_name?: string | null
+  gift_emoji?: string | null
+  quantity?: number | null
 }
 
 export async function apiFetchNotifications(token: string, opts?: { limit?: number; offset?: number }) {
@@ -331,9 +540,20 @@ export async function apiMarkNotificationsSeen(token: string) {
   return request(`/notifications/seen`, { method: 'POST', headers })
 }
 
+export async function apiRegisterPushToken(token: string, pushToken: string) {
+  const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  return request('/push/device', { method: 'POST', headers, body: JSON.stringify({ token: pushToken, platform: 'android' }) })
+}
+
+export async function apiRemovePushToken(token: string, pushToken: string) {
+  const headers: any = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  return request('/push/device', { method: 'DELETE', headers, body: JSON.stringify({ token: pushToken }) })
+}
+
 // Comments
-export async function apiFetchComments(bookId: string) {
+export async function apiFetchComments(bookId: string, token?: string) {
   const headers: any = { 'Content-Type': 'application/json' }
+  if (token) headers.Authorization = `Bearer ${token}`
   return request(`/books/${bookId}/comments`, { headers })
 }
 
@@ -378,17 +598,44 @@ export async function apiCheckPayment(account_no: string, content: string, amoun
 export type VerifyPaymentResult = {
   success: boolean
   paid: boolean
+  already_credited?: boolean
   message: string
   wallet?: { coins: number; balance: number }
   error?: string
 }
 
-export async function apiVerifyAndCreditPayment(coins: number, amount: number, paymentCode: string, token: string): Promise<VerifyPaymentResult> {
+export async function apiVerifyAndCreditPayment(paymentCode: string, token: string): Promise<VerifyPaymentResult> {
   const headers: any = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
   return request('/wallet/verify-payment', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ coins, amount, paymentCode })
+    body: JSON.stringify({ paymentCode })
+  })
+}
+
+export async function apiFetchBanners() {
+  const res: any = await request('/banners')
+  if (!Array.isArray(res)) return res
+  return res.map((b: any) => {
+    const raw = b?.image_url
+    let image_url = typeof raw === 'string' && raw
+      ? (raw.startsWith('http') ? raw : `${API_BASE}${raw}`)
+      : null
+    try {
+      if (image_url && image_url.startsWith('http')) {
+        const u = new URL(image_url)
+        if (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '10.0.2.2') {
+          const base = new URL(API_BASE)
+          u.hostname = base.hostname
+          u.port = base.port
+          u.protocol = base.protocol
+          image_url = u.toString()
+        }
+      }
+    } catch {
+      // ignore URL parse errors
+    }
+    return { ...b, image_url }
   })
 }
 

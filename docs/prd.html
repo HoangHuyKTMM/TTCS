@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PRD & Thiết kế kỹ thuật: Reader App v1.1.0</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'neutral' });</script>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --text: #0f172a;
+      --text-muted: #475569;
+      --border: #e2e8f0;
+      --primary: #2563eb;
+      --code-bg: #1e293b;
+      --code-text: #f8fafc;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      margin: 0;
+      padding: 24px;
+    }
+    .container {
+      max-width: 1040px;
+      margin: 0 auto;
+      background: var(--surface);
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    }
+    h1 { font-size: 2rem; border-bottom: 2px solid var(--border); padding-bottom: 12px; margin-top: 0; color: #1e3a8a; }
+    h2 { font-size: 1.45rem; border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-top: 36px; color: #1e40af; }
+    h3 { font-size: 1.2rem; margin-top: 24px; color: #1d4ed8; }
+    p, li { color: var(--text); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0 24px;
+      font-size: 0.95rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 10px 14px;
+      text-align: left;
+    }
+    th {
+      background-color: #f1f5f9;
+      font-weight: 600;
+    }
+    tr:nth-child(even) { background-color: #f8fafc; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.88em;
+      background: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: #b91c1c;
+    }
+    pre {
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+    }
+    .mermaid {
+      background: #ffffff;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin: 20px 0;
+      text-align: center;
+    }
+    .meta-table th { width: 28%; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .badge-p0 { background-color: #fee2e2; color: #991b1b; }
+    .badge-p1 { background-color: #fef3c7; color: #92400e; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>PRD + Thiết kế kỹ thuật: Reader App</h1>
+
+  <table class="meta-table">
+    <tr><th>Tài liệu</th><td>Product Requirements Document (Hybrid PRD + Technical Design)</td></tr>
+    <tr><th>Sản phẩm</th><td>Reader App — Ứng dụng đọc truyện chữ Việt Nam</td></tr>
+    <tr><th>Phiên bản sản phẩm</th><td>1.1.0 (Nâng cấp từ 1.0.0)</td></tr>
+    <tr><th>Phiên bản tài liệu</th><td>Draft 0.5 (Dual-Agent thay AI Recap + Ops embedding)</td></tr>
+    <tr><th>Ngày cập nhật</th><td>2026-09-29</td></tr>
+    <tr><th>Đặc tả agent</th><td><code>docs/nangcapAgent.html</code> — thay phần agent cũ trong tài liệu này</td></tr>
+    <tr><th>Tác giả</th><td>Hoàng Huy</td></tr>
+    <tr><th>Trạng thái</th><td>Ready for Implementation</td></tr>
+    <tr><th>Nguồn sự thật</th><td>Codebase <code>e:\TTCS\Appdoctruyen\Reader_app</code> (ưu tiên code khi README lệch)</td></tr>
+    <tr><th>Đối tượng đọc</th><td>Developer chính (Hoàng Huy), mentor TTCS, kỹ sư triển khai Phase 1–3</td></tr>
+  </table>
+
+  <h2>1. Overview & Tóm tắt nâng cấp</h2>
+  <p>Reader App là sản phẩm đọc truyện chữ (web-novel / e-book) tiếng Việt tự host nội dung, gồm 3 tầng đã tồn tại:</p>
+  <ul>
+    <li><strong>Mobile:</strong> React Native 19.1.0 + Expo SDK 54 (Android).</li>
+    <li><strong>Backend:</strong> Express.js monolith (<code>admin-dashboard/server/index.js</code> ~3200 dòng).</li>
+    <li><strong>Admin Dashboard:</strong> React 18.2.0 + Vite.</li>
+  </ul>
+  <p>Tài liệu này chuẩn hóa toàn bộ vòng đời sản phẩm, bảo vệ tiền tệ và hệ thống ở <strong>Phase 1</strong>, chuẩn hóa CSDL và phân rã monolith ở <strong>Phase 2</strong>, đồng thời bổ sung 2 trụ cột ở <strong>Phase 3</strong>:</p>
+  <ul>
+    <li><strong>Hệ thống Dual-Agent (MySQL):</strong> Agent 1 Reading Companion (chat nhiều lượt, thẻ truyện, tóm tắt On-Demand Cache-Aside chống spoil) và Agent 2 Integrity (lọc bình luận Regex + điểm toxic, shadowban, quét đạo văn SimHash 64-bit, Human-in-the-Loop). Giám sát từng lượt suy luận bằng Langfuse, nhúng iframe trên Admin.</li>
+    <li><strong>Autonomous Webhook Top-up:</strong> Nạp xu tự động qua Webhook IPN, loại bỏ hoàn toàn duyệt tay thủ công và polling bên thứ ba.</li>
+  </ul>
+  <p>Tên khóa bám schema đang chạy (<code>story_id</code>, <code>chapter_id</code>, <code>chapter_no</code>, <code>user_id</code>). Tiến độ đọc lấy từ <code>reading_history.chapter_no</code>, không thêm bảng tiến độ thứ hai.</p>
+
+  <h2>2. Roles & Phân quyền Entitlements</h2>
+  <table>
+    <thead>
+      <tr><th>Role</th><th>Đọc truyện</th><th>Quảng cáo</th><th>Tạo truyện</th><th>Xử lý hết hạn vip_until</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>guest</strong></td><td>3 chương distinct/ngày (theo Remote IP)</td><td>Có</td><td>Không</td><td>—</td></tr>
+      <tr><td><strong>user</strong></td><td>10 chương distinct/ngày</td><td>Có</td><td>Không</td><td>—</td></tr>
+      <tr><td><strong>vip</strong></td><td>Không giới hạn, mở Reading Companion</td><td>Không</td><td>Không</td><td>Hết hạn hạ về <code>user</code>, <code>vip_until = NULL</code></td></tr>
+      <tr><td><strong>author</strong></td><td>Không giới hạn</td><td>Không</td><td>Có (khi còn hạn)</td><td>Hết hạn hạ về <code>user</code> và tạm ẩn truyện</td></tr>
+      <tr><td><strong>admin</strong></td><td>Toàn quyền</td><td>Không</td><td>Có</td><td>Không bao giờ hết hạn</td></tr>
+    </tbody>
+  </table>
+
+  <h2>3. Functional Requirements (FR)</h2>
+
+  <h3>A. Độc giả</h3>
+  <ul>
+    <li><strong>FR-READER-01 -> 06:</strong> Đăng ký, đăng nhập email bcrypt, Google verify qua Firebase Admin SDK, Guest.</li>
+    <li><strong>FR-READER-08 (Sửa Search):</strong> Định tuyến <code>GET /books/search</code> đặt trước <code>/:id</code>, nối bảng đúng cột (<code>cover_image</code>, likes, views), lọc <code>is_hidden = 0</code>.</li>
+    <li><strong>FR-READER-12 (Paywall):</strong> Chặn chương thứ 4 (guest) và thứ 11 (user) trong ngày với thông báo lỗi tiếng Việt chuẩn.</li>
+  </ul>
+
+  <h3>B. Agent 1 — Reading Companion (đồng bộ, giao diện chat)</h3>
+  <ul>
+    <li><strong>FR-AGENT1-01 (Function calling):</strong>
+      <code>get_user_progress</code> lấy <code>reading_history.chapter_no</code> làm chương hiện tại.
+      <code>get_catchup_summary</code> chỉ được đọc chương <em>nhỏ hơn</em> chương hiện tại.
+      <code>search_stories</code> dùng MySQL <code>FULLTEXT (title, description)</code>.
+      <code>save_to_favorites</code> thêm truyện vào tủ sách.
+    </li>
+    <li><strong>FR-AGENT1-02 (Cache-Aside chống spoil):</strong>
+      Cửa sổ tóm tắt là <code>from = max(1, current − 15)</code> đến <code>to = current − 1</code>. Tra <code>story_summary_cache</code> theo <code>(story_id, from_chapter, to_chapter)</code>. Cache miss thì lấy <code>chapters.content</code> trong khoảng đó, prompt cấm nhắc chương <code>current</code> trở đi, ghi ngược bản tóm tắt. Chương mở đầu (<code>to &lt; 1</code>) trả lời không có sự kiện trước.
+    </li>
+    <li><strong>FR-AGENT1-03 (UI trên trình đọc):</strong>
+      Nút nổi tự ẩn khi cuộn xuống. Bottom sheet chiếm khoảng 50% màn hình, không che cả trang đọc. Quick chip một chạm <em>Tóm tắt 10 chương trước</em>. Chat nhiều lượt trả lời kèm story card. Mỗi lượt assistant lưu <code>messages.trace_id</code>.
+    </li>
+  </ul>
+  <pre><code>async function getCatchUpSummary(storyId, currentChapter) {
+  const toChapter = currentChapter - 1;
+  if (toChapter &lt; 1) return "Bạn đang ở chương mở đầu, chưa có sự kiện trước đó.";
+  const fromChapter = Math.max(1, currentChapter - 15);
+
+  const [cached] = await db.query(
+    "SELECT summary_text FROM story_summary_cache WHERE story_id = ? AND from_chapter = ? AND to_chapter = ?",
+    [storyId, fromChapter, toChapter]
+  );
+  if (cached.length &gt; 0) return cached[0].summary_text;
+
+  const [rawChapters] = await db.query(
+    "SELECT chapter_no, content FROM chapters WHERE story_id = ? AND chapter_no BETWEEN ? AND ? ORDER BY chapter_no ASC",
+    [storyId, fromChapter, toChapter]
+  );
+
+  const prompt = `Tóm tắt các tình tiết chính từ chương ${fromChapter} đến ${toChapter}. CẤM ĐỀ CẬP tình tiết từ chương ${currentChapter} trở đi.`;
+  const summaryText = await callLLM(prompt, rawChapters);
+
+  await db.query(
+    "INSERT INTO story_summary_cache (story_id, from_chapter, to_chapter, summary_text) VALUES (?, ?, ?, ?)",
+    [storyId, fromChapter, toChapter, summaryText]
+  );
+  return summaryText;
+}</code></pre>
+
+  <h3>C. Agent 2 — Moderation & Integrity (bất đồng bộ, worker)</h3>
+  <ul>
+    <li><strong>FR-AGENT2-01 (Lọc bình luận 2 tầng):</strong>
+      Tầng 1 Regex chặn từ cực đoan và link cờ bạc trước khi ghi (dưới 1ms). Tầng 2 worker chấm điểm toxic. Điểm 0.5–0.8 đặt <code>status = 'shadowbanned'</code> (chỉ người viết thấy). Điểm trên 0.8 chuyển vùng đỏ, chờ admin khóa.
+    </li>
+    <li><strong>FR-AGENT2-02 (SimHash, không tốn token):</strong>
+      Khi <code>POST /books/:id/chapters</code>, tính vân tay 64-bit lưu <code>chapter_fingerprints.simhash_64</code>. So Hamming distance với kho chương. <code>D_H ≤ 3</code> (trùng khoảng ≥ 85%) thì giữ chương <code>pending_review</code> và ghi <code>moderation_logs</code>.
+    </li>
+    <li><strong>FR-AGENT2-03 (HITL):</strong>
+      Vùng xanh tự xuất bản. Vùng vàng bắt buộc admin duyệt trên Diff Viewer hai cột. Vùng đỏ soft-block, admin xác nhận khóa chương hoặc tài khoản. Mỗi quyết định agent ghi <code>trace_id</code>.
+    </li>
+  </ul>
+
+  <h3>D. Nạp xu tự động qua Webhook (Autonomous Webhook Top-up)</h3>
+  <ul>
+    <li><strong>FR-PAY-01 (Tạo Intent nạp xu):</strong> <code>POST /wallet/topup-intent</code> sinh mã <code>payment_code</code> dạng <code>NAPXU &lt;USER_ID&gt; &lt;RANDOM&gt;</code>, lưu bản ghi <code>topup_intents</code> trạng thái <code>pending</code> (hạn 15 phút), trả về payload VietQR.</li>
+    <li><strong>FR-PAY-02 (Xử lý Webhook IPN):</strong> <code>POST /payments/webhook</code> tiếp nhận callback từ cổng thanh toán tự động (SePAY / PayOS / Cassop). Xác thực chữ ký HMAC-SHA256 bí mật. Thực hiện khóa nguyên tử:
+      <pre><code>UPDATE topup_intents SET status='consumed' WHERE payment_code=? AND status='pending';</code></pre>
+      Nếu thành công 1 hàng thì gọi <code>creditWallet()</code> và ghi audit <code>payments</code>. Bỏ hoàn toàn polling 5s và xóa luồng duyệt tay thủ công.
+    </li>
+    <li><strong>FR-PLAT-04 (Khóa lỗ hổng tiền tệ):</strong> Chặn quyền tự cộng xu/VIP: <code>POST /wallet/topup</code>, <code>POST /users/:id/vip</code>, <code>POST /payments</code> trả về 403 Forbidden nếu không phải Admin.</li>
+    <li><strong>FR-PLAT-06 (Mua VIP):</strong> <code>POST /wallet/buy-vip</code> bỏ qua giá từ client, trừ đúng số xu quy định bởi biến môi trường <code>VIP_COST_COINS</code> (mặc định 500).</li>
+  </ul>
+
+  <h2>4. Sơ đồ quy trình hệ thống (Workflows)</h2>
+
+  <h3>Quy trình nạp xu tự động qua Webhook (Không duyệt tay)</h3>
+  <div class="mermaid">
+sequenceDiagram
+  autonumber
+  actor U as Độc giả (Mobile App)
+  participant API as Express Server
+  participant PG as Webhook Provider (SePAY / PayOS)
+  participant DB as MySQL Database
+
+  U->>API: POST /wallet/topup-intent { coins: 500 }
+  API->>DB: INSERT topup_intents (pending, expires_at = NOW() + 15m)
+  API-->>U: 201 { paymentCode, amount, vietQrUrl }
+  U->>U: Quét mã VietQR chuyển khoản
+
+  Note over PG: Ngân hàng báo biến động số dư
+  PG->>API: POST /payments/webhook (kèm chữ ký HMAC)
+  API->>API: Xác thực chữ ký HMAC-SHA256
+  
+  API->>DB: UPDATE topup_intents SET status='consumed' WHERE payment_code=? AND status='pending'
+  alt Thành công lần đầu (affectedRows = 1)
+    API->>DB: UPDATE wallets SET balance = balance + coins WHERE user_id=?
+    API->>DB: INSERT INTO payments (provider='bank_auto', coins, amount, ...)
+    API-->>PG: 200 OK (Processed)
+  else Gửi lặp / Đã cộng xu (affectedRows = 0)
+    API-->>PG: 200 OK (Bỏ qua - Idempotent bypass)
+  end
+  </div>
+
+  <h3>Kiến trúc Dual-Agent</h3>
+  <div class="mermaid">
+flowchart TD
+  UI[Giao diện người đọc Mobile / Web] --> A1[Agent 1 Reading Companion]
+  A1 --> DB[(MySQL: stories, chapters, reading_history, story_summary_cache, conversations, messages)]
+  DB --> A2[Agent 2 Moderation và Integrity]
+  A2 --> ADM[Admin: Diff Viewer và iframe Langfuse]
+  </div>
+
+  <h3>Quy trình tóm tắt On-Demand chống spoil (Agent 1)</h3>
+  <div class="mermaid">
+flowchart TD
+  A[Bottom sheet hoặc chip Tóm tắt 10 chương trước] --> B[get_user_progress: chapter_no hiện tại]
+  B --> C{to = current - 1 nhỏ hơn 1?}
+  C -->|Có| D[Trả lời chưa có sự kiện trước]
+  C -->|Không| E{story_summary_cache có khoảng from..to?}
+  E -->|Có| F[Trả summary_text, không gọi LLM]
+  E -->|Không| G[Đọc chapters từ from đến to, cấm chương current trở đi]
+  G --> H[Gọi LLM và INSERT story_summary_cache]
+  H --> F
+  </div>
+
+  <h3>Quy trình lọc bình luận (Agent 2)</h3>
+  <div class="mermaid">
+flowchart TD
+  A[POST /comments] --> B[Tầng 1 Regex và blacklist]
+  B -->|Từ cực đoan hoặc link cờ bạc| R[status = rejected]
+  B -->|Qua| C[Ghi comment rồi đẩy worker]
+  C --> D{toxicity_score}
+  D -->|dưới 0.5| G[status = approved]
+  D -->|0.5 đến 0.8| S[status = shadowbanned, chỉ người viết thấy]
+  D -->|trên 0.8| P[moderation_logs pending_review, vùng đỏ]
+  </div>
+
+  <h3>Quy trình SimHash khi đăng chương</h3>
+  <div class="mermaid">
+flowchart TD
+  A[POST /books/:id/chapters] --> B[Tính simhash 64-bit]
+  B --> C[So Hamming với chapter_fingerprints]
+  C --> D{Mức trùng}
+  D -->|dưới 50%| E[status chương = published]
+  D -->|50% đến 85%| F[pending_review, Diff Viewer]
+  D -->|trên 85% hoặc DH nhỏ hơn hoặc bằng 3| G[Soft block và cảnh báo admin]
+  </div>
+
+  <h3>Phân vùng Human-in-the-Loop</h3>
+  <table>
+    <thead>
+      <tr><th>Phân vùng</th><th>Tiêu chuẩn rủi ro</th><th>Hành động của agent</th><th>Can thiệp admin</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Vùng xanh</td><td>Trùng lặp &lt; 50% / toxic &lt; 0.5</td><td>Phê duyệt và xuất bản ngay.</td><td>Không cần.</td></tr>
+      <tr><td>Vùng vàng</td><td>Trùng lặp 50%–85% / toxic 0.5–0.8</td><td><code>pending_review</code> và ghi log.</td><td>Bắt buộc duyệt trên Diff Viewer hai cột.</td></tr>
+      <tr><td>Vùng đỏ</td><td>Trùng lặp &gt; 85% / toxic &gt; 0.8</td><td>Soft block và cảnh báo đỏ.</td><td>Xác nhận khóa chương hoặc tài khoản.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Giám sát Langfuse</h3>
+  <p>Backend mở một trace cho mỗi lượt agent, ghi span gọi SQL, gọi LLM và kiểm tra cache, rồi lưu <code>trace_id</code> vào <code>messages</code> hoặc <code>moderation_logs</code>. Admin mở modal nhúng iframe, không dựng lại timeline token.</p>
+  <pre><code>&lt;iframe
+  id="langfuseIframe"
+  src="https://cloud.langfuse.com/project/YOUR_PROJECT_ID/traces/TRACE_ID"
+  width="100%"
+  height="85%"
+  frameborder="0"&gt;
+&lt;/iframe&gt;</code></pre>
+
+  <h2>5. Data Model Changes (DDL Schema)</h2>
+  <pre><code>-- Bảng người dùng
+CREATE TABLE IF NOT EXISTS users (
+  user_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  fullname VARCHAR(191) NULL,
+  email VARCHAR(191) NOT NULL,
+  password_hash VARCHAR(255) NULL,
+  role VARCHAR(50) NOT NULL DEFAULT 'user',
+  avatar_url VARCHAR(500) NULL,
+  vip_until DATETIME NULL,
+  firebase_uid VARCHAR(128) NULL,
+  auth_method VARCHAR(20) NULL DEFAULT 'email',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id),
+  UNIQUE KEY uk_users_email (email),
+  UNIQUE KEY uk_users_firebase_uid (firebase_uid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Bảng ví tiền
+CREATE TABLE IF NOT EXISTS wallets (
+  wallet_id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id VARCHAR(191) UNIQUE,
+  balance BIGINT DEFAULT 0,
+  updated_at DATETIME
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Bảng Intent nạp tiền tự động (có hạn dùng)
+CREATE TABLE IF NOT EXISTS topup_intents (
+  intent_id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id VARCHAR(191) NOT NULL,
+  coins BIGINT NOT NULL,
+  amount BIGINT NOT NULL,
+  payment_code VARCHAR(191) NOT NULL,
+  account_no VARCHAR(64) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'pending',
+  expires_at DATETIME NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_payment_code (payment_code),
+  KEY idx_user_status (user_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Full-text cho search_stories (Agent 1)
+ALTER TABLE stories
+  ADD FULLTEXT INDEX ft_story_search (title, description);
+
+-- Trạng thái chương phục vụ HITL (Agent 2)
+ALTER TABLE chapters
+  ADD COLUMN status ENUM('draft', 'pending_review', 'published', 'rejected') NOT NULL DEFAULT 'published';
+
+-- Cache tóm tắt theo khoảng chương (thay chapter_recaps từng chương)
+CREATE TABLE IF NOT EXISTS story_summary_cache (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  story_id BIGINT UNSIGNED NOT NULL,
+  from_chapter INT NOT NULL,
+  to_chapter INT NOT NULL,
+  summary_text TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_story_range (story_id, from_chapter, to_chapter),
+  KEY idx_summary_lookup (story_id, from_chapter, to_chapter),
+  CONSTRAINT fk_cache_story FOREIGN KEY (story_id) REFERENCES stories (story_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Lịch sử chat và trace Langfuse (Agent 1)
+CREATE TABLE IF NOT EXISTS conversations (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NULL,
+  title VARCHAR(255) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  CONSTRAINT fk_conv_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS messages (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  conversation_id BIGINT UNSIGNED NOT NULL,
+  sender ENUM('user', 'assistant') NOT NULL,
+  content TEXT NOT NULL,
+  metadata JSON NULL,
+  trace_id VARCHAR(64) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_conv_time (conversation_id, created_at),
+  KEY idx_trace (trace_id),
+  CONSTRAINT fk_msg_conv FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Bình luận: shadowban + điểm toxic (thay moderation_label / is_spoiler)
+ALTER TABLE comments
+  ADD COLUMN toxicity_score FLOAT NOT NULL DEFAULT 0,
+  MODIFY COLUMN status ENUM('pending', 'approved', 'shadowbanned', 'rejected') NOT NULL DEFAULT 'approved';
+
+-- Vân tay SimHash (thay plagiarism_checks theo embedding)
+CREATE TABLE IF NOT EXISTS chapter_fingerprints (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  story_id BIGINT UNSIGNED NOT NULL,
+  chapter_id BIGINT UNSIGNED NOT NULL,
+  simhash_64 BIGINT UNSIGNED NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_simhash (simhash_64),
+  CONSTRAINT fk_fp_chapter FOREIGN KEY (chapter_id) REFERENCES chapters (chapter_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Hàng đợi Human-in-the-Loop
+CREATE TABLE IF NOT EXISTS moderation_logs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  target_type ENUM('comment', 'chapter') NOT NULL,
+  target_id BIGINT UNSIGNED NOT NULL,
+  violation_type ENUM('toxicity', 'spam', 'plagiarism') NOT NULL,
+  confidence_score FLOAT NOT NULL,
+  matched_target_id BIGINT UNSIGNED NULL,
+  evidence_data JSON NULL,
+  trace_id VARCHAR(64) NULL,
+  status ENUM('pending_review', 'approved_by_admin', 'penalized_by_admin') NOT NULL DEFAULT 'pending_review',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_mod_status (status, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;</code></pre>
+
+  <h2>6. Bảng biến môi trường (Environment Variables)</h2>
+  <table>
+    <thead>
+      <tr><th>Biến</th><th>Default Dev</th><th>Production</th><th>Mô tả</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>USE_MYSQL</code></td><td><code>false</code></td><td><strong>required true</strong></td><td>Bắt buộc MySQL trên production</td></tr>
+      <tr><td><code>MYSQL_HOST</code></td><td><code>127.0.0.1</code></td><td>required</td><td>Địa chỉ máy chủ cơ sở dữ liệu</td></tr>
+      <tr><td><code>MYSQL_PASSWORD</code></td><td>none</td><td>required (&ne; '123456')</td><td>Mật khẩu CSDL</td></tr>
+      <tr><td><code>MYSQL_DATABASE</code></td><td><code>app_doc_truyen</code></td><td><code>reader_app</code></td><td>Tên cơ sở dữ liệu chuẩn</td></tr>
+      <tr><td><code>JWT_SECRET</code></td><td>dev_fallback</td><td>required &ge; 32 chars</td><td>Khóa ký token</td></tr>
+      <tr><td><code>PAYMENT_WEBHOOK_SECRET</code></td><td>unset</td><td><strong>required</strong></td><td>Khóa bí mật xác thực webhook ngân hàng</td></tr>
+      <tr><td><code>GROK_API_KEY</code></td><td>optional</td><td>required</td><td>Khóa API cho Reading Companion và chấm toxic</td></tr>
+      <tr><td><code>LANGFUSE_HOST</code></td><td>unset</td><td>required</td><td>Host Langfuse (cloud hoặc self-host) để ghi trace</td></tr>
+      <tr><td><code>LANGFUSE_PUBLIC_KEY</code></td><td>unset</td><td>required</td><td>Public key dự án Langfuse</td></tr>
+      <tr><td><code>LANGFUSE_SECRET_KEY</code></td><td>unset</td><td>required</td><td>Secret key ghi trace phía server</td></tr>
+      <tr><td><code>LANGFUSE_PROJECT_ID</code></td><td>unset</td><td>required</td><td>Project id nhúng iframe trace trên Admin</td></tr>
+      <tr><td><code>VIP_COST_COINS</code></td><td>500</td><td>500</td><td>Giá mua gói VIP (xu)</td></tr>
+      <tr><td><code>COIN_VND</code></td><td>100</td><td>100</td><td>Tỷ giá quy đổi (1 xu = 100 VNĐ)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>7. Roadmap & Kế hoạch Pull Requests (PR Plan)</h2>
+  <table>
+    <thead>
+      <tr><th>PR</th><th>Tiêu đề</th><th>Phạm vi / Mục tiêu</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>PR-01</strong></td><td>fix(wallet): admin-only credit/VIP and close open webhook</td><td>Khóa 403 các API tự cộng xu/VIP, loại bỏ spoof IP header.</td></tr>
+      <tr><td><strong>PR-02</strong></td><td>fix(wallet): ignore client cost_coins on buy-vip</td><td>Trừ xu mua VIP cố định theo server, bỏ qua giá client.</td></tr>
+      <tr><td><strong>PR-03</strong></td><td>feat(wallet): autonomous webhook top-up engine</td><td>Thêm bảng <code>topup_intents</code>, viết lại webhook có HMAC và khóa chống nạp đúp.</td></tr>
+      <tr><td><strong>PR-04</strong></td><td>feat(auth): verifyIdToken and require JWT_SECRET</td><td>Tích hợp Firebase Admin SDK, loại bỏ bypass auth localhost.</td></tr>
+      <tr><td><strong>PR-05</strong></td><td>fix(api): mount GET /books/search before /books/:id</td><td>Sửa lỗi 404 search, nối đúng cột và lọc truyện ẩn.</td></tr>
+      <tr><td><strong>PR-06</strong></td><td>fix(reader): Vietnamese daily-quota errors</td><td>Đồng bộ thông báo lỗi paywall tiếng Việt chuẩn xác.</td></tr>
+      <tr><td><strong>PR-07</strong></td><td>test(server): smoke script for wallet & auth</td><td>Script kiểm thử tự động luồng tiền tệ và phân quyền.</td></tr>
+      <tr><td><strong>PR-09</strong></td><td>fix(db): canonical schema.sql from live dump</td><td>Chuẩn hóa schema không phụ thuộc runtime probe.</td></tr>
+      <tr><td><strong>PR-12</strong></td><td>refactor(server): extract express routers</td><td>Tách file 3200 dòng thành các module chuyên trách.</td></tr>
+      <tr><td><strong>PR-16</strong></td><td>feat(db): dual-agent mysql tables</td><td>Thêm <code>story_summary_cache</code>, <code>conversations</code>, <code>messages</code>, <code>chapter_fingerprints</code>, <code>moderation_logs</code>; Full-Text; <code>chapters.status</code>; <code>comments.toxicity_score</code> và shadowban. Bỏ <code>chapter_recaps</code> và <code>plagiarism_checks</code>.</td></tr>
+      <tr><td><strong>PR-17</strong></td><td>feat(agent): reading companion cache-aside</td><td>Function calling, tóm tắt chống spoil, nút nổi, bottom sheet, quick chip, story card, lưu <code>trace_id</code>.</td></tr>
+      <tr><td><strong>PR-18</strong></td><td>feat(agent): integrity regex toxic simhash</td><td>Regex tức thì, worker toxic, shadowban, SimHash 64-bit và Hamming distance.</td></tr>
+      <tr><td><strong>PR-19</strong></td><td>feat(admin): hitl diff viewer and langfuse iframe</td><td>Diff Viewer hai cột cho vùng vàng/đỏ và iframe Langfuse theo <code>trace_id</code>.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+</body>
+</html>

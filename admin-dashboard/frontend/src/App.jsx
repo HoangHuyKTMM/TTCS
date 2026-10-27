@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { fetchBooks, createBook, createChapter, getBookById, updateChapter, deleteChapter, login as apiLogin, fetchUsers, updateBook, deleteBook, updateUser, deleteUser, createUser, fetchBanners, createBanner, updateBanner, deleteBanner, fetchAdsAdmin, createAd, updateAd, deleteAd, fetchStats, fetchGenres, createGenre, updateGenre, deleteGenre, fetchTopupRequests, approveTopupRequest, rejectTopupRequest, adminCreditWallet, fetchPayments, fetchDonations, fetchComments, adminUpdateComment, adminDeleteComment } from './api'
+import ModerationPanel from './ModerationPanel'
 import { Bar, Doughnut } from 'react-chartjs-2'
 import Chart from 'chart.js/auto'
 
@@ -15,11 +16,33 @@ function removeToken() {
   try { localStorage.removeItem('admin_token') } catch (e) {}
 }
 
+function BookCover({ src, title }) {
+  const [error, setError] = useState(false)
+  const initial = title ? title.charAt(0).toUpperCase() : 'B'
+
+  if (!src || error) {
+    return <div className="cover">{initial}</div>
+  }
+
+  return (
+    <div className="cover">
+      <img
+        src={src}
+        alt={title || ''}
+        referrerPolicy="no-referrer"
+        onError={() => setError(true)}
+      />
+    </div>
+  )
+}
+
 export default function App() {
   const [token, setTokenState] = useState(getToken())
+  const [navOpen, setNavOpen] = useState(false)
   const [books, setBooks] = useState([])
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
   const [route, setRoute] = useState('dashboard') // 'dashboard' | 'books' | 'users' | 'genres' | 'coins' | 'transactions'
   const [bookForm, setBookForm] = useState({ title: '', author: '', description: '', genre: '' })
   // allow storing file locally before upload
@@ -56,7 +79,7 @@ export default function App() {
   const [isCreatingBook, setIsCreatingBook] = useState(false)
   const [isCreatingBanner, setIsCreatingBanner] = useState(false)
   const [ads, setAds] = useState([])
-  const [adForm, setAdForm] = useState({ title: '', link: '', placement: 'interstitial', enabled: true })
+  const [adForm, setAdForm] = useState({ title: '', link: '', placement: 'home', enabled: true })
   const [adFile, setAdFile] = useState(null)
   const [editAdModal, setEditAdModal] = useState(null)
   const [isCreatingAd, setIsCreatingAd] = useState(false)
@@ -105,6 +128,9 @@ export default function App() {
       const num = raw.replace(/[^0-9]/g,'')
       return `Mã nạp top-up #${num || ''}`.trim()
     }
+    if (lower.startsWith('sepay_') || lower.startsWith('sepay')) {
+      return `Giao dịch tự động SePay (${raw})`
+    }
     if (lower === 'buy-author') return 'Thanh toán mua tác giả'
     if (lower === 'admin-topup') return 'Admin nạp thủ công'
     return raw
@@ -114,6 +140,8 @@ export default function App() {
     const map = {
       donation: { label: 'Ủng hộ', color: '#e879f9' },
       bank: { label: 'Ngân hàng', color: '#38bdf8' },
+      sepay: { label: 'SePay (Tự động)', color: '#10b981' },
+      bank_auto: { label: 'Ngân hàng (Tự động)', color: '#06b6d4' },
       coin: { label: 'Xu', color: '#22c55e' },
       admin: { label: 'Quản trị', color: '#f97316' }
     }
@@ -164,9 +192,9 @@ export default function App() {
         const hash = location.hash.replace('#','')
         if (!hash) { setRoute('dashboard'); return }
         const [r, id] = hash.split(':')
-        if (r === 'book' && id) {
+        if ((r === 'book' || r === 'chapters') && id) {
           setSelectedBookLoading(true)
-          try { const b = await getBookById(id); setSelectedBook(b); setRoute('book') } catch(e){console.error(e)} finally{setSelectedBookLoading(false)}
+          try { const b = await getBookById(id); setSelectedBook(b); setRoute(r) } catch(e){console.error(e)} finally{setSelectedBookLoading(false)}
         } else { setRoute(r) }
         return
       }
@@ -185,7 +213,7 @@ export default function App() {
     const init = location.hash.replace('#','')
     if (init) {
       const [r,id] = init.split(':')
-      if (r === 'book' && id) { (async()=>{ setSelectedBookLoading(true); try{ const b = await getBookById(id); setSelectedBook(b); setRoute('book') } catch(e){console.error(e)} finally{setSelectedBookLoading(false)} })() }
+      if ((r === 'book' || r === 'chapters') && id) { (async()=>{ setSelectedBookLoading(true); try{ const b = await getBookById(id); setSelectedBook(b); setRoute(r) } catch(e){console.error(e)} finally{setSelectedBookLoading(false)} })() }
       else setRoute(r)
     }
     return ()=> window.removeEventListener('popstate', onPop)
@@ -220,7 +248,7 @@ export default function App() {
       if (res && res.error) {
         alert(res.error || 'Tạo quảng cáo thất bại')
       } else {
-        setAdForm({ title: '', link: '', placement: 'interstitial', enabled: true })
+        setAdForm({ title: '', link: '', placement: 'home', enabled: true })
         setAdFile(null)
         await loadAds()
       }
@@ -268,6 +296,7 @@ export default function App() {
 
   async function load() {
     setLoading(true)
+    setLoadError(null)
     setUsersError(null)
     setTopupsError(null)
     setCommentsError(null)
@@ -365,7 +394,7 @@ export default function App() {
       }
     } catch (err) {
       console.error(err)
-      alert('Không thể kết nối tới server')
+      setLoadError('Không thể kết nối tới server')
     } finally {
       setLoading(false)
     }
@@ -405,10 +434,37 @@ export default function App() {
       let resolvedBookId = filters.bookId
       const title = (filters.storyTitle || '').trim().toLowerCase()
       if (!resolvedBookId && title) {
-        const match = books.find(b => (b.title || '').toLowerCase().includes(title))
-        if (match) resolvedBookId = match.id
+        const match = books.find(b => (b.title || '').trim().toLowerCase() === title)
+        if (!match) {
+          setComments([])
+          setCommentsError('Không tìm thấy truyện khớp tên này.')
+          return
+        }
+        resolvedBookId = match.id
       }
-      const res = await fetchComments({ bookId: resolvedBookId || undefined, status: filters.status || undefined, limit: 300 })
+      const commentQuery = { bookId: resolvedBookId || undefined, limit: 300 }
+      const res = filters.status === 'pending'
+        ? await (async () => {
+          const [pending, shadow] = await Promise.all([
+            fetchComments({ ...commentQuery, status: 'pending' }),
+            fetchComments({ ...commentQuery, status: 'shadowbanned' }),
+          ])
+          if ((pending && pending.error) || (shadow && shadow.error)) {
+            return { error: (pending && pending.error) || (shadow && shadow.error) }
+          }
+          const rows = [].concat(Array.isArray(pending) ? pending : [], Array.isArray(shadow) ? shadow : [])
+          const seen = new Set()
+          const merged = []
+          for (const row of rows) {
+            const id = String(row && (row.id || row.comment_id) || '')
+            if (id && seen.has(id)) continue
+            if (id) seen.add(id)
+            merged.push(row)
+          }
+          merged.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+          return merged
+        })()
+        : await fetchComments({ ...commentQuery, status: filters.status || undefined })
       if (res && res.error) {
         setComments([])
         setCommentsError(res.error || 'Không thể tải bình luận')
@@ -638,7 +694,7 @@ export default function App() {
       load()
     } catch (err) {
       console.error('createChapter err', err)
-      alert('Tạo chương thất bại')
+      alert(err && err.message ? err.message : 'Tạo chương thất bại')
     } finally {
       setIsCreatingChapter(false)
     }
@@ -669,7 +725,7 @@ export default function App() {
       alert('Đã cập nhật chương')
     } catch (err) {
       console.error('update chapter err', err)
-      alert('Không thể cập nhật chương')
+      alert(err && err.message ? err.message : 'Không thể cập nhật chương')
     } finally {
       setSavingChapter(false)
     }
@@ -686,7 +742,7 @@ export default function App() {
       alert('Đã xóa')
     } catch (err) {
       console.error('delete chapter err', err)
-      alert('Xóa thất bại')
+      alert(err && err.message ? err.message : 'Xóa thất bại')
     } finally {
       setDeletingChapterId(null)
     }
@@ -787,123 +843,130 @@ export default function App() {
     }
   }
 
+  const chapterCount = books.reduce((sum, book) => sum + (book.chapters ? book.chapters.length : 0), 0)
+  const incomeLabel = typeof stats.income === 'number'
+    ? new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 }).format(stats.income)
+    : (stats.income ? String(stats.income) : '0 ₫')
+  const pages = {
+    dashboard: ['Tổng quan', 'Top truyện, người dùng và doanh thu'],
+    books: ['Sách', 'Tạo tác phẩm, ảnh bìa và lưới thư viện'],
+    book: ['Chi tiết sách', selectedBook?.title || 'Một tác phẩm'],
+    chapters: ['Chương', selectedBook ? selectedBook.title : 'Chọn một sách để soạn'],
+    banners: ['Banner', 'Form bên trái, danh sách và xem trước bên phải'],
+    ads: ['Quảng cáo video', 'Tải mp4, chọn vị trí, bật hoặc tắt'],
+    genres: ['Thể loại', 'Tên, mô tả, sửa hoặc xóa'],
+    users: ['Người dùng', 'Vai trò, số xu, thêm và nạp'],
+    transactions: ['Giao dịch', 'Sổ thanh toán và bảng ủng hộ'],
+    comments: ['Bình luận', 'Lọc trạng thái, rút gọn nội dung, gỡ'],
+    integrity: ['Kiểm duyệt AI', 'Hàng chờ, diff hai cột, xuất bản hoặc khóa']
+  }
+  const page = pages[route] || ['Bảng điều khiển', '']
+  const go = (event, to) => {
+    event.preventDefault()
+    setNavOpen(false)
+    navigate(to)
+  }
+  const roleLabel = { user: 'Người dùng', author: 'Tác giả', admin: 'Quản trị' }
+
   return (
     <div className="site">
       <div className="container">
-        <aside className="sidebar">
-          <div className="logo">Trang quản trị Reader</div>
-          <div className="muted">Quản lý nội dung & chương</div>
+        {navOpen ? <button className="scrim" aria-label="Đóng menu" onClick={() => setNavOpen(false)} /> : null}
+        <aside className={navOpen ? 'sidebar open' : 'sidebar'}>
+          <div className="brand">
+            <div className="brand-mark">R</div>
+            <div>
+              <div className="logo">Reader Admin</div>
+              <div className="muted">Công cụ nội bộ</div>
+            </div>
+          </div>
+          <div className="nav-label">Nội dung</div>
           <nav className="nav">
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('dashboard')}} className={route==='dashboard'? 'active':''}>Tổng quan</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('books')}} className={route==='books'? 'active':''}>Sách</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('chapters')}}>Chương</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('banners')}} className={route==='banners'? 'active':''}>Banner</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('ads')}} className={route==='ads'? 'active':''}>Quảng cáo video</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('genres')}} className={route==='genres'? 'active':''}>Thể loại</a>
-            {/* New Book moved into Books page */}
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('users')}} className={route==='users'? 'active':''}>Người dùng</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('transactions')}} className={route==='transactions'? 'active':''}>Giao dịch</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('comments')}} className={route==='comments'? 'active':''}>Bình luận</a>
-            <a href="#" onClick={e=>{e.preventDefault(); setRoute('settings')}}>Cài đặt</a>
+            <a href="#dashboard" onClick={e => go(e, 'dashboard')} className={route === 'dashboard' ? 'active' : ''}>Tổng quan</a>
+            <a href="#books" onClick={e => go(e, 'books')} className={route === 'books' || route === 'book' ? 'active' : ''}>Sách</a>
+            <a href="#chapters" onClick={e => go(e, 'chapters')} className={route === 'chapters' ? 'active' : ''}>Chương</a>
+            <a href="#genres" onClick={e => go(e, 'genres')} className={route === 'genres' ? 'active' : ''}>Thể loại</a>
+            <a href="#banners" onClick={e => go(e, 'banners')} className={route === 'banners' ? 'active' : ''}>Banner</a>
+            <a href="#ads" onClick={e => go(e, 'ads')} className={route === 'ads' ? 'active' : ''}>Quảng cáo video</a>
           </nav>
-
+          <div className="nav-label">Vận hành</div>
+          <nav className="nav">
+            <a href="#users" onClick={e => go(e, 'users')} className={route === 'users' ? 'active' : ''}>Người dùng</a>
+            <a href="#transactions" onClick={e => go(e, 'transactions')} className={route === 'transactions' ? 'active' : ''}>Giao dịch</a>
+            <a href="#comments" onClick={e => go(e, 'comments')} className={route === 'comments' ? 'active' : ''}>Bình luận</a>
+            <a href="#integrity" onClick={e => go(e, 'integrity')} className={route === 'integrity' ? 'active' : ''}>Kiểm duyệt AI</a>
+          </nav>
           {!token && (
-            <div style={{ marginTop: 12 }}>
-              <a href="/login.html" style={{ display: 'block', marginBottom: 8, color: '#8b5e34', fontWeight: 700 }}>Đăng nhập</a>
-              <a href="/register.html" style={{ display: 'block', color: '#8b5e34', fontWeight: 700 }}>Đăng ký admin</a>
+            <div className="sidebar-foot">
+              <a href="/login.html">Đăng nhập</a>
+              <a href="/register.html">Đăng ký admin</a>
             </div>
           )}
         </aside>
 
         <main className="main">
-          <div className="header">
-            <div className="title">Bảng điều khiển — Reader</div>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <div className="muted">{books.length} sách • {books.reduce((s,b)=>s+(b.chapters?b.chapters.length:0),0)} chương</div>
-              <div style={{marginLeft:12}} className="muted">Thu nhập: {typeof stats.income === 'number' ? new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND'}).format(stats.income) : stats.income}</div>
-              {token ? (
-                <button className="btn btn-ghost" onClick={handleLogout}>Đăng xuất</button>
-              ) : null}
+          <header className="topbar">
+            <div>
+              <button className="btn btn-ghost nav-toggle" onClick={() => setNavOpen(true)}>Menu</button>
+              <div className="eyebrow">{page[1]}</div>
+              <h1>{page[0]}</h1>
             </div>
-          </div>
+            <div className="top-stats">
+              <span className="stat-pill"><b>{books.length}</b> sách</span>
+              <span className="stat-pill"><b>{chapterCount}</b> chương</span>
+              <span className="stat-pill"><b>{incomeLabel}</b> doanh thu</span>
+              {token ? <button className="btn btn-ghost" onClick={handleLogout}>Đăng xuất</button> : null}
+            </div>
+          </header>
+          {loadError ? <div className="alert error">{loadError}</div> : null}
 
           {route === 'dashboard' && (
             <>
               <section className="panel">
-                <h3>Thống kê</h3>
-                <div style={{display:'flex',gap:18,alignItems:'stretch',flexWrap:'wrap'}}>
-                  <div style={{flex:1,minWidth:300,background:'#fffefc',padding:12,borderRadius:8}}>
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-                      <div style={{fontWeight:700}}>Top truyện được đọc</div>
-                      <div className="small muted">Top 3 theo lượt xem</div>
+                <h3>Chỉ số</h3>
+                <div className="kpi-grid">
+                  <div className="rank-card">
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
+                      <strong>Top truyện</strong>
+                      <span className="small">Theo lượt xem</span>
                     </div>
-                    {stats.top_books && stats.top_books.length > 0 ? (
-                      <div style={{display:'flex',flexDirection:'column',gap:10}}>
-                        {stats.top_books.map((book, idx) => (
-                          <div key={book.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 12px',background:'#fff',borderRadius:6,border:'1px solid #efe6db'}}>
-                            <div style={{flex:1}}>
-                              <div style={{fontWeight:600,color:'#333',marginBottom:4,fontSize:14}}>
-                                {idx + 1}. {book.title}
-                              </div>
-                            </div>
-                            <div style={{display:'flex',gap:16,alignItems:'center',marginLeft:12}}>
-                              <div style={{textAlign:'center'}}>
-                                <div className="small muted">Views</div>
-                                <div style={{fontWeight:700,fontSize:16,color:'#8b5e34'}}>{fmtAmount(book.views || 0)}</div>
-                              </div>
-                              <div style={{textAlign:'center'}}>
-                                <div className="small muted">Likes</div>
-                                <div style={{fontWeight:700,fontSize:16,color:'#d2691e'}}>{fmtAmount(book.likes || 0)}</div>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
+                    {stats.top_books && stats.top_books.length > 0 ? stats.top_books.map((book, idx) => (
+                      <div className="rank-row" key={book.id}>
+                        <div>
+                          <span className="rank-index">{idx + 1}</span>
+                          {book.title}
+                        </div>
+                        <div style={{display:'flex',gap:14}}>
+                          <div className="metric"><span className="small">Xem</span><b>{fmtAmount(book.views || 0)}</b></div>
+                          <div className="metric"><span className="small">Thích</span><b>{fmtAmount(book.likes || 0)}</b></div>
+                        </div>
                       </div>
-                    ) : (
-                      <div style={{padding:18}} className="muted">Chưa có dữ liệu truyện</div>
-                    )}
+                    )) : <div className="empty">Chưa có dữ liệu truyện</div>}
                   </div>
-
-                  <div style={{width:260,minWidth:260,background:'#fffefc',padding:12,borderRadius:8,display:'flex',flexDirection:'column',gap:8}}>
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                      <div>
-                        <div className="small muted">Người dùng mới hôm nay</div>
-                        <div style={{fontSize:18,fontWeight:800}}>{stats.new_users_today || 0}</div>
-                      </div>
-                      <div>
-                        <div className="small muted">7 ngày</div>
-                        <div style={{fontSize:16,fontWeight:700}}>{stats.new_users_7d || 0}</div>
-                      </div>
+                  <div className="kpi">
+                    <div className="kpi-row">
+                      <div><div className="kpi-label">Mới hôm nay</div><b>{stats.new_users_today || 0}</b></div>
+                      <div><div className="kpi-label">7 ngày</div><b>{stats.new_users_7d || 0}</b></div>
                     </div>
-                    <div style={{height:10}} />
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                      <div>
-                        <div className="small muted">Hoạt động (24h)</div>
-                        <div style={{fontSize:18,fontWeight:800}}>{stats.active_users_24h || 0}</div>
-                      </div>
-                      <div>
-                        <div className="small muted">Hoạt động (15 phút)</div>
-                        <div style={{fontSize:16,fontWeight:700}}>{stats.active_users_15m || 0}</div>
-                      </div>
+                    <div className="kpi-row">
+                      <div><div className="kpi-label">Hoạt động 24 giờ</div><b>{stats.active_users_24h || 0}</b></div>
+                      <div><div className="kpi-label">15 phút</div><b>{stats.active_users_15m || 0}</b></div>
                     </div>
-                    <div style={{height:1,background:'#efe6db',margin:'8px 0'}} />
-                    <div>
-                      <div className="small muted">Người dùng VIP</div>
-                      <div style={{fontSize:18,fontWeight:800,color:'#d2691e'}}>{stats.vip_users || 0}</div>
-                    </div>
-                    <div>
-                      <div className="small muted">Tác giả</div>
-                      <div style={{fontSize:16,fontWeight:700}}>{stats.authors || 0}</div>
+                    <div className="kpi-row">
+                      <div><div className="kpi-label">VIP</div><b>{stats.vip_users || 0}</b></div>
+                      <div><div className="kpi-label">Tác giả</div><b>{stats.authors || 0}</b></div>
                     </div>
                   </div>
-
-                  <div style={{width:240,minWidth:240,background:'#fffefc',padding:12,borderRadius:8,display:'flex',flexDirection:'column',justifyContent:'center',alignItems:'center'}}>
-                    <div style={{fontSize:14,color:'#333',marginBottom:6,fontWeight:700}}>Thu nhập từ Mobile App</div>
-                    <div style={{fontSize:20,fontWeight:800,color:'#8b5e34'}}>{typeof stats.income === 'number' ? new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND'}).format(stats.income) : (stats.income || '0')}</div>
-                    <div className="small muted" style={{marginTop:8,textAlign:'center'}}>Tổng thu nhập từ bảng payments</div>
-                    <div style={{height:1,background:'#efe6db',margin:'12px 0',width:'100%'}} />
-                    <div style={{fontSize:12,color:'#666',marginBottom:4}}>Thu nhập tháng này</div>
-                    <div style={{fontSize:16,fontWeight:700,color:'#d2691e'}}>{typeof stats.income_this_month === 'number' ? new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND'}).format(stats.income_this_month) : (stats.income_this_month || '0')}</div>
+                  <div className="kpi">
+                    <div className="kpi-label">Doanh thu</div>
+                    <div className="kpi-value">{incomeLabel}</div>
+                    <div className="kpi-sub">Tổng từ bảng thanh toán</div>
+                    <div className="kpi-row">
+                      <div>
+                        <div className="kpi-label">Tháng này</div>
+                        <b>{typeof stats.income_this_month === 'number' ? new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND',maximumFractionDigits:0}).format(stats.income_this_month) : (stats.income_this_month || '0')}</b>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -915,21 +978,11 @@ export default function App() {
                   <div className="books-grid" style={{maxHeight:'600px', overflowY:'auto', paddingRight:'8px'}}>
                     {books.map(b => (
                       <div key={b.id} className="book-card">
-                        <div className="cover">
-                          {b.cover_url ? (
-                            <img src={b.cover_url} alt={b.title} style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6 }} />
-                          ) : (
-                            (b.title ? b.title.charAt(0).toUpperCase() : 'B')
-                          )}
-                        </div>
+                        <BookCover src={b.cover_url} title={b.title} />
                         <div className="book-info">
                           <h3 style={{cursor:'pointer'}} onClick={()=>openBook(b.id)}>{b.title}</h3>
                           <div className="meta"><span className="small">{b.author || 'Không rõ tác giả'}</span></div>
-                          <div className="muted">{b.description || <span className="small muted">(Chưa có mô tả)</span>}</div>
-                          <div style={{marginTop:8}} className="small">Số chương: {b.chapters ? b.chapters.length : 0}</div>
-                          <div style={{marginTop:8}}>
-                            {/* Open button removed - use Chapters button or click title to open */}
-                          </div>
+                          <div style={{marginTop:8}} className="small">Số chương: {b.chapters ? b.chapters.length : (b.chapters_count || 0)}</div>
                         </div>
                       </div>
                     ))}
@@ -937,6 +990,12 @@ export default function App() {
                 )}
               </section>
             </>
+          )}
+
+          {route === 'integrity' && (
+            <section className="panel">
+              <ModerationPanel />
+            </section>
           )}
 
           {route === 'comments' && (
@@ -948,6 +1007,7 @@ export default function App() {
                   <select value={commentFilters.status} onChange={(e)=>{ const v=e.target.value; const next={...commentFilters,status:v}; setCommentFilters(next); loadComments(next); }}>
                     <option value="">Tất cả</option>
                     <option value="pending">Chờ duyệt</option>
+                    <option value="shadowbanned">Ẩn (vàng)</option>
                     <option value="approved">Đã duyệt</option>
                     <option value="rejected">Từ chối</option>
                   </select>
@@ -963,11 +1023,12 @@ export default function App() {
                       onBlur={()=>setTimeout(()=>loadComments(), 150)}
                     />
                     {storySuggestions.length > 0 && (
-                      <div style={{ position:'absolute', top:'100%', left:0, right:0, background:'#0f0a07', border:'1px solid #3c2a1a', zIndex:10, maxHeight:220, overflowY:'auto', borderRadius:6 }}>
+                      <div style={{ position:'absolute', top:'100%', left:0, right:0, background:'#fff', border:'1px solid var(--line)', zIndex:10, maxHeight:220, overflowY:'auto', borderRadius:8, boxShadow:'var(--shadow)' }}>
                         {storySuggestions.map(s => (
                           <div
                             key={s.id}
-                            style={{ padding:'6px 10px', cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center' }}
+                            style={{ padding:'8px 12px', cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center' }}
+                            className="suggest-item"
                             onMouseDown={(e)=>e.preventDefault()}
                             onClick={()=>{
                               const next = { ...commentFilters, storyTitle: s.title || '', bookId: s.id }
@@ -996,7 +1057,7 @@ export default function App() {
               <div className="table" style={{ overflowX:'auto', maxHeight:'600px', overflowY:'auto' }}>
                 <table style={{ tableLayout:'auto', width:'100%', minWidth:0, borderCollapse:'separate', borderSpacing:0 }}>
                   <thead style={{position:'sticky', top:0, zIndex:1}}>
-                    <tr style={{background:'#1c140e'}}>
+                    <tr>
                       <th style={{whiteSpace:'nowrap', padding:'8px 10px', textAlign:'left'}}>ID</th>
                       <th style={{padding:'8px 10px', textAlign:'left'}}>Truyện</th>
                       <th style={{padding:'8px 10px', textAlign:'left'}}>Người dùng</th>
@@ -1010,14 +1071,14 @@ export default function App() {
                       <tr><td colSpan={7} style={{ textAlign:'center', padding:12 }} className="muted">Không có bình luận</td></tr>
                     )}
                     {comments.map(c => (
-                      <tr key={c.id} style={{borderBottom:'1px solid #2b1c12'}}>
+                      <tr key={c.id}>
                         <td className="small muted" style={{verticalAlign:'top', padding:'12px'}}>{c.id}</td>
                         <td className="small" style={{verticalAlign:'top', wordBreak:'break-word', padding:'12px'}}>
                           <div style={{fontWeight:700, lineHeight:1.4}}>{c.story_title || c.story_name || c.story || c.story_id}</div>
                           {(c.story_id && (c.story_title || c.story_name)) && <div className="small muted">#{c.story_id}</div>}
                         </td>
                         <td className="small" style={{verticalAlign:'top', wordBreak:'break-word', padding:'12px'}}>{c.user_name || c.user_id || '—'}</td>
-                        <td style={{verticalAlign:'top', wordBreak:'break-word', lineHeight:1.5, padding:'12px', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden'}}>{c.content}</td>
+                        <td style={{verticalAlign:'top', padding:'12px'}}><div className="clamp">{c.content}</div></td>
                         <td className="small muted" style={{verticalAlign:'top', padding:'12px', whiteSpace:'nowrap'}}>{c.created_at ? new Date(c.created_at).toLocaleString('vi-VN') : ''}</td>
                         <td style={{ textAlign:'center', verticalAlign:'top', padding:'12px' }}>
                           <button className="btn btn-small" style={{background:'#ef4444', minWidth:72}} onClick={()=>handleDeleteComment(c)}>Gỡ</button>
@@ -1033,7 +1094,7 @@ export default function App() {
           {route === 'banners' && (
             <section className="panel">
               <h3>Banner</h3>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+              <div className="split">
                 <div>
                   <form onSubmit={onCreateBanner}>
                     <label>Tiêu đề</label>
@@ -1058,9 +1119,9 @@ export default function App() {
                   {banners.length === 0 ? <p>Chưa có banner</p> : (
                     <div style={{display:'grid',gap:12}}>
                       {banners.map(b => (
-                        <div key={b.id} style={{display:'flex',gap:12,alignItems:'center',background:'#fffefc',padding:8,borderRadius:8}}>
-                          <div style={{width:120,height:60,background:'#f2f0ec',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                            {b.image_url ? <img src={b.image_url} style={{maxWidth:'100%',maxHeight:'100%'}} alt={b.title} /> : 'Chưa có hình'}
+                        <div className="media-row" key={b.id}>
+                          <div className="thumb">
+                            {b.image_url ? <img src={b.image_url} alt={b.title} /> : 'Chưa có hình'}
                           </div>
                           <div style={{flex:1}}>
                             <div style={{fontWeight:700}}>{b.title}</div>
@@ -1087,12 +1148,12 @@ export default function App() {
               </div>
 
               {adsError ? (
-                <div className="muted" style={{padding:12, background:'#22190f', borderRadius:6, marginBottom: 12}}>
+                <div className="alert error" style={{ marginBottom: 12 }}>
                   {adsError}
                 </div>
               ) : null}
 
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+              <div className="split">
                 <div>
                   <form onSubmit={onCreateAd}>
                     <label>Tiêu đề</label>
@@ -1101,10 +1162,9 @@ export default function App() {
                     <input value={adForm.link} onChange={e=>setAdForm({...adForm,link:e.target.value})} placeholder="https://..." />
                     <label>Vị trí hiển thị</label>
                     <select value={adForm.placement} onChange={e=>setAdForm({...adForm,placement:e.target.value})}>
-                      <option value="interstitial">Toàn màn hình</option>
-                      <option value="banner">Banner</option>
-                      <option value="reader">Khi đọc</option>
                       <option value="home">Trang chủ</option>
+                      <option value="book-open">Khi mở truyện</option>
+                      <option value="reader">Khi đọc</option>
                     </select>
                     <label>Trạng thái</label>
                     <select value={adForm.enabled ? '1' : '0'} onChange={e=>setAdForm({...adForm,enabled: e.target.value === '1'})}>
@@ -1131,10 +1191,10 @@ export default function App() {
                   {ads.length === 0 ? <p>Chưa có quảng cáo</p> : (
                     <div style={{display:'grid',gap:12}}>
                       {ads.map(a => (
-                        <div key={a.id} style={{display:'flex',gap:12,alignItems:'center',background:'#fffefc',padding:8,borderRadius:8}}>
-                          <div style={{width:160,height:90,background:'#f2f0ec',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:8,overflow:'hidden'}}>
+                        <div className="media-row" key={a.id}>
+                          <div className="thumb video">
                             {a.video_url ? (
-                              <video src={a.video_url} style={{width:'100%',height:'100%',objectFit:'cover'}} muted />
+                              <video src={a.video_url} muted />
                             ) : 'Chưa có video'}
                           </div>
                           <div style={{flex:1}}>
@@ -1161,7 +1221,7 @@ export default function App() {
             <section className="panel">
               <h3>Giao dịch</h3>
               {transactionsError ? (
-                <div className="muted" style={{ padding: 10, background: '#22190f', borderRadius: 6 }}>{transactionsError}</div>
+                <div className="alert error">{transactionsError}</div>
               ) : (
                 <div style={{display:'grid', gap:16}}>
                   <div>
@@ -1169,15 +1229,17 @@ export default function App() {
                     {(() => {
                       const filteredPayments = payments.filter(p => {
                         const coinsNum = Number(p.coins)
+                        const amountNum = Number(p.amount)
                         const hasVipDuration = (p.months && Number(p.months) > 0) || (p.days && Number(p.days) > 0)
-                        const isTopup = !Number.isNaN(coinsNum) && coinsNum > 0
-                        return hasVipDuration || isTopup
+                        const hasCoins = !Number.isNaN(coinsNum) && coinsNum > 0
+                        const hasAmount = !Number.isNaN(amountNum) && amountNum > 0
+                        return hasVipDuration || hasCoins || hasAmount
                       })
                       if (filteredPayments.length === 0) return <div className="muted" style={{padding:8}}>Chưa có giao dịch.</div>
                       return (
                       <div style={{overflowX:'auto', maxHeight:'500px', overflowY:'auto'}}>
                         <table className="table" style={{minWidth:1024}}>
-                          <thead style={{position:'sticky', top:0, zIndex:1, background:'#1c140e'}}>
+                          <thead style={{position:'sticky', top:0, zIndex:1, background:'var(--surface-header, #f8fafc)'}}>
                             <tr>
                               <th style={{width:72}}>ID</th>
                               <th style={{width:200}}>Người dùng</th>
@@ -1225,13 +1287,14 @@ export default function App() {
                     <h4>Ủng hộ (người dùng → tác giả)</h4>
                     {donations.length === 0 ? <div className="muted" style={{padding:8}}>Chưa có ủng hộ.</div> : (
                       <div style={{overflowX:'auto', maxHeight:'500px', overflowY:'auto'}}>
-                        <table className="table" style={{minWidth:960}}>
-                          <thead style={{position:'sticky', top:0, zIndex:1, background:'#1c140e'}}>
+                        <table className="table" style={{minWidth:1100}}>
+                          <thead style={{position:'sticky', top:0, zIndex:1, background:'var(--surface-header, #f8fafc)'}}>
                             <tr>
                               <th style={{width:72}}>ID</th>
                               <th style={{width:200}}>Người tặng</th>
                               <th style={{width:200}}>Tác giả</th>
                               <th style={{width:90}}>Truyện</th>
+                              <th style={{width:180}}>Quà</th>
                               <th style={{width:120}}>Xu</th>
                               <th style={{width:260}}>Lời nhắn</th>
                               <th style={{width:180}}>Thời gian</th>
@@ -1250,6 +1313,11 @@ export default function App() {
                                   {(d.author_email || d.author_user_id) && <div className="small muted">{d.author_email || d.author_user_id}</div>}
                                 </td>
                                 <td style={{whiteSpace:'nowrap'}}>{d.story_title || d.story_name || d.story || d.story_id}</td>
+                                <td style={{whiteSpace:'nowrap'}}>
+                                  {d.gift_name
+                                    ? `${d.gift_emoji || '🎁'} ${d.gift_name}${Number(d.quantity) > 1 ? ` ×${d.quantity}` : ''}`
+                                    : 'Xu trực tiếp'}
+                                </td>
                                 <td style={{fontWeight:700,whiteSpace:'nowrap'}}>{fmtAmount(d.coins)}</td>
                                 <td style={{maxWidth:340,wordBreak:'break-word',lineHeight:1.4}}>{d.message && d.message.trim() ? d.message : '-'}</td>
                                 <td style={{whiteSpace:'nowrap'}}>{fmtDate(d.created_at)}</td>
@@ -1267,48 +1335,49 @@ export default function App() {
 
           {route === 'books' && (
             <section className="panel">
-              <h3>Tất cả sách</h3>
-              <div style={{marginBottom:12}}>
-                <h4>Tạo sách mới</h4>
-                <form onSubmit={onCreateBook} style={{display:'grid',gap:8,maxWidth:720}}>
-                  <input placeholder="Tiêu đề" value={bookForm.title} onChange={e=>setBookForm({...bookForm,title:e.target.value})} />
-                  <input placeholder="Tác giả" value={bookForm.author} onChange={e=>setBookForm({...bookForm,author:e.target.value})} />
-                  <select value={bookForm.genre} onChange={e=>setBookForm({...bookForm,genre:e.target.value})} style={{padding:'8px',border:'1px solid #ddd',borderRadius:'4px'}}>
-                    <option value="">-- Chọn thể loại --</option>
-                    {genres.map(g => <option key={g.genre_id} value={g.name}>{g.name}</option>)}
-                  </select>
-                  <textarea placeholder="Mô tả" value={bookForm.description} onChange={e=>setBookForm({...bookForm,description:e.target.value})} />
-                  <input type="file" accept="image/*" onChange={e=>setCoverFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)} />
-                  <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
-                    <button type="submit" disabled={isCreatingBook} className={isCreatingBook ? 'btn btn-primary disabled' : 'btn btn-primary'}>{isCreatingBook ? 'Đang tạo...' : 'Tạo sách'}</button>
-                  </div>
-                </form>
-              </div>
-              {loading ? <p>Đang tải...</p> : (
-                <div className="books-grid">
-                  {books.map(b => (
-                    <div key={b.id} className="book-card">
-                      <div className="cover">{b.title ? b.title.charAt(0).toUpperCase() : '📖'}</div>
-                      <div className="book-info">
-                        <h3>{b.title}</h3>
-                        <div className="meta"><span className="small">{b.author || 'Không rõ tác giả'}</span></div>
-                        {b.genre && <div style={{background:'#f0e6d2',color:'#8b5e34',padding:'4px 8px',borderRadius:'4px',fontSize:'13px',display:'inline-block',marginTop:6,marginBottom:6}}>🏷️ {b.genre}</div>}
-                        {!b.genre && <div style={{color:'#999',fontSize:'13px',fontStyle:'italic',marginTop:6,marginBottom:6}}>Chưa có thể loại</div>}
-                        <div className="muted">{b.description || <span className="small muted">(Chưa có mô tả)</span>}</div>
-                          <div style={{marginTop:8}} className="small">Chương: {b.chapters ? b.chapters.length : 0}</div>
-                          <div style={{marginTop:8,display:'flex',gap:8,alignItems:'center'}}>
-                          <button className="btn btn-edit btn-small" onClick={() => handleEditBook(b)} style={{marginRight:8}}>Sửa</button>
-                          <button className="btn btn-delete btn-small" onClick={() => handleDeleteBook(b)} style={{marginLeft:0}} disabled={deletingBookId === b.id}>{deletingBookId === b.id ? 'Đang xóa...' : 'Xóa'}</button>
-                          <button className="btn btn-secondary btn-small" onClick={()=>openChaptersForBook(b.id)} style={{marginLeft:8}}>Chương</button>
-                          {/* Open button removed - use Chapters button or click title to open */}
-                        </div>
-
-                        
-                      </div>
+              <div className="split">
+                <div className="composer">
+                  <h3>Tạo sách</h3>
+                  <form className="stack" onSubmit={onCreateBook}>
+                    <input placeholder="Tiêu đề" value={bookForm.title} onChange={e=>setBookForm({...bookForm,title:e.target.value})} />
+                    <input placeholder="Tác giả" value={bookForm.author} onChange={e=>setBookForm({...bookForm,author:e.target.value})} />
+                    <select value={bookForm.genre} onChange={e=>setBookForm({...bookForm,genre:e.target.value})}>
+                      <option value="">Chọn thể loại</option>
+                      {genres.map(g => <option key={g.genre_id || g.id} value={g.name}>{g.name}</option>)}
+                    </select>
+                    <textarea placeholder="Mô tả" value={bookForm.description} onChange={e=>setBookForm({...bookForm,description:e.target.value})} />
+                    <input type="file" accept="image/*" onChange={e=>setCoverFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)} />
+                    {coverFile ? <img src={URL.createObjectURL(coverFile)} alt="Xem trước ảnh bìa" style={{width:92,height:128,objectFit:'cover',borderRadius:8}} /> : null}
+                    <div className="actions">
+                      <button type="submit" disabled={isCreatingBook} className={isCreatingBook ? 'btn btn-primary disabled' : 'btn btn-primary'}>{isCreatingBook ? 'Đang tạo...' : 'Tạo sách'}</button>
                     </div>
-                  ))}
+                  </form>
                 </div>
-              )}
+                <div>
+                  <h3>Thư viện</h3>
+                  {loading ? <p>Đang tải...</p> : books.length === 0 ? <div className="empty">Chưa có sách</div> : (
+                    <div className="books-grid">
+                      {books.map(b => (
+                        <div key={b.id} className="book-card">
+                          <BookCover src={b.cover_url} title={b.title} />
+                          <div className="book-info">
+                            <h3>{b.title}</h3>
+                            <div className="meta"><span className="small">{b.author || 'Không rõ tác giả'}</span></div>
+                            {b.genre ? <div className="chip">{b.genre}</div> : <div className="small">Chưa có thể loại</div>}
+                            <div className="muted clamp">{b.description || 'Chưa có mô tả'}</div>
+                            <div className="small" style={{marginTop:8}}>Chương: {b.chapters ? b.chapters.length : (b.chapters_count || 0)}</div>
+                            <div className="actions" style={{justifyContent:'flex-start',marginTop:8}}>
+                              <button className="btn btn-edit btn-small" onClick={() => handleEditBook(b)}>Sửa</button>
+                              <button className="btn btn-delete btn-small" onClick={() => handleDeleteBook(b)} disabled={deletingBookId === b.id}>{deletingBookId === b.id ? 'Đang xóa...' : 'Xóa'}</button>
+                              <button className="btn btn-secondary btn-small" onClick={()=>openChaptersForBook(b.id)}>Chương</button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </section>
           )}
 
@@ -1316,34 +1385,32 @@ export default function App() {
 
           {route === 'book' && (
             <section className="panel">
-              <h3>Chi tiết sách</h3>
               {selectedBookLoading ? <p>Đang tải...</p> : selectedBook ? (
-                <div>
-                  <h2>{selectedBook.title}</h2>
-                  <div className="muted">{selectedBook.author}</div>
-                  <p>{selectedBook.description}</p>
-                  <h4>Danh sách chương</h4>
-                  <ol>
-                    {(selectedBook.chapters || []).map(ch => (
-                      <li key={ch.id} style={{marginBottom:8}}>
-                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div className="editor-split">
+                  <div>
+                    <h3>{selectedBook.title}</h3>
+                    <div className="muted">{selectedBook.author}</div>
+                    <p>{selectedBook.description}</p>
+                    <div className="chapter-list">
+                      {(selectedBook.chapters || []).length === 0 ? <div className="empty">Chưa có chương</div> : (selectedBook.chapters || []).map(ch => (
+                        <div className="chapter-row" key={ch.id}>
                           <div>
                             <strong>{ch.title}</strong>
-                            <div className="small muted">{new Date(ch.created_at || ch.createdAt || '').toLocaleString()}</div>
+                            <div className="small">{new Date(ch.created_at || ch.createdAt || '').toLocaleString()}</div>
                           </div>
-                          <div style={{display:'flex',gap:8}}>
+                          <div className="actions">
                             <button className="btn btn-edit btn-small" onClick={()=>handleEditChapter(ch)}>Sửa</button>
-                            <button className="btn btn-delete btn-small" onClick={()=>handleDeleteChapter(ch)} style={{marginLeft:8}} disabled={deletingChapterId === ch.id}>{deletingChapterId === ch.id ? 'Đang xóa...' : 'Xóa'}</button>
+                            <button className="btn btn-delete btn-small" onClick={()=>handleDeleteChapter(ch)} disabled={deletingChapterId === ch.id}>{deletingChapterId === ch.id ? 'Đang xóa...' : 'Xóa'}</button>
                           </div>
                         </div>
-                      </li>
-                    ))}
-                  </ol>
-                  <h4>Thêm chương cho sách này</h4>
-                  <form onSubmit={async (e)=>{ e.preventDefault(); if(!e.target.title.value||!e.target.content.value) return alert('Cần nhập tiêu đề và nội dung'); await createChapter(selectedBook.id, { title: e.target.title.value, content: e.target.content.value }); const b = await getBookById(selectedBook.id); setSelectedBook(b); alert('Đã thêm'); }}>
-                    <input name="title" placeholder="Tên chương" />
+                      ))}
+                    </div>
+                  </div>
+                  <form className="editor stack" onSubmit={async (e)=>{ e.preventDefault(); const form = e.target; if(!form.title.value||!form.content.value) return alert('Cần nhập tiêu đề và nội dung'); try { await createChapter(selectedBook.id, { title: form.title.value, content: form.content.value }); const b = await getBookById(selectedBook.id); setSelectedBook(b); form.reset(); } catch (err) { alert(err && err.message ? err.message : 'Tạo chương thất bại') } }}>
+                    <h3>Thêm chương</h3>
+                    <input name="title" placeholder="Tiêu đề chương" />
                     <textarea name="content" placeholder="Nội dung chương" />
-                    <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+                    <div className="actions">
                       <button type="submit" disabled={isCreatingChapter} className={isCreatingChapter ? 'btn btn-primary disabled' : 'btn btn-primary'}>{isCreatingChapter ? 'Đang thêm...' : 'Thêm chương'}</button>
                     </div>
                   </form>
@@ -1354,51 +1421,46 @@ export default function App() {
 
           {route === 'chapters' && (
             <section className="panel">
-              <h3>Quản lý chương</h3>
               {selectedBook ? (
-                <div>
-                  <h2>{selectedBook.title}</h2>
-                  <div className="muted">{selectedBook.author}</div>
-                  <p>{selectedBook.description}</p>
-                  <h4>Danh sách chương</h4>
-                  <ol style={{maxHeight:'400px', overflowY:'auto', paddingRight:'8px'}}>
-                    {(selectedBook.chapters || []).map(ch => (
-                      <li key={ch.id} style={{marginBottom:8}}>
-                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div className="editor-split">
+                  <div>
+                    <h3>{selectedBook.title}</h3>
+                    <div className="muted">{selectedBook.author}</div>
+                    <div className="chapter-list">
+                      {(selectedBook.chapters || []).length === 0 ? <div className="empty">Chưa có chương</div> : (selectedBook.chapters || []).map(ch => (
+                        <div className="chapter-row" key={ch.id}>
                           <div>
                             <strong>{ch.title}</strong>
-                            <div className="small muted">{new Date(ch.created_at || ch.createdAt || '').toLocaleString()}</div>
+                            <div className="small">{new Date(ch.created_at || ch.createdAt || '').toLocaleString()}</div>
                           </div>
-                          <div style={{display:'flex',gap:8}}>
+                          <div className="actions">
                             <button className="btn btn-edit btn-small" onClick={()=>handleEditChapter(ch)}>Sửa</button>
-                            <button className="btn btn-delete btn-small" onClick={()=>handleDeleteChapter(ch)} style={{marginLeft:8}} disabled={deletingChapterId === ch.id}>{deletingChapterId === ch.id ? 'Đang xóa...' : 'Xóa'}</button>
+                            <button className="btn btn-delete btn-small" onClick={()=>handleDeleteChapter(ch)} disabled={deletingChapterId === ch.id}>{deletingChapterId === ch.id ? 'Đang xóa...' : 'Xóa'}</button>
                           </div>
                         </div>
-                      </li>
-                    ))}
-                  </ol>
-                  <h4>Thêm chương</h4>
-                  <form onSubmit={async (e)=>{ e.preventDefault(); const title = e.target.title.value; const content = e.target.content.value; if(!title||!content) return alert('Cần nhập tiêu đề và nội dung'); await createChapter(selectedBook.id, { title, content }); const b = await getBookById(selectedBook.id); setSelectedBook(b); e.target.title.value=''; e.target.content.value=''; alert('Đã thêm'); }}>
+                      ))}
+                    </div>
+                  </div>
+                  <form className="editor stack" onSubmit={async (e)=>{ e.preventDefault(); const form = e.target; const title = form.title.value; const content = form.content.value; if(!title||!content) return alert('Cần nhập tiêu đề và nội dung'); try { await createChapter(selectedBook.id, { title, content }); const b = await getBookById(selectedBook.id); setSelectedBook(b); form.title.value=''; form.content.value=''; } catch (err) { alert(err && err.message ? err.message : 'Tạo chương thất bại') } }}>
+                    <h3>Soạn chương</h3>
                     <input name="title" placeholder="Tiêu đề chương" />
                     <textarea name="content" placeholder="Nội dung chương" />
-                    <div style={{display:'flex',justifyContent:'flex-end',marginTop:6}}>
+                    <div className="actions">
                       <button type="submit" disabled={isCreatingChapter} className={isCreatingChapter ? 'btn btn-primary disabled' : 'btn btn-primary'}>{isCreatingChapter ? 'Đang thêm...' : 'Thêm chương'}</button>
                     </div>
                   </form>
                 </div>
               ) : (
-                  <div>
+                <div className="stack">
                   <p>Chọn một sách để quản lý chương.</p>
-                  <div style={{display:'grid',gap:8, maxHeight:'500px', overflowY:'auto', paddingRight:'8px'}}>
-                    {console.log('[chapters view] Books available:', books) || books.map(b => (
-                      <div key={b.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:8,background:'#fffefc',borderRadius:6}}>
+                  <div className="chapter-list">
+                    {books.map(b => (
+                      <div className="chapter-row" key={b.id}>
                         <div>
                           <div style={{fontWeight:700}}>{b.title || `Chưa có tiêu đề #${b.id}`}</div>
-                          <div className="small muted">{b.author || 'Không rõ tác giả'}</div>
+                          <div className="small">{b.author || 'Không rõ tác giả'}</div>
                         </div>
-                          <div>
-                            <button className="btn btn-secondary btn-small" onClick={()=>openChaptersForBook(b.id)}>Quản lý</button>
-                          </div>
+                        <button className="btn btn-secondary btn-small" onClick={()=>openChaptersForBook(b.id)}>Quản lý</button>
                       </div>
                     ))}
                   </div>
@@ -1409,7 +1471,7 @@ export default function App() {
 
           {/* Edit Chapter Modal */}
           {editChapterModal && (
-            <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <div className="modal">
               <div style={{background:'#fff',padding:20,borderRadius:8,width:720,maxWidth:'95%'}}>
                 <h3>Sửa chương</h3>
                 <div style={{display:'grid',gap:8}}>
@@ -1427,7 +1489,7 @@ export default function App() {
           {route === 'genres' && (
             <section className="panel">
               <h3>Thể loại / Danh mục</h3>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+              <div className="split">
                 <div>
                   <h4>Tạo thể loại mới</h4>
                   <form onSubmit={async (e)=>{
@@ -1450,7 +1512,7 @@ export default function App() {
                   {loading ? <p>Đang tải...</p> : genres.length === 0 ? <p>Chưa có thể loại</p> : (
                     <div style={{display:'grid',gap:8, maxHeight:'500px', overflowY:'auto', paddingRight:'8px'}}>
                       {genres.map(g=>(
-                        <div key={g.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',background:'#fffefc',padding:8,borderRadius:6}}>
+                        <div className="list-row" key={g.id}>
                           <div>
                             <div style={{fontWeight:700}}>{g.name}</div>
                             {g.description && <div className="small muted">{g.description}</div>}
@@ -1480,7 +1542,7 @@ export default function App() {
                 <button onClick={() => setCreateUserModal({ fullname: '', email: '', password: '', role: 'user' })} style={{ background: '#8b5e34', color: '#fff', padding: '6px 10px', borderRadius: 6 }}>Thêm người dùng</button>
               </div>
               {loading ? <p>Đang tải...</p> : usersError ? (
-                <div className="muted" style={{ padding: 10, background: '#22190f', borderRadius: 6 }}>{usersError}</div>
+                <div className="alert error">{usersError}</div>
               ) : (
                 <>
                   {users.length === 0 ? (
@@ -1488,7 +1550,7 @@ export default function App() {
                   ) : (
                     <div style={{maxHeight:'500px', overflowY:'auto'}}>
                     <table style={{width:'100%',borderCollapse:'collapse'}}>
-                      <thead style={{position:'sticky', top:0, zIndex:1, background:'#1c140e'}}>
+                      <thead style={{position:'sticky', top:0, zIndex:1, background:'var(--surface-header, #f8fafc)'}}>
                         <tr style={{textAlign:'left',borderBottom:'1px solid #eee'}}>
                           <th style={{padding:'8px'}}>ID</th>
                           <th style={{padding:'8px'}}>Tên</th>
@@ -1505,7 +1567,7 @@ export default function App() {
                             <td style={{padding:8}}>{u.id}</td>
                             <td style={{padding:8}}>{u.fullname}</td>
                             <td style={{padding:8}}>{u.email}</td>
-                            <td style={{padding:8}}>{u.role}</td>
+                            <td style={{padding:8}}><span className={`role role-${u.role}`}>{roleLabel[u.role] || u.role}</span></td>
                             <td style={{padding:8,fontWeight:700}}>{typeof u.coins === 'number' ? u.coins : (u.coins ?? 0)}</td>
                             <td style={{padding:8}}>{u.created_at ? new Date(u.created_at).toLocaleString() : ''}</td>
                             <td style={{padding:8,display:'flex',gap:6,flexWrap:'wrap'}}>
@@ -1526,7 +1588,7 @@ export default function App() {
 
           {/* Edit Book Modal */}
           {editBookModal && (
-            <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <div className="modal">
               <div style={{background:'#fff',padding:20,borderRadius:8,width:520,maxWidth:'95%'}}>
                 <h3>Chỉnh sửa sách</h3>
                 <div style={{display:'grid',gap:8}}>
@@ -1552,7 +1614,7 @@ export default function App() {
 
           {/* Edit User Modal */}
           {editUserModal && (
-            <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <div className="modal">
               <div style={{background:'#fff',padding:20,borderRadius:8,width:420,maxWidth:'95%'}}>
                 <h3>Sửa người dùng</h3>
                 <div style={{display:'grid',gap:8}}>
@@ -1574,7 +1636,7 @@ export default function App() {
 
           {/* Create User Modal */}
           {createUserModal && (
-            <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <div className="modal">
               <div style={{background:'#fff',padding:20,borderRadius:8,width:420,maxWidth:'95%'}}>
                 <h3>Tạo người dùng</h3>
                 <div style={{display:'grid',gap:8}}>
@@ -1596,7 +1658,7 @@ export default function App() {
 
           {/* Edit Banner Modal */}
           {editBannerModal && (
-            <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <div className="modal">
               <div style={{background:'#fff',padding:20,borderRadius:8,width:520,maxWidth:'95%'}}>
                 <h3>Sửa banner</h3>
                 <div style={{display:'grid',gap:8}}>
@@ -1628,10 +1690,13 @@ export default function App() {
                 <label>Liên kết</label>
                 <input value={editAdModal.link || ''} onChange={e=>setEditAdModal({...editAdModal,link:e.target.value})} />
                 <label>Vị trí</label>
-                <select value={editAdModal.placement || 'interstitial'} onChange={e=>setEditAdModal({...editAdModal,placement:e.target.value})}>
-                  <option value="interstitial">Toàn màn hình</option>
-                  <option value="reader">Khi đọc</option>
+                <select value={editAdModal.placement || 'home'} onChange={e=>setEditAdModal({...editAdModal,placement:e.target.value})}>
                   <option value="home">Trang chủ</option>
+                  <option value="book-open">Khi mở truyện</option>
+                  <option value="reader">Khi đọc</option>
+                  {editAdModal.placement && !['home', 'book-open', 'reader'].includes(editAdModal.placement) ? (
+                    <option value={editAdModal.placement}>{editAdModal.placement === 'interstitial' ? 'Toàn màn hình (cũ)' : editAdModal.placement === 'banner' ? 'Banner (cũ)' : editAdModal.placement}</option>
+                  ) : null}
                 </select>
                 <label>Trạng thái</label>
                 <select value={editAdModal.enabled ? '1' : '0'} onChange={e=>setEditAdModal({...editAdModal,enabled: e.target.value === '1'})}>
@@ -1655,7 +1720,7 @@ export default function App() {
 
           {/* Edit Genre Modal */}
           {editGenreModal && (
-            <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <div className="modal">
               <div style={{background:'#fff',padding:20,borderRadius:8,width:420,maxWidth:'95%'}}>
                 <h3>Sửa thể loại</h3>
                 <div style={{display:'grid',gap:8}}>

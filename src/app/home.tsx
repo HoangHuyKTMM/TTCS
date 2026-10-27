@@ -1,148 +1,55 @@
-import { StyleSheet, Text, View, TouchableOpacity, Image } from "react-native";
-import { Link, useRouter } from "expo-router";
-import { useEffect, useState } from 'react'
-import { Ionicons } from "@expo/vector-icons";
+import { Image, StyleSheet, Text, View, Pressable, ScrollView, useWindowDimensions } from 'react-native'
+import { useRouter } from 'expo-router'
+import { useEffect } from 'react'
+import { Ionicons } from '@expo/vector-icons'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import * as Auth from '../lib/auth'
-import { SafeAreaView } from "react-native-safe-area-context";
+import { AppColors, radius } from '../theme'
+import { useThemeStyles } from '../components/AppTheme'
 
 export default function HomePage() {
   const router = useRouter()
-  const [token, setToken] = useState<string | null>(null)
-  const [user, setUser] = useState<any | null>(null)
-
+  const { colors, styles } = useThemeStyles(createStyles)
+  const { width, height } = useWindowDimensions()
+  const compact = height < 740
+  const artHeight = Math.min(width - 48, compact ? 230 : 400)
   useEffect(() => {
-    let mounted = true
-    Auth.getToken().then(t => {
-      if (!mounted) return
-      setToken(t)
-      // If user is logged in, redirect to explore immediately
-      if (t) {
-        router.replace('/(tabs)/explore')
-      }
-    })
-    // also try to read saved user info for greeting
-    Auth.getUser().then(u => { if (!mounted) return; setUser(u) })
-    return () => { mounted = false }
-  }, [])
+    let active = true
+    Auth.getToken().then(token => { if (active && token) router.replace('/(tabs)/explore') })
+    return () => { active = false }
+  }, [router])
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        {/* Logo/Icon */}
-        <View style={styles.logoContainer}>
-          <View style={styles.logoCircle}>
-            <Ionicons name="book" size={48} color="#1088ff" />
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <View style={styles.content}>
+          <View style={[styles.artSection, { height: artHeight, marginBottom: compact ? 24 : 40 }]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            <Image source={require('../assets/welcome-characters.png')} style={styles.characterArt} resizeMode="contain" accessible={false} />
+          </View>
+          <View style={styles.actions}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Đăng nhập" onPress={() => router.push('/(auth)/login')} style={({ pressed }) => [styles.primaryButton, pressed && { backgroundColor: colors.accentDark }]}>
+                <Text style={styles.primaryText}>Đăng nhập</Text><Ionicons name="arrow-forward" size={19} color={colors.onAccent} />
+              </Pressable>
+              <Pressable accessibilityRole="button" accessibilityLabel="Tạo tài khoản mới" onPress={() => router.push('/(auth)/register')} style={({ pressed }) => [styles.secondaryButton, pressed && { backgroundColor: colors.surfaceSubtle }]}><Text style={styles.secondaryText}>Tạo tài khoản mới</Text></Pressable>
+              <Pressable accessibilityRole="button" accessibilityLabel="Khám phá không cần đăng nhập" onPress={() => router.push('/(tabs)/explore')} style={({ pressed }) => [styles.guestButton, pressed && { opacity: 0.7 }]}><Text style={styles.guestText}>Khám phá không cần đăng nhập</Text><Ionicons name="arrow-forward" size={15} color={colors.textSecondary} /></Pressable>
           </View>
         </View>
-
-        {/* Title */}
-        <View style={styles.titleContainer}>
-          <Text style={styles.title}>Reader App</Text>
-          <Text style={styles.subtitle}>Khám phá thế giới truyện{'\n'}ngay trong tầm tay bạn</Text>
-        </View>
-
-        {/* Buttons */}
-        <View style={styles.actions}>
-          <Link href={'/(auth)/login' as any} asChild>
-            <TouchableOpacity style={styles.buttonPrimary}>
-              <Text style={styles.buttonPrimaryText}>Đăng nhập</Text>
-            </TouchableOpacity>
-          </Link>
-
-          <Link href={'/(auth)/register' as any} asChild>
-            <TouchableOpacity style={styles.buttonSecondary}>
-              <Text style={styles.buttonSecondaryText}>Tạo tài khoản mới</Text>
-            </TouchableOpacity>
-          </Link>
-        </View>
-
-        {/* Skip */}
-        <Link href={'/(tabs)/explore' as any} asChild>
-          <TouchableOpacity style={styles.skipButton}>
-            <Text style={styles.skipText}>Khám phá không cần đăng nhập</Text>
-            <Ionicons name="arrow-forward" size={16} color="#1088ff" />
-          </TouchableOpacity>
-        </Link>
-      </View>
+      </ScrollView>
     </SafeAreaView>
-  );
+  )
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: 24,
-    justifyContent: "center",
-  },
-  logoContainer: {
-    alignItems: "center",
-    marginBottom: 32,
-  },
-  logoCircle: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: "#f0f7ff",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  titleContainer: {
-    alignItems: "center",
-    marginBottom: 48,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: "700",
-    color: "#111827",
-    marginBottom: 12,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: "#6b7280",
-    textAlign: "center",
-    lineHeight: 24,
-  },
-  actions: {
-    gap: 12,
-  },
-  buttonPrimary: {
-    height: 52,
-    backgroundColor: "#111827",
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  buttonPrimaryText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  buttonSecondary: {
-    height: 52,
-    backgroundColor: "#f2f4f7",
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  buttonSecondaryText: {
-    color: "#111827",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  skipButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 24,
-    gap: 6,
-  },
-  skipText: {
-    color: "#1088ff",
-    fontSize: 14,
-    fontWeight: "500",
-  },
-});
+const createStyles = (colors: AppColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.bg },
+  scroll: { flexGrow: 1, alignItems: 'center' },
+  content: { width: '100%', maxWidth: 460, flexGrow: 1, paddingHorizontal: 24, paddingVertical: 32, justifyContent: 'center' },
+  artSection: { alignItems: 'center', justifyContent: 'center' },
+  characterArt: { width: '100%', height: '100%' },
+  actions: { gap: 10 },
+  primaryButton: { minHeight: 54, borderRadius: radius.lg, backgroundColor: colors.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
+  primaryText: { color: colors.onAccent, fontSize: 16, fontWeight: '700' },
+  secondaryButton: { minHeight: 52, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' },
+  secondaryText: { color: colors.text, fontSize: 15, fontWeight: '600' },
+  guestButton: { minHeight: 44, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 7 },
+  guestText: { color: colors.textSecondary, fontSize: 12, fontWeight: '500' },
+})

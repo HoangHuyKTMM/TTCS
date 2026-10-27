@@ -1,5 +1,8 @@
+import { useThemeStyles } from '../components/AppTheme'
+import { type AppColors } from '../theme'
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { StyleSheet, Text, View, ScrollView, Pressable, TextInput, Alert, Image, RefreshControl } from "react-native";
+import { StyleSheet, Text, View, Pressable, TextInput, Alert, Image, RefreshControl } from "react-native";
+import KeyboardSafeScroll from "../components/KeyboardSafe";
 import { Link, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
@@ -7,7 +10,9 @@ import { useDebouncedNavigation } from '../lib/navigation'
 import * as Auth from "../lib/auth";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import QRPaymentModal from "../components/QRPaymentModal";
+import ChapterImportModal from "../components/ChapterImportModal";
 import {
   apiGetMe,
   apiGetWallet,
@@ -35,6 +40,8 @@ const AUTHOR_COST_BASE = 800;
 const AUTHOR_COST_VIP = 300;
 
 export default function ProfileScreen() {
+  const { colors, styles, preference, setPreference } = useThemeStyles(createStyles)
+
   const router = useRouter();
   const { navigate } = useDebouncedNavigation()
   const [token, setToken] = useState<string | null>(null);
@@ -46,6 +53,7 @@ export default function ProfileScreen() {
   const [topupRequests, setTopupRequests] = useState<any[]>([]);
   const [authoredBooks, setAuthoredBooks] = useState<any[]>([]);
   const [activeChapterBookId, setActiveChapterBookId] = useState<string | null>(null);
+  const [importChapterBookId, setImportChapterBookId] = useState<string | null>(null);
   const [chapterInputs, setChapterInputs] = useState<Record<string, ChapterInput>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [showQRPayment, setShowQRPayment] = useState(false);
@@ -174,8 +182,7 @@ export default function ProfileScreen() {
   );
 
   const handleLogout = async () => {
-    await Auth.removeToken();
-    await Auth.removeUser();
+    try { await Auth.logout(); } catch (e) { console.error(e) }
     setToken(null);
     setHasUnreadNotifs(false);
     setUser(null);
@@ -189,7 +196,6 @@ export default function ProfileScreen() {
 
   const handleShowQRPayment = () => {
     const coins = Number(topupCoins || 0);
-    const amount = Number(topupAmount || 0);
     if (!coins || coins <= 0) return Alert.alert("Lỗi", "Vui lòng nhập số xu hợp lệ.");
     if (!token) return Alert.alert("Lỗi", "Bạn cần đăng nhập.");
     setShowQRPayment(true);
@@ -322,7 +328,16 @@ export default function ProfileScreen() {
     if (!input || !input.title || !input.content) return Alert.alert("Lỗi", "Nhập tiêu đề và nội dung chương.");
     const res: any = await apiCreateChapter(bookId, { title: input.title, content: input.content }, token);
     if (res && res.error) return Alert.alert("Lỗi", res.message || "Không thể đăng chương");
-    Alert.alert("Thành công", "Đăng chương thành công.");
+
+    if (res && res.status === "pending_review") {
+      Alert.alert(
+        "Đã gửi chương (Chờ Admin duyệt)",
+        "Chương đã được lưu và đang chờ quản trị viên kiểm duyệt trước khi xuất bản."
+      );
+    } else {
+      Alert.alert("Thành công", "Đăng chương thành công và đã xuất bản.");
+    }
+
     setChapterInputs((prev) => ({ ...prev, [bookId]: { title: "", content: "" } }));
     setActiveChapterBookId(null);
     loadAuthoredBooks(token);
@@ -337,7 +352,8 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView
+      <KeyboardSafeScroll
+        style={{ flex: 1 }}
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshAll} />}
       >
@@ -350,7 +366,7 @@ export default function ProfileScreen() {
                 const initial = user?.name?.[0]?.toUpperCase() || "🙂";
                 return (
                   <View style={[styles.avatarImg, { justifyContent: "center", alignItems: "center" }]}>
-                    <Text style={{ fontSize: 22, color: '#fff', fontWeight: '800' }}>{initial}</Text>
+                    <Text style={{ fontSize: 22, color: colors.onSecondary, fontWeight: '800' }}>{initial}</Text>
                   </View>
                 );
               })()}
@@ -361,37 +377,29 @@ export default function ProfileScreen() {
                   <Text style={styles.loginPrompt}>
                     {user.fullname || user.name || (user.email ? user.email.split('@')[0] : "Thành viên")}
                   </Text>
-                  <Text style={{ fontSize: 13, color: '#64748b' }}>Hội viên từ {user.created_at ? new Date(user.created_at).toLocaleDateString('vi-VN') : '2025'}</Text>
+                  <Text style={{ fontSize: 13, color: colors.textSecondary }}>Hội viên từ {user.created_at ? new Date(user.created_at).toLocaleDateString('vi-VN') : '2025'}</Text>
                 </View>
               ) : (
                 <View>
                   <Text style={styles.loginPrompt}>Khách</Text>
                   <Link href="/(auth)/login" asChild>
-                    <Pressable><Text style={{ color: '#1088ff', fontWeight: '600' }}>Đăng nhập ngay</Text></Pressable>
+                    <Pressable><Text style={{ color: colors.accentText, fontWeight: '600' }}>Đăng nhập ngay</Text></Pressable>
                   </Link>
                 </View>
               )}
             </View>
           </View>
 
-          {/* Stats Row */}
-          <View style={styles.statsRow}>
-            <View style={styles.statItem}>
-              <View style={styles.statIconWrap}><Ionicons name="wallet-outline" size={18} color="#1088ff" /></View>
-              <View style={{ marginLeft: 10 }}>
-                <Text style={styles.statLabel}>Số dư</Text>
-                <Text style={styles.statValue}>{wallet ? (wallet.coins ?? 0) : 0} xu</Text>
-              </View>
+          <LinearGradient colors={['#FEF3C7', '#FDE68A']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.walletCard}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.walletLabel}>Số dư xu</Text>
+              <Text style={styles.walletValue}>{wallet ? (wallet.coins ?? 0) : 0}</Text>
+              <Text style={styles.walletRank}>{roleLabelWithDays}</Text>
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <View style={styles.statIconWrap}><Ionicons name="medal-outline" size={18} color="#f59e0b" /></View>
-              <View style={{ marginLeft: 10 }}>
-                <Text style={styles.statLabel}>Hạng</Text>
-                <Text style={styles.statValue}>{roleLabelBase}</Text>
-              </View>
+            <View style={styles.walletIcon}>
+              <Ionicons name="wallet" size={28} color={colors.onVip} />
             </View>
-          </View>
+          </LinearGradient>
         </View>
 
         {token && user && (
@@ -426,8 +434,47 @@ export default function ProfileScreen() {
 
         {token && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>💳 Nạp xu</Text>
-            <Text style={styles.inputLabel}>Số xu</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Text style={styles.sectionTitle}>⚡ Nạp xu tự động (SePay)</Text>
+              <Text style={{ fontSize: 12, color: colors.secondaryText, fontWeight: '700' }}>Cộng xu 1-3s</Text>
+            </View>
+            <Text style={[styles.statLabel, { marginBottom: 12 }]}>Quét mã VietQR chuyển khoản, hệ thống SePay tự động cộng xu ngay lập tức.</Text>
+
+            {/* Quick Packages */}
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+              {[
+                { c: 100, a: 10000 },
+                { c: 200, a: 20000 },
+                { c: 500, a: 50000 },
+                { c: 1000, a: 100000 },
+              ].map((pkg) => {
+                const isSelected = topupCoins === String(pkg.c);
+                return (
+                  <Pressable
+                    key={pkg.c}
+                    onPress={() => {
+                      setTopupCoins(String(pkg.c));
+                      setTopupAmount(String(pkg.a));
+                    }}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 10,
+                      paddingHorizontal: 4,
+                      borderRadius: 10,
+                      borderWidth: 1.5,
+                      borderColor: isSelected ? colors.accent : colors.borderLight,
+                      backgroundColor: isSelected ? colors.accentSoft : colors.surface,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ fontWeight: '700', fontSize: 13, color: isSelected ? colors.accentDark : colors.text }}>{pkg.c} xu</Text>
+                    <Text style={{ fontSize: 11, color: isSelected ? colors.accent : colors.textSecondary, marginTop: 2 }}>{pkg.a.toLocaleString('vi-VN')}đ</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={styles.inputLabel}>Hoặc tùy chỉnh số xu</Text>
             <TextInput
               value={topupCoins}
               onChangeText={(v) => { setTopupCoins(v); setTopupAmount(String(computePriceForCoins(Number(v || 0)))); }}
@@ -437,19 +484,19 @@ export default function ProfileScreen() {
             <Text style={styles.inputLabel}>Số tiền (VNĐ)</Text>
             <TextInput
               value={topupAmount}
-              onChangeText={(v) => setTopupAmount(v)}
+              editable={false}
               keyboardType="numeric"
-              style={styles.input}
+              style={[styles.input, { backgroundColor: colors.surfaceSubtle, color: colors.textSecondary }]}
             />
             <Pressable style={styles.topupButton} onPress={handleShowQRPayment}>
-              <Text style={styles.topupButtonText}>Thanh toán ngay</Text>
+              <Text style={styles.topupButtonText}>⚡ Quét mã QR - Nạp tự động</Text>
             </Pressable>
             <View style={{ marginTop: 12 }}>
               <Text style={styles.inputLabel}>Yêu cầu gần đây</Text>
               {topupRequests && topupRequests.length > 0 ? (
                 topupRequests.slice(0, 3).map((r, idx) => (
                   <View key={r.request_id || idx} style={styles.topupRowItem}>
-                    <Text style={{ fontWeight: "700", color: "#0f172a" }}>{r.coins} xu</Text>
+                    <Text style={{ fontWeight: "700", color: colors.text }}>{r.coins} xu</Text>
                     <Text style={styles.statLabel}>{r.status === "approved" ? "đã duyệt" : r.status === "rejected" ? "từ chối" : r.status ? r.status : "đang chờ"} · {r.created_at ? String(r.created_at).substring(0, 10) : ""}</Text>
                   </View>
                 ))
@@ -466,7 +513,7 @@ export default function ProfileScreen() {
               <Text style={styles.sectionTitle}>✍️  Sáng tác truyện</Text>
               <Text style={styles.statLabel}>Tạo truyện mới hoặc đăng chương cho truyện của bạn.</Text>
               <Link href={{ pathname: "/author/create" } as any} asChild>
-                <Pressable style={[styles.topupButton, { marginTop: 10 }]}>
+                <Pressable style={StyleSheet.flatten([styles.topupButton, { marginTop: 10 }])}>
                   <Text style={styles.topupButtonText}>Đi tới trang sáng tác</Text>
                 </Pressable>
               </Link>
@@ -497,15 +544,25 @@ export default function ProfileScreen() {
                           </View>
                         </Pressable>
                       </Link>
-                      <Pressable
-                        style={[styles.chip, { alignSelf: "flex-start", marginTop: 6 }, isActive && styles.chipActive]}
-                        onPress={() => {
-                          setActiveChapterBookId(isActive ? null : bid);
-                          setTimeout(() => ensureChapterInput(bid), 0);
-                        }}
-                      >
-                        <Text style={[styles.chipText, isActive && styles.chipTextActive]}>{isActive ? "Đóng" : "Đăng chương"}</Text>
-                      </Pressable>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+                        <Pressable
+                          style={[styles.chip, isActive && styles.chipActive]}
+                          onPress={() => {
+                            setActiveChapterBookId(isActive ? null : bid);
+                            setTimeout(() => ensureChapterInput(bid), 0);
+                          }}
+                        >
+                          <Text style={[styles.chipText, isActive && styles.chipTextActive]}>{isActive ? "Đóng" : "Đăng chương"}</Text>
+                        </Pressable>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Import chương Word hoặc văn bản cho ${b.title || 'truyện'}`}
+                          style={[styles.chip, { backgroundColor: colors.secondarySoft }]}
+                          onPress={() => setImportChapterBookId(bid)}
+                        >
+                          <Text style={[styles.chipText, { color: colors.secondaryText }]}>Import Word / văn bản</Text>
+                        </Pressable>
+                      </View>
                       {isActive && (
                         <View style={{ marginTop: 8, gap: 6 }}>
                           <Text style={styles.inputLabel}>Tiêu đề chương</Text>
@@ -543,6 +600,26 @@ export default function ProfileScreen() {
         )}
 
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Giao diện</Text>
+          <Text style={[styles.statLabel, { marginBottom: 12 }]}>Chọn không gian đọc phù hợp với bạn.</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {([
+              { value: 'light', label: 'Sáng', icon: 'sunny-outline' },
+              { value: 'dark', label: 'Tối', icon: 'moon-outline' },
+              { value: 'system', label: 'Hệ thống', icon: 'phone-portrait-outline' },
+            ] as const).map(option => (
+              <Pressable key={option.value} accessibilityRole="button" accessibilityLabel={option.label} accessibilityState={{ selected: preference === option.value }} onPress={() => setPreference(option.value)}
+                style={{ flex: 1, minHeight: 64, gap: 6, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1,
+                  backgroundColor: preference === option.value ? colors.accentSoft : colors.surfaceSubtle,
+                  borderColor: preference === option.value ? colors.accentText : colors.borderLight }}>
+                <Ionicons name={option.icon} size={20} color={preference === option.value ? colors.accentText : colors.textSecondary} />
+                <Text style={{ fontSize: 12, fontWeight: '600', color: preference === option.value ? colors.accentText : colors.textSecondary }}>{option.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>⚙️ Cài đặt</Text>
           {LIST_ITEMS.map((it, idx) => (
             <Pressable
@@ -558,18 +635,27 @@ export default function ProfileScreen() {
                 <Text style={styles.listItemLeft}>{it.label}</Text>
                 {it.key === "notifications" && token && hasUnreadNotifs ? <View style={styles.unreadDot} /> : null}
               </View>
-              <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
+              <Ionicons name="chevron-forward" size={18} color={colors.border} />
             </Pressable>
           ))}
         </View>
 
         {token && (
           <Pressable style={styles.logoutFooterBtn} onPress={handleLogout}>
-            <Ionicons name="log-out-outline" size={20} color="#ef4444" />
+            <Ionicons name="log-out-outline" size={20} color={colors.danger} />
             <Text style={styles.logoutFooterText}>Đăng xuất tài khoản</Text>
           </Pressable>
         )}
-      </ScrollView>
+      </KeyboardSafeScroll>
+
+      {token && importChapterBookId && (
+        <ChapterImportModal
+          bookId={importChapterBookId}
+          token={token}
+          onClose={() => setImportChapterBookId(null)}
+          onImported={() => { loadAuthoredBooks(token) }}
+        />
+      )}
 
       <QRPaymentModal
         visible={showQRPayment}
@@ -577,28 +663,25 @@ export default function ProfileScreen() {
           setShowQRPayment(false);
         }}
         onPaymentSuccess={(wallet) => {
-          // Wallet already credited by backend, just refresh UI
           if (wallet) {
             updateWalletState(wallet);
           }
           refreshWalletOnly();
           Alert.alert("Thành công", "Xu đã được cộng vào tài khoản!");
         }}
-        amount={Number(topupAmount || 0)}
         coins={Number(topupCoins || 0)}
-        userId={user?.id || user?.user_id}
         token={token || undefined}
       />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f8fafc" },
+const createStyles = (colors: AppColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: 16, paddingBottom: 120 },
 
   headerCard: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 20,
     shadowColor: "#000",
@@ -609,24 +692,29 @@ const styles = StyleSheet.create({
   },
   headerRow: { flexDirection: "row", alignItems: "center", gap: 16 },
   avatarPress: { width: 64, height: 64 },
-  avatarImg: { width: 64, height: 64, borderRadius: 32, backgroundColor: "#10b981", overflow: "hidden" },
-  loginPrompt: { fontSize: 18, fontWeight: "800", color: "#111827" },
-  statsRow: { flexDirection: "row", marginTop: 24, backgroundColor: "#f8fafc", borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#f1f5f9' },
+  avatarImg: { width: 64, height: 64, borderRadius: 32, backgroundColor: colors.secondary, overflow: "hidden" },
+  loginPrompt: { fontSize: 18, fontWeight: "800", color: colors.text },
+  walletCard: { flexDirection: 'row', alignItems: 'center', marginTop: 20, borderRadius: 18, padding: 16 },
+  walletLabel: { color: colors.onVip, fontSize: 12, fontWeight: '600' },
+  walletValue: { color: colors.onVip, fontSize: 28, fontWeight: '800', marginTop: 2 },
+  walletRank: { color: colors.onVip, fontSize: 13, marginTop: 4, fontWeight: '600' },
+  walletIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(64,48,31,0.08)', alignItems: 'center', justifyContent: 'center' },
+  statsRow: { flexDirection: "row", marginTop: 24, backgroundColor: colors.bg, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: colors.surfaceSubtle },
   statItem: { flex: 1, flexDirection: "row", alignItems: "center" },
-  statIconWrap: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 },
-  statDivider: { width: 1, height: 32, backgroundColor: "#e2e8f0", marginHorizontal: 12 },
+  statIconWrap: { width: 32, height: 32, borderRadius: 10, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 },
+  statDivider: { width: 1, height: 32, backgroundColor: colors.borderLight, marginHorizontal: 12 },
 
-  badgePrimary: { backgroundColor: "#1088ff", borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 },
-  badgePrimaryText: { color: "#fff", fontWeight: "700", fontSize: 12 },
-  badgeSecondary: { backgroundColor: "#e0f2f1", borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 },
-  badgeSecondaryText: { color: "#0a9396", fontWeight: "700", fontSize: 12 },
+  badgePrimary: { backgroundColor: colors.accent, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 },
+  badgePrimaryText: { color: colors.onAccent, fontWeight: "700", fontSize: 12 },
+  badgeSecondary: { backgroundColor: colors.secondarySoft, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 },
+  badgeSecondaryText: { color: colors.secondaryText, fontWeight: "700", fontSize: 12 },
 
-  statLabel: { color: "#64748b", fontSize: 12, fontWeight: "500" },
-  statValue: { color: "#111827", fontWeight: "700", fontSize: 16, marginTop: 2 },
+  statLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: "500" },
+  statValue: { color: colors.text, fontWeight: "700", fontSize: 16, marginTop: 2 },
 
   section: {
     marginTop: 14,
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 14,
     shadowColor: "#000",
@@ -635,45 +723,45 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 2,
   },
-  sectionTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a", marginBottom: 8 },
+  sectionTitle: { fontSize: 16, fontWeight: "700", color: colors.text, marginBottom: 8 },
 
-  cardRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#f1f5f9", padding: 12, borderRadius: 12, marginTop: 8 },
-  cardTitle: { fontSize: 15, fontWeight: "700", color: "#0f172a" },
-  cardSubtitle: { fontSize: 13, color: "#475569", marginTop: 2 },
+  cardRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: colors.surfaceSubtle, padding: 12, borderRadius: 12, marginTop: 8 },
+  cardTitle: { fontSize: 15, fontWeight: "700", color: colors.text },
+  cardSubtitle: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
 
-  chip: { backgroundColor: "#0f172a", borderRadius: 16, paddingHorizontal: 10, paddingVertical: 6 },
-  chipText: { color: "#fff", fontWeight: "700" },
-  chipActive: { backgroundColor: "#e0f2f1", borderWidth: 1, borderColor: "#0a9396" },
-  chipTextActive: { color: "#0a9396" },
+  chip: { backgroundColor: colors.accent, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 6 },
+  chipText: { color: colors.onAccent, fontWeight: "700" },
+  chipActive: { backgroundColor: colors.secondarySoft, borderWidth: 1, borderColor: colors.secondary },
+  chipTextActive: { color: colors.secondaryText },
 
-  inputLabel: { color: "#1f2937", marginTop: 8, marginBottom: 4, fontWeight: "600", fontSize: 14 },
-  input: { borderWidth: 1, borderColor: "#f3f4f6", borderRadius: 12, padding: 12, backgroundColor: "#f9fafb" },
-  textArea: { minHeight: 100, borderWidth: 1, borderColor: "#f3f4f6", borderRadius: 12, padding: 12, backgroundColor: "#f9fafb", textAlignVertical: "top" },
+  inputLabel: { color: colors.text, marginTop: 8, marginBottom: 4, fontWeight: "600", fontSize: 14 },
+  input: { color: colors.text, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 12, padding: 12, backgroundColor: colors.surfaceSubtle },
+  textArea: { color: colors.text, minHeight: 100, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 12, padding: 12, backgroundColor: colors.surfaceSubtle, textAlignVertical: "top" },
 
-  menuIconWrap: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center' },
+  menuIconWrap: { width: 32, height: 32, borderRadius: 8, backgroundColor: colors.surfaceSubtle, justifyContent: 'center', alignItems: 'center' },
 
   logoutFooterBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 32, marginBottom: 16, paddingVertical: 12 },
-  logoutFooterText: { color: '#ef4444', fontWeight: '700', fontSize: 15 },
+  logoutFooterText: { color: colors.dangerText, fontWeight: '700', fontSize: 15 },
 
-  topupButton: { backgroundColor: "#111827", paddingVertical: 14, borderRadius: 14, alignItems: "center", marginTop: 10 },
-  topupButtonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
+  topupButton: { backgroundColor: colors.accent, paddingVertical: 14, borderRadius: 14, alignItems: "center", marginTop: 10 },
+  topupButtonText: { color: colors.onAccent, fontWeight: "700", fontSize: 16 },
 
-  topupRowItem: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#f1f5f9" },
+  topupRowItem: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.surfaceSubtle },
 
-  createCard: { backgroundColor: "#fff", borderRadius: 16, padding: 14, marginTop: 14, shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 3, elevation: 2 },
+  createCard: { backgroundColor: colors.surface, borderRadius: 16, padding: 14, marginTop: 14, shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 3, elevation: 2 },
   authoredItemWrap: { paddingVertical: 10 },
   authoredItem: { flexDirection: "row", alignItems: "center", gap: 10 },
-  authoredIconWrap: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#e2e8f0", justifyContent: "center", alignItems: "center" },
-  authoredIcon: { fontSize: 18 },
-  authoredTitle: { fontSize: 15, fontWeight: "700", color: "#0f172a" },
-  authoredMeta: { color: "#475569", marginTop: 2 },
+  authoredIconWrap: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.borderLight, justifyContent: "center", alignItems: "center" },
+  authoredIcon: { color: colors.text, fontSize: 18 },
+  authoredTitle: { fontSize: 15, fontWeight: "700", color: colors.text },
+  authoredMeta: { color: colors.textSecondary, marginTop: 2 },
 
   listItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 12 },
-  listItemDivider: { borderTopWidth: 1, borderTopColor: "#f1f5f9" },
-  listItemLeft: { fontSize: 15, color: "#0f172a" },
-  listBadge: { backgroundColor: "#f97316", color: "#fff", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, fontWeight: "700" },
-  unreadDot: { width: 9, height: 9, borderRadius: 9, backgroundColor: "#ef4444" },
+  listItemDivider: { borderTopWidth: 1, borderTopColor: colors.surfaceSubtle },
+  listItemLeft: { fontSize: 15, color: colors.text },
+  listBadge: { backgroundColor: colors.accent, color: colors.onAccent, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, fontWeight: "700" },
+  unreadDot: { width: 9, height: 9, borderRadius: 9, backgroundColor: colors.danger },
 
-  fab: { position: "absolute", right: 20, bottom: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: "#111827", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.15, shadowRadius: 10, elevation: 5 },
-  fabText: { color: "#fff", fontSize: 20, fontWeight: "800" },
+  fab: { position: "absolute", right: 20, bottom: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: colors.text, alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.15, shadowRadius: 10, elevation: 5 },
+  fabText: { color: colors.onDark, fontSize: 20, fontWeight: "800" },
 });

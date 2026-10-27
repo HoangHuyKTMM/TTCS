@@ -1,36 +1,44 @@
+import { useThemeStyles } from '../../components/AppTheme'
 import React, { useMemo, useEffect, useState, useCallback } from "react";
-import { StyleSheet, Text, View, ScrollView, Pressable, ActivityIndicator, Image, Alert, TextInput, KeyboardAvoidingView, Platform } from "react-native";
+import { Platform, StyleSheet, Text, View, ScrollView, Pressable, ActivityIndicator, Image, Alert, TextInput } from "react-native";
+import KeyboardSafeScroll from "../../components/KeyboardSafe";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Link, useLocalSearchParams, useRouter } from "expo-router";
+import { Link, useLocalSearchParams } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from '@react-navigation/native'
 import { useDebouncedNavigation } from '../../lib/navigation'
+import { radius, cardShadow, cardShadowSm, type AppColors } from '../../theme'
+import { Cover, GenreChip, ScreenBack, SegmentedControl } from '../../components/ui'
 
-import { apiFetchBook, API_BASE, apiDonateCoins, apiLikeBook, apiUnlikeBook, apiFetchAuthors, apiFollowAuthor, apiUnfollowAuthor, apiFetchComments, apiPostComment, apiDeleteComment, apiGetWallet } from '../../lib/api'
+import { apiFetchBook, API_BASE, apiLikeBook, apiUnlikeBook, apiFetchAuthors, apiFollowAuthor, apiUnfollowAuthor, apiFetchComments, apiPostComment, apiDeleteComment, apiGetWallet } from '../../lib/api'
+import AuthorGiftCard from '../../components/AuthorGiftCard'
 import * as Auth from '../../lib/auth'
 import { shouldShowPlacement } from '../../lib/ads'
 import AdInterstitial from '../../components/AdInterstitial'
 import { downloadBookOffline, isBookDownloaded, removeOfflineBook } from '../../lib/offline'
 import { getReadingProgress } from '../../lib/reading'
-import { SkeletonLoader, BookCardSkeleton, CommentSkeleton, ChapterListSkeleton } from '../../components/SkeletonLoader'
+import { SkeletonLoader, CommentSkeleton, ChapterListSkeleton } from '../../components/SkeletonLoader'
 
 export default function BookDetailScreen() {
+  const { colors, styles } = useThemeStyles(createStyles)
+
   const { id } = useLocalSearchParams<{ id: string }>();
-  const router = useRouter()
   const { navigate, goBack } = useDebouncedNavigation()
   const [book, setBook] = useState<Book | null>(null)
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [bookAttempt, setBookAttempt] = useState(0)
   const [user, setUser] = useState<any | null>(null)
   const [userLoaded, setUserLoaded] = useState(false)
   const [entryAdVisible, setEntryAdVisible] = useState(false)
   const [offlineDownloaded, setOfflineDownloaded] = useState(false)
   const [offlineBusy, setOfflineBusy] = useState(false)
   const [offlineProgress, setOfflineProgress] = useState<{ done: number; total: number } | null>(null)
-  const [donateAmount, setDonateAmount] = useState<number>(50)
   const [likesCount, setLikesCount] = useState<number>(0)
   const [liked, setLiked] = useState<boolean>(false)
   const [comments, setComments] = useState<any[]>([])
   const [commentText, setCommentText] = useState<string>('')
-  const [revealedNegative, setRevealedNegative] = useState<Set<string>>(new Set())
+
   const [wallet, setWallet] = useState<any | null>(null)
   const [walletLoading, setWalletLoading] = useState<boolean>(false)
   const [commentBusy, setCommentBusy] = useState<boolean>(false)
@@ -44,6 +52,28 @@ export default function BookDetailScreen() {
 
   const [lastReadChapter, setLastReadChapter] = useState<number | null>(null)
   const [visibleComments, setVisibleComments] = useState<number>(5)
+  const [section, setSection] = useState('Giới thiệu')
+  const hasPendingComments = comments.some(c => String(c.user_id) === String(user?.id || user?.user_id)
+    && ['pending', 'shadowbanned'].includes(String(c.status)))
+
+  useFocusEffect(useCallback(() => {
+    if (!id || section !== 'Bình luận' || !hasPendingComments) return
+    let active = true, busy = false
+    const started = Date.now()
+    const timer = setInterval(async () => {
+      // Cover slow providers and durable retries while bounding background HTTP traffic.
+      if (Date.now() - started >= 120000) { clearInterval(timer); return }
+      if (!active || busy) return
+      busy = true
+      try {
+        const token = await Auth.getToken()
+        const rows = await apiFetchComments(String(id), token || undefined)
+        if (active && Array.isArray(rows)) setComments(rows)
+      } catch { /* Keep the pending badge if a refresh temporarily fails. */ }
+      finally { busy = false }
+    }, 5000)
+    return () => { active = false; clearInterval(timer) }
+  }, [id, section, hasPendingComments]))
 
   // Format thời gian bình luận (vừa xong, 5 phút trước, 2 giờ trước, etc.)
   const formatCommentTime = (timestamp: string | number | Date | null | undefined): string => {
@@ -126,8 +156,14 @@ export default function BookDetailScreen() {
       setUserLoaded(true)
     })
     refreshWallet()
+    if (id) {
+      getReadingProgress(String(id)).then((progress) => {
+        if (!active) return
+        if (progress && progress.chapterNo) setLastReadChapter(Number(progress.chapterNo))
+      }).catch(() => {})
+    }
     return () => { active = false }
-  }, [refreshWallet]))
+  }, [refreshWallet, id]))
 
   // Full-screen ad only once per session when opening any book.
   useEffect(() => {
@@ -141,6 +177,7 @@ export default function BookDetailScreen() {
     async function load() {
       if (!id) return
       setLoading(true)
+      setLoadError(null)
       try {
         const token = await Auth.getToken()
         const res: any = await apiFetchBook(String(id), token || undefined)
@@ -161,31 +198,39 @@ export default function BookDetailScreen() {
             stats: `${((res.chapters && res.chapters.length) || res.chapters_count || 0)} chương`,
             desc: res.description || res.desc || res.content || '',
             cover: res.cover_url ? (String(res.cover_url).startsWith('http') ? res.cover_url : `${API_BASE}${res.cover_url}`) : null,
-            chapters: Array.isArray(res.chapters) ? res.chapters.map((c: any, idx: number) => ({ id: String(c.id || c.chapter_id || `${id}-c${idx + 1}`), title: c.title || `Chương ${idx + 1}`, content: c.content || c.body || c.text || '' })) : []
+            chapters: Array.isArray(res.chapters) ? res.chapters.map((c: any, idx: number) => ({ id: String(c.id || c.chapter_id || `${id}-c${idx + 1}`), chapterNo: Number(c.chapter_no || c.chapterNo || idx + 1), title: c.title || `Chương ${idx + 1}`, content: c.content || c.body || c.text || '' })) : []
           }
           setBook(b)
+          setLoadError(null)
           setLikesCount(Number(res.likes_count || 0))
           setLiked(!!res.liked)
           refreshComments(String(res.id || res.story_id || id))
           
-          // Load reading progress
           const progress = await getReadingProgress(String(res.id || res.story_id || id))
           if (progress && progress.chapterNo) {
             setLastReadChapter(Number(progress.chapterNo))
+          } else {
+            setLastReadChapter(null)
           }
           return
         }
+        if (mounted) {
+          setBook(null)
+          setLoadError(res && res.message ? String(res.message) : 'Không tải được truyện.')
+        }
       } catch (e) {
         console.error('fetch book err', e)
+        if (mounted) {
+          setBook(null)
+          setLoadError('Không tải được truyện.')
+        }
       } finally {
         if (mounted) setLoading(false)
       }
-      // fallback to mock/default
-      setBook(defaultBook(id || 'unknown'))
     }
     load()
     return () => { mounted = false }
-  }, [id, loadAuthorMeta])
+  }, [id, loadAuthorMeta, bookAttempt])
 
   const isSelfAuthor = useMemo(() => {
     if (!user || !authorUserId) return false
@@ -250,12 +295,17 @@ export default function BookDetailScreen() {
     setOfflineProgress({ done: 0, total: 1 })
     try {
       const token = await Auth.getToken()
-      await downloadBookOffline(String(id), {
+      const saved: any = await downloadBookOffline(String(id), {
         token: token || undefined,
         onProgress: (p) => setOfflineProgress(p)
       })
       setOfflineDownloaded(true)
-      Alert.alert('Thành công', 'Đã tải truyện để đọc offline.')
+      if (saved && saved.partial) {
+        const count = Number(saved.savedCount || 0)
+        Alert.alert('Tải một phần', `Đã lưu ${count} chương. Các chương sau cần VIP.`)
+      } else {
+        Alert.alert('Thành công', 'Đã tải truyện để đọc offline.')
+      }
     } catch (e: any) {
       Alert.alert('Lỗi', e?.message ? e.message : String(e))
     } finally {
@@ -284,64 +334,6 @@ export default function BookDetailScreen() {
     ])
   }, [id, offlineBusy])
 
-  const walletCoins = useMemo(() => {
-    if (!wallet) return 0
-    return Number(wallet.coins ?? wallet.balance ?? wallet.coin_balance ?? 0) || 0
-  }, [wallet])
-
-  function handleSelectDonate(amount: number) {
-    setDonateAmount(amount)
-  }
-
-  async function performDonate(amount: number) {
-    const token = await Auth.getToken()
-    if (!token) {
-      Alert.alert('Cần đăng nhập', 'Hãy đăng nhập để tặng xu cho tác giả.')
-      return
-    }
-    if (!id) return
-    try {
-      const res: any = await apiDonateCoins(String(id), amount, undefined, token)
-      if (res && !res.error) {
-        Alert.alert('Cảm ơn bạn!', `Đã tặng ${amount} xu cho tác giả.`)
-        refreshWallet()
-      } else {
-        Alert.alert('Lỗi', String(res && (res.error || res.message) || 'Không rõ lỗi'))
-      }
-    } catch (e: any) {
-      console.error('donate err', e)
-      Alert.alert('Lỗi', e && e.message ? e.message : String(e))
-    }
-  }
-
-  async function handleConfirmDonate() {
-    const amount = donateAmount || 0
-    if (amount <= 0) {
-      Alert.alert('Thông báo', 'Chọn số xu muốn tặng trước khi xác nhận.')
-      return
-    }
-
-    const token = await Auth.getToken()
-    if (!token) {
-      Alert.alert('Cần đăng nhập', 'Hãy đăng nhập để tặng xu cho tác giả.')
-      return
-    }
-
-    if (wallet && walletCoins < amount) {
-      Alert.alert('Không đủ số dư', 'Số xu trong ví không đủ, vui lòng nạp thêm hoặc chọn mức tặng nhỏ hơn.')
-      return
-    }
-
-    Alert.alert(
-      'Xác nhận tặng quà',
-      `Bạn muốn tặng ${amount} xu cho tác giả?`,
-      [
-        { text: 'Hủy', style: 'cancel' },
-        { text: 'Tặng quà', onPress: () => performDonate(amount) }
-      ]
-    )
-  }
-
   async function handleToggleLike() {
     const token = await Auth.getToken()
     if (!token) {
@@ -366,7 +358,8 @@ export default function BookDetailScreen() {
 
   async function refreshComments(bookId: string) {
     try {
-      const list = await apiFetchComments(bookId)
+      const token = await Auth.getToken()
+      const list = await apiFetchComments(bookId, token || undefined)
       if (Array.isArray(list)) setComments(list)
     } catch (e) {
       // ignore
@@ -392,7 +385,7 @@ export default function BookDetailScreen() {
         // also refresh from server to sync status/order
         refreshComments(String(id))
       } else {
-        Alert.alert('Lỗi', String(res?.error || 'Không gửi được bình luận'))
+        Alert.alert('Lỗi', String(res?.message || res?.error || 'Không gửi được bình luận'))
       }
     } catch (e: any) {
       Alert.alert('Lỗi', e?.message ? e.message : String(e))
@@ -430,11 +423,24 @@ export default function BookDetailScreen() {
     ])
   }
 
+  if (!book && !loading && loadError) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700', textAlign: 'center' }}>{loadError}</Text>
+          <Pressable onPress={() => setBookAttempt((n) => n + 1)} style={{ marginTop: 16, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, backgroundColor: colors.accent }}>
+            <Text style={{ color: colors.onAccent, fontWeight: '800' }}>Thử lại</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    )
+  }
+
   // Defensive render: don't attempt to render full UI until we have a book object.
   if (!book) {
     return (
       <SafeAreaView style={styles.container}>
-        <ScrollView style={styles.scroll}>
+        <ScrollView contentContainerStyle={styles.scroll}>
           {/* Header Skeleton */}
           <View style={styles.headerRow}>
             <SkeletonLoader width={96} height={128} borderRadius={12} />
@@ -474,24 +480,31 @@ export default function BookDetailScreen() {
       </SafeAreaView>
     )
   }
+  const chapterCount = (book?.chapters || []).length
+  const readHref = { pathname: "/reader/[id]", params: { id: id || (book ? book.id : ''), ch: String(lastReadChapter || book?.chapters[0]?.chapterNo || 1) } } as any
+
   return (
-    <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
-        style={{ flex: 1 }}
-      >
-        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <ScreenBack
+        title={book.title}
+        onBack={goBack}
+        right={
+          <Pressable onPress={handleToggleLike} hitSlop={8}>
+            <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? colors.danger : colors.text} />
+          </Pressable>
+        }
+      />
+      <KeyboardSafeScroll contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
           <View style={styles.headerRow}>
-            {book.cover ? (
-              <Image source={{ uri: book.cover }} style={styles.coverLg} />
-            ) : (
-              <View style={styles.coverLg} />
-            )}
+            <Cover uri={book.cover} width={118} height={160} radius={14} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.title} numberOfLines={2}>{book ? book.title : '...'}</Text>
-              <Text style={styles.meta} numberOfLines={1}>{book ? book.tags.join(" / ") : ''}</Text>
-              <Text style={styles.meta2}>{`${(book?.chapters || []).length} chương · ${likesCount} yêu thích`}</Text>
+              <Text style={styles.title}>{book ? book.title : '...'}</Text>
+              <View style={styles.tagRow}>
+                {(book.tags || []).slice(0, 3).map((tag) => (
+                  <GenreChip key={tag} label={tag} />
+                ))}
+              </View>
+              <Text style={styles.meta2}>{`${chapterCount} chương · ${likesCount} yêu thích`}</Text>
 
               {!!authorId && (
                 <View style={styles.authorRow}>
@@ -526,65 +539,52 @@ export default function BookDetailScreen() {
 
               <View style={styles.actionRow}>
                 {offlineDownloaded ? (
-                  <Pressable disabled={offlineBusy} onPress={handleRemoveOffline} style={[styles.btnSecondary, { paddingHorizontal: 10 }]}>
+                  <Pressable disabled={offlineBusy} onPress={handleRemoveOffline} style={styles.btnSecondary}>
+                    <Ionicons name="checkmark-circle" size={16} color={colors.success} />
                     <Text style={styles.btnSecondaryText}>{offlineBusy ? '...' : 'Đã tải'}</Text>
                   </Pressable>
                 ) : (
-                  <Pressable disabled={offlineBusy} onPress={handleDownloadOffline} style={[styles.btnSecondary, { paddingHorizontal: 10 }]}>
-                    <Text style={styles.btnSecondaryText}>{offlineBusy ? `Tải (${offlineProgress?.done || 0}/${offlineProgress?.total || 0})` : 'Tải về'}</Text>
+                  <Pressable disabled={offlineBusy} onPress={handleDownloadOffline} style={styles.btnSecondary}>
+                    <Ionicons name="download-outline" size={16} color={colors.accentText} />
+                    <Text style={styles.btnSecondaryText}>{offlineBusy ? `${offlineProgress?.done || 0}/${offlineProgress?.total || 0}` : 'Tải về'}</Text>
                   </Pressable>
                 )}
-
-                {lastReadChapter ? (
-                  <Link href={{ pathname: "/reader/[id]", params: { id: id || (book ? book.id : ''), ch: String(lastReadChapter) } } as any} asChild>
-                    <Pressable style={styles.btnPrimary}><Text style={styles.btnPrimaryText}>Đọc tiếp chương {lastReadChapter}</Text></Pressable>
-                  </Link>
-                ) : (
-                  <Link href={{ pathname: "/reader/[id]", params: { id: id || (book ? book.id : ''), ch: "1" } } as any} asChild>
-                    <Pressable style={styles.btnPrimary}><Text style={styles.btnPrimaryText}>Đọc từ đầu</Text></Pressable>
-                  </Link>
-                )}
-                
-                <Pressable onPress={handleToggleLike} style={[styles.btnSecondary, liked && styles.btnSecondaryActive, { paddingHorizontal: 10 }]}>
-                  <Text style={[styles.btnSecondaryText, liked && styles.btnSecondaryTextActive]}>{liked ? 'Đã thích' : 'Yêu thích'}</Text>
-                </Pressable>
               </View>
             </View>
           </View>
 
+          <View style={{ marginTop: 16 }}>
+            <SegmentedControl tabs={['Giới thiệu', 'Chương', 'Bình luận']} value={section} onChange={setSection} />
+          </View>
+
+          {section === 'Giới thiệu' && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Giới thiệu</Text>
             <Text style={styles.desc}>{book ? book.desc : ''}</Text>
           </View>
+          )}
 
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Ủng hộ tác giả</Text>
-            <Text style={styles.meta}>Dùng xu để động viên tác giả tiếp tục ra chương mới.</Text>
-            <View style={styles.donateRow}>
-              {[50, 100, 200].map((amt) => (
-                <Pressable key={amt} onPress={() => handleSelectDonate(amt)} style={[styles.donateBtn, donateAmount === amt && styles.donateBtnActive]}>
-                  <Text style={[styles.donateText, donateAmount === amt && styles.donateTextActive]}>{amt} xu</Text>
-                </Pressable>
-              ))}
-            </View>
-            <View style={styles.donateActionRow}>
-              <Text style={styles.meta}>
-                {walletLoading ? 'Đang lấy số dư...' : `Đang chọn: ${donateAmount} xu${wallet ? ` · Số dư: ${walletCoins} xu` : ''}`}
-              </Text>
-              <Pressable onPress={handleConfirmDonate} style={[styles.btnPrimary, styles.donateConfirmBtn]}>
-                <Text style={styles.btnPrimaryText}>Tặng quà</Text>
-              </Pressable>
-            </View>
-          </View>
+          {section === 'Giới thiệu' && (
+          <AuthorGiftCard
+            bookId={String(id || '')}
+            user={user}
+            userLoaded={userLoaded}
+            wallet={wallet}
+            walletLoading={walletLoading}
+            isSelfAuthor={isSelfAuthor}
+            onWalletRefresh={refreshWallet}
+          />
+          )}
 
+          {section === 'Chương' && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Danh sách chương</Text>
             {(book ? book.chapters : []).map((ch, idx) => {
-              const chapterNum = idx + 1
+              const chapterNum = ch.chapterNo || idx + 1
               const isLastRead = lastReadChapter === chapterNum
               return (
                 <Link key={ch.id} href={{ pathname: "/reader/[id]", params: { id: id || (book ? book.id : ''), ch: String(chapterNum) } } as any} asChild>
-                  <Pressable style={[styles.chapterRow, idx !== 0 && styles.rowDivider, isLastRead && styles.lastReadChapter]}>
+                  <Pressable style={StyleSheet.flatten([styles.chapterRow, idx !== 0 && styles.rowDivider, isLastRead && styles.lastReadChapter])}>
                     <Text style={[styles.chapterText, isLastRead && styles.lastReadText]} numberOfLines={1}>
                       Ch. {chapterNum} · {ch.title}
                       {isLastRead && ' 📖'}
@@ -594,7 +594,9 @@ export default function BookDetailScreen() {
               )
             })}
           </View>
+          )}
 
+          {section === 'Bình luận' && (
           <View style={[styles.card, { marginBottom: 24 }]}>
             <View id="comment-section">
               <Text style={styles.cardTitle}>Bình luận</Text>
@@ -612,25 +614,38 @@ export default function BookDetailScreen() {
                   style={[styles.sendBtn, commentBusy && { opacity: 0.7 }]}
                 >
                   {commentBusy ? (
-                    <ActivityIndicator size="small" color="#fff" />
+                    <ActivityIndicator size="small" color={colors.onAccent} />
                   ) : (
                     <Text style={styles.sendBtnText}>Gửi</Text>
                   )}
                 </Pressable>
               </View>
             </View>
-            {comments.length === 0 ? (
-              <View style={styles.emptyBox}><Text style={styles.meta}>Chưa có bình luận</Text></View>
-            ) : (
+            {(() => {
+              const myId = user ? String(user.id || user.user_id) : ''
+              const feed = comments.filter((c) => {
+                const status = String(c.status || 'approved')
+                const isMine = !!(myId && c && c.user_id && String(c.user_id) === myId)
+                if (status === 'approved') return true
+                return isMine && (status === 'shadowbanned' || status === 'pending')
+              })
+              if (feed.length === 0) {
+                return <View style={styles.emptyBox}><Text style={styles.meta}>Chưa có bình luận</Text></View>
+              }
+              return (
               <>
-                {comments.slice(0, visibleComments).map((c, idx) => {
-                  // IMPORTANT: Ensure we handle both boolean and truthy/falsy values from API
-                  const isNegative = c.is_negative === true || c.is_negative === 1 || String(c.is_negative) === 'true'
-                  const isHidden = isNegative && !revealedNegative.has(c.id)
-                  const myId = user ? String(user.id || user.user_id) : null
-                  const isMine = !!(myId && c && c.user_id && String(c.user_id) === String(myId))
+                {feed.slice(0, visibleComments).map((c, idx) => {
+                  const status = String(c.status || 'approved')
+                  const myIdRow = user ? String(user.id || user.user_id) : null
+                  const isMine = !!(myIdRow && c && c.user_id && String(c.user_id) === String(myIdRow))
+                  const isShadow = isMine && status === 'shadowbanned'
+                  const isPending = isMine && status === 'pending'
+                  const ownLabel = isShadow
+                    ? 'Vi phạm (Chỉ bạn thấy)'
+                    : isPending
+                      ? c.awaiting_admin ? 'Chờ quản trị viên duyệt' : 'Đang kiểm duyệt'
+                      : null
                   
-                  // Handle avatar URL from multiple possible fields
                   const avatarUrl = c.user_avatar || c.avatar_url || c.avatar || null
                   const fullAvatarUrl = avatarUrl 
                     ? (avatarUrl.startsWith('http') ? avatarUrl : `${API_BASE}${avatarUrl.startsWith('/') ? '' : '/'}${avatarUrl}`)
@@ -657,36 +672,42 @@ export default function BookDetailScreen() {
                             </Pressable>
                           ) : null}
                         </View>
-                        {isHidden ? (
-                          <Pressable onPress={() => setRevealedNegative(prev => new Set(prev).add(c.id))}>
-                            <View style={styles.hiddenComment}>
-                              <Text style={styles.hiddenCommentText}>Tin nhắn bị ẩn vì nội dung tiêu cực. Nhấn để xem.</Text>
-                            </View>
-                          </Pressable>
-                        ) : (
-                          <>
-                            <Text style={[styles.commentText, isNegative && styles.negativeComment]}>{c.content}</Text>
-                            {(c.created_at || c.timestamp) && (
-                              <Text style={styles.commentTime}>
-                                {formatCommentTime(c.created_at || c.timestamp)}
-                              </Text>
-                            )}
-                          </>
+                        {ownLabel ? <Text style={[styles.commentBadge, isShadow && styles.commentBadgeShadow]}>{ownLabel}</Text> : null}
+                        <Text style={styles.commentText}>{c.content}</Text>
+                        {(c.created_at || c.timestamp) && (
+                          <Text style={styles.commentTime}>
+                            {formatCommentTime(c.created_at || c.timestamp)}
+                          </Text>
                         )}
                       </View>
                     </View>
                   )
                 })}
-                {visibleComments < comments.length && (
+                {visibleComments < feed.length && (
                   <Pressable onPress={() => setVisibleComments(prev => prev + 5)} style={styles.loadMoreBtn}>
-                    <Text style={styles.loadMoreText}>Xem thêm bình luận ({comments.length - visibleComments} còn lại)</Text>
+                    <Text style={styles.loadMoreText}>Xem thêm bình luận ({feed.length - visibleComments} còn lại)</Text>
                   </Pressable>
                 )}
               </>
-            )}
+              )
+            })()}
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+          )}
+        </KeyboardSafeScroll>
+
+      <View style={styles.stickyBar}>
+        <Pressable onPress={handleToggleLike} style={styles.stickyIcon}>
+          <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? colors.danger : colors.text} />
+          <Text style={styles.stickyIconLabel}>{likesCount}</Text>
+        </Pressable>
+        <Link href={readHref} asChild>
+          <Pressable style={styles.stickyCta}>
+            <Text style={styles.stickyCtaText}>
+              {lastReadChapter ? `Đọc tiếp chương ${lastReadChapter}` : 'Đọc từ đầu'}
+            </Text>
+          </Pressable>
+        </Link>
+      </View>
 
       <AdInterstitial
         visible={entryAdVisible}
@@ -697,17 +718,6 @@ export default function BookDetailScreen() {
   );
 }
 
-function defaultBook(id: string) {
-  return {
-    id,
-    title: "Tiểu thuyết chưa rõ",
-    tags: ["Ngôn tình", "Hiện đại"],
-    stats: "0 chương",
-    desc: "Mô tả đang cập nhật.",
-    chapters: Array.from({ length: 10 }).map((_, i) => ({ id: `${id}-c${i + 1}`, title: `Chương ${i + 1}` })),
-  } as Book;
-}
-
 type Book = {
   id: string;
   title: string;
@@ -715,7 +725,7 @@ type Book = {
   stats: string;
   desc: string;
   cover?: string | null;
-  chapters: { id: string; title: string }[];
+  chapters: { id: string; title: string; chapterNo?: number }[];
 };
 
 const mockBooks: Record<string, Book> = {
@@ -745,71 +755,133 @@ const mockBooks: Record<string, Book> = {
   },
 };
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
-  scroll: { padding: 16 },
-  headerRow: { flexDirection: "row", gap: 12 },
-  coverLg: { width: 96, height: 128, borderRadius: 12, backgroundColor: "#e5e7eb" },
-  title: { fontSize: 18, fontWeight: "800", color: "#0f172a" },
-  meta: { fontSize: 12, color: "#6b7280", marginTop: 4 },
-  meta2: { fontSize: 12, color: "#6b7280", marginTop: 6 },
+const createStyles = (colors: AppColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.bg },
+  scroll: { padding: 16, paddingBottom: 110 },
+  headerRow: { flexDirection: "row", gap: 16 },
+  title: { fontSize: 21, fontWeight: "800", color: colors.text, lineHeight: 28, letterSpacing: -0.3 },
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  meta: { fontSize: 12, color: colors.textMuted, marginTop: 4 },
+  meta2: { fontSize: 13, color: colors.textSecondary, marginTop: 8, fontWeight: '600' },
   actionRow: { flexDirection: "row", gap: 8, marginTop: 12 },
+  stickyBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'ios' ? 28 : 14,
+    backgroundColor: colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+    ...cardShadow,
+  },
+  stickyIcon: { alignItems: 'center', minWidth: 44 },
+  stickyIconLabel: { fontSize: 11, color: colors.textMuted, fontWeight: '700', marginTop: 2 },
+  stickyCta: {
+    flex: 1,
+    height: 48,
+    borderRadius: radius.xl,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...cardShadowSm,
+  },
+  stickyCtaText: { color: colors.onAccent, fontWeight: '800', fontSize: 15 },
 
-  authorRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 10 },
+  authorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 12,
+    backgroundColor: colors.surface,
+    padding: 8,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
   authorLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  authorAvatar: { width: 30, height: 30, borderRadius: 15, overflow: 'hidden', backgroundColor: '#e9f2ff', alignItems: 'center', justifyContent: 'center' },
+  authorAvatar: { width: 34, height: 34, borderRadius: 17, overflow: 'hidden', backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
   authorAvatarImg: { width: '100%', height: '100%' },
-  authorAvatarText: { color: '#0f172a', fontWeight: '800' },
-  authorName: { color: '#0f172a', fontWeight: '800', fontSize: 13 },
-  authorMeta: { color: '#64748b', fontSize: 11, marginTop: 1 },
-  authorFollowBtn: { borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7 },
-  authorFollowBtnOn: { backgroundColor: '#1088ff' },
-  authorFollowingBtn: { backgroundColor: '#f2f4f7', borderWidth: StyleSheet.hairlineWidth, borderColor: '#1088ff' },
-  authorFollowText: { fontWeight: '800', fontSize: 12 },
-  authorFollowTextOn: { color: '#fff' },
-  authorFollowingText: { color: '#1088ff' },
-  btnPrimary: { backgroundColor: "#1088ff", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
-  btnPrimaryText: { color: "#fff", fontWeight: "700" },
-  btnSecondary: { backgroundColor: "#f2f4f7", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
-  btnSecondaryText: { color: "#1088ff", fontWeight: "700" },
-  btnSecondaryActive: { backgroundColor: '#1088ff11', borderWidth: StyleSheet.hairlineWidth, borderColor: '#1088ff' },
-  btnSecondaryTextActive: { color: '#1088ff' },
-  donateRow: { flexDirection: "row", gap: 8, marginTop: 8 },
-  donateBtn: { paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#e5e7eb", backgroundColor: "#f8fafc" },
-  donateBtnActive: { backgroundColor: "#1088ff11", borderColor: "#1088ff" },
-  donateText: { color: "#0f172a", fontWeight: "700" },
-  donateTextActive: { color: "#1088ff" },
-  donateActionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
-  donateConfirmBtn: { alignSelf: 'flex-start', paddingHorizontal: 16 },
+  authorAvatarText: { color: colors.accentText, fontWeight: '800', fontSize: 14 },
+  authorName: { color: colors.text, fontWeight: '800', fontSize: 13 },
+  authorMeta: { color: colors.textMuted, fontSize: 11, marginTop: 1 },
+  authorFollowBtn: { borderRadius: radius.full, paddingHorizontal: 12, paddingVertical: 6 },
+  authorFollowBtnOn: { backgroundColor: colors.accent },
+  authorFollowingBtn: { backgroundColor: colors.surfaceSubtle, borderWidth: 1, borderColor: colors.borderLight },
+  authorFollowText: { color: colors.text, fontWeight: '700', fontSize: 11 },
+  authorFollowTextOn: { color: colors.onAccent },
+  authorFollowingText: { color: colors.textSecondary },
+  btnPrimary: { backgroundColor: colors.accent, borderRadius: radius.full, paddingHorizontal: 16, paddingVertical: 8 },
+  btnPrimaryText: { color: colors.onAccent, fontWeight: "700" },
+  btnSecondary: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.full,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  btnSecondaryText: { color: colors.accentText, fontWeight: "700", fontSize: 13 },
+  btnSecondaryActive: { backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent },
+  btnSecondaryTextActive: { color: colors.accentText },
 
-  card: { backgroundColor: "#fff", borderRadius: 12, padding: 12, marginTop: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: "#eef2f7" },
-  cardTitle: { fontSize: 16, fontWeight: "800", color: "#0f172a", marginBottom: 8 },
-  desc: { fontSize: 14, color: "#374151", lineHeight: 20 },
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    padding: 16,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    ...cardShadow,
+  },
+  cardTitle: { fontSize: 17, fontWeight: "800", color: colors.text, marginBottom: 10, letterSpacing: -0.3 },
+  desc: { fontSize: 14, color: colors.textSecondary, lineHeight: 22 },
 
-  chapterRow: { paddingVertical: 12 },
-  chapterText: { fontSize: 14, color: "#0f172a" },
-  lastReadChapter: { backgroundColor: '#e9f2ff', borderRadius: 8, paddingHorizontal: 8 },
-  lastReadText: { color: '#1088ff', fontWeight: '700' },
-  rowDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#eef2f7" },
+  chapterRow: { paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  chapterText: { fontSize: 14, color: colors.text, fontWeight: '500' },
+  lastReadChapter: { backgroundColor: colors.accentSoft, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 },
+  lastReadText: { color: colors.accentText, fontWeight: '700' },
+  rowDivider: { borderTopWidth: 1, borderTopColor: colors.borderLight },
 
-  emptyBox: { backgroundColor: "#f8fafc", borderRadius: 10, padding: 16, alignItems: "center" },
+  emptyBox: { backgroundColor: colors.surfaceSubtle, borderRadius: radius.lg, padding: 20, alignItems: "center" },
 
-  commentInputRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', marginBottom: 12 },
-  commentInput: { flex: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: '#e5e7eb', borderRadius: 10, padding: 10, minHeight: 40 },
-  sendBtn: { backgroundColor: '#1088ff', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10 },
-  sendBtnText: { color: '#fff', fontWeight: '700' },
-  commentRow: { flexDirection: 'row', gap: 10, paddingVertical: 10 },
-  commentAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#e9f2ff', alignItems: 'center', justifyContent: 'center' },
-  avatarPlaceholder: { color: '#1088ff', fontWeight: '800', fontSize: 16 },
+  commentInputRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', marginBottom: 14 },
+  commentInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: radius.md,
+    padding: 12,
+    minHeight: 44,
+    backgroundColor: colors.surfaceSubtle,
+    fontSize: 14,
+    color: colors.text,
+  },
+  sendBtn: {
+    backgroundColor: colors.accent,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 13 },
+  commentRow: { flexDirection: 'row', gap: 12, paddingVertical: 12 },
+  commentAvatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  avatarPlaceholder: { color: colors.accentText, fontWeight: '800', fontSize: 16 },
   commentHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  commentAuthor: { fontWeight: '700', color: '#0f172a' },
-  loadMoreBtn: { marginTop: 12, padding: 12, backgroundColor: '#f2f4f7', borderRadius: 10, alignItems: 'center' },
-  loadMoreText: { color: '#1088ff', fontWeight: '700', fontSize: 14 },
-  commentDeleteBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#fef2f2', borderWidth: StyleSheet.hairlineWidth, borderColor: '#fecaca' },
-  commentDeleteText: { color: '#dc2626', fontWeight: '800', fontSize: 12 },
-  commentText: { color: '#111827', marginTop: 2 },
-  commentTime: { fontSize: 11, color: '#94a3b8', marginTop: 4 },
-  hiddenComment: { backgroundColor: '#f1f5f9', borderRadius: 8, padding: 12, marginTop: 4, borderStyle: 'dashed', borderWidth: 1, borderColor: '#cbd5e1' },
-  hiddenCommentText: { color: '#64748b', fontSize: 13, fontStyle: 'italic' },
-  negativeComment: { color: '#6b7280', fontStyle: 'italic', backgroundColor: '#fff7ed', padding: 8, borderRadius: 6 },
+  commentAuthor: { fontWeight: '700', color: colors.text, fontSize: 14 },
+  loadMoreBtn: { marginTop: 14, padding: 12, backgroundColor: colors.surfaceSubtle, borderRadius: radius.full, alignItems: 'center' },
+  loadMoreText: { color: colors.accentText, fontWeight: '700', fontSize: 13 },
+  commentDeleteBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.full, backgroundColor: colors.dangerSoft },
+  commentDeleteText: { color: colors.dangerText, fontWeight: '700', fontSize: 11 },
+  commentText: { color: colors.textSecondary, marginTop: 4, fontSize: 13, lineHeight: 19 },
+  commentBadge: { alignSelf: 'flex-start', marginTop: 4, color: '#9a3412', backgroundColor: colors.orangeSoft, paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.full, fontSize: 11, fontWeight: '700', overflow: 'hidden' },
+  commentBadgeShadow: { color: colors.dangerText, backgroundColor: colors.dangerSoft },
+  commentTime: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
 });
